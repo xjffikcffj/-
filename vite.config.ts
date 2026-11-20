@@ -4,8 +4,16 @@ import fs from 'fs';
 import path from 'path';
 import {defineConfig} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({command, mode}) => {
+  const isProductionMode =
+    mode === 'production' || (command === 'build' && mode !== 'preview-demo');
+  const isPreviewDemoEnabled =
+    !isProductionMode && process.env.VITE_ENABLE_PREVIEW_DEMO === 'true';
+
   return {
+    define: {
+      __HAQIBATI_PREVIEW_DEMO_ENABLED__: JSON.stringify(isPreviewDemoEnabled),
+    },
     plugins: [
       react(),
       tailwindcss(),
@@ -34,6 +42,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
+      allowedHosts: true as const,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

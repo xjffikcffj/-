@@ -4,6 +4,8 @@ import com.studentlearning.platform2026.domain.model.PdfFailureReason
 import com.studentlearning.platform2026.domain.model.PdfLoadException
 import com.studentlearning.platform2026.domain.model.PdfSourceDescriptor
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.File
@@ -12,6 +14,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 
 data class PreparedPdfFile(
     val file: File,
@@ -32,6 +35,8 @@ interface PdfContentFetcher {
 class HttpPdfContentFetcher(
     private val sessionCacheDir: File
 ) : PdfContentFetcher {
+
+    private val tempFileSequence = AtomicLong(0L)
 
     override suspend fun prepareReadableFile(
         source: PdfSourceDescriptor,
@@ -75,20 +80,29 @@ class HttpPdfContentFetcher(
             sessionCacheDir.mkdirs()
         }
         val safeKey = source.cacheKey.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(48)
-        val tempFile = File(sessionCacheDir, "viewer_${safeKey}_${System.nanoTime()}.pdf")
+        val seq = tempFileSequence.incrementAndGet()
+        val tempFile = File(sessionCacheDir, "viewer_${safeKey}_${seq}_${System.nanoTime()}.pdf")
         var connection: HttpURLConnection? = null
+        var cancellationHook: DisposableHandle? = null
 
         try {
+            currentCoroutineContext().ensureActive()
             val url = URL(source.url)
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            val activeConnection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
                 instanceFollowRedirects = false
                 source.headers.forEach { (key, value) -> setRequestProperty(key, value) }
             }
+            connection = activeConnection
+            cancellationHook = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    runCatching { activeConnection.disconnect() }
+                }
+            }
 
-            val statusCode = connection.responseCode
+            val statusCode = activeConnection.responseCode
             when (statusCode) {
                 HttpURLConnection.HTTP_OK -> Unit
                 HttpURLConnection.HTTP_UNAUTHORIZED,
@@ -112,7 +126,7 @@ class HttpPdfContentFetcher(
                 }
             }
 
-            connection.inputStream.use { input ->
+            activeConnection.inputStream.use { input ->
                 FileOutputStream(tempFile).use { output ->
                     val buffer = ByteArray(STREAM_BUFFER_BYTES)
                     var bytesRead: Int
@@ -141,6 +155,7 @@ class HttpPdfContentFetcher(
             throw pdfError
         } catch (io: IOException) {
             tempFile.delete()
+            currentCoroutineContext().ensureActive()
             throw PdfLoadException(
                 reason = PdfFailureReason.NETWORK_UNAVAILABLE,
                 message = io.localizedMessage ?: "Network error while loading PDF.",
@@ -154,6 +169,7 @@ class HttpPdfContentFetcher(
                 cause = unexpected
             )
         } finally {
+            cancellationHook?.dispose()
             connection?.disconnect()
         }
     }

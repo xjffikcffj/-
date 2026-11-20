@@ -23,7 +23,10 @@ import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
 import com.studentlearning.platform2026.domain.repository.PreferencesRepository
 import com.studentlearning.platform2026.domain.repository.ReadingProgressRepository
 import com.studentlearning.platform2026.domain.repository.SystemStatusRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -456,12 +459,14 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
 
 class FakeReadingProgressRepository(
     initialProgress: Map<String, FileReadingProgress> = emptyMap(),
-    private val clockEpochMillis: () -> Long = { System.currentTimeMillis() }
+    private val clockEpochMillis: () -> Long = { System.currentTimeMillis() },
+    var saveDelayMs: Long = 0L
 ) : ReadingProgressRepository {
 
     private val progressMap = MutableStateFlow(initialProgress)
     var saveCalls: Int = 0
         private set
+    val recordedSaves = mutableListOf<Pair<String, Int>>()
 
     override fun observeProgress(fileId: String): Flow<FileReadingProgress?> =
         progressMap.map { it[fileId] }
@@ -471,8 +476,14 @@ class FakeReadingProgressRepository(
 
     override suspend fun saveLastPage(fileId: String, pageNumber: Int, totalPages: Int) {
         if (fileId.isBlank() || totalPages <= 0) return
+        if (saveDelayMs > 0L) {
+            delay(saveDelayMs)
+        }
         saveCalls++
         val safePage = pageNumber.coerceIn(1, totalPages)
+        synchronized(recordedSaves) {
+            recordedSaves.add(fileId to safePage)
+        }
         progressMap.update { current ->
             current + (
                 fileId to FileReadingProgress(
@@ -494,25 +505,49 @@ class FakePdfDocumentSession(
     override val fileId: String,
     override val pageCount: Int,
     private val pageTexts: Map<Int, String> = emptyMap(),
-    private val searchDelayMs: Long = 0L
+    private val searchDelayMs: Long = 0L,
+    private val searchPageStepDelayMs: Long = 0L
 ) : PdfDocumentSession {
 
     var closeCount: Int = 0
         private set
     val isClosed: Boolean
         get() = closeCount > 0
+    var searchPagesVisited: Int = 0
+        private set
+    var searchCancelledCount: Int = 0
+        private set
 
     override suspend fun getPageAspectRatio(pageIndexZeroBased: Int): Float = 0.707f
 
     override suspend fun searchText(query: String): PdfSearchResult {
-        if (searchDelayMs > 0L) {
-            delay(searchDelayMs)
+        return try {
+            if (searchDelayMs > 0L) {
+                delay(searchDelayMs)
+            }
+            val coroutineCtx = currentCoroutineContext()
+            if (searchPageStepDelayMs > 0L) {
+                for (page in 1..pageCount) {
+                    coroutineCtx.ensureActive()
+                    searchPagesVisited++
+                    delay(searchPageStepDelayMs)
+                }
+            }
+            ArabicTextNormalizer.searchAcrossPages(
+                query = query,
+                pageCount = pageCount,
+                extractPageText = { pageOneBased ->
+                    if (searchPageStepDelayMs <= 0L) {
+                        searchPagesVisited++
+                    }
+                    pageTexts[pageOneBased].orEmpty()
+                },
+                onCheckCancelled = { coroutineCtx.ensureActive() }
+            )
+        } catch (cancelled: CancellationException) {
+            searchCancelledCount++
+            throw cancelled
         }
-        return ArabicTextNormalizer.searchAcrossPages(
-            query = query,
-            pageCount = pageCount,
-            extractPageText = { pageOneBased -> pageTexts[pageOneBased].orEmpty() }
-        )
     }
 
     override fun close() {

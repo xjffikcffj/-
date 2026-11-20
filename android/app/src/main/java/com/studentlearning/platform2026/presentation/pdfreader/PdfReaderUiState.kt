@@ -17,6 +17,7 @@ data class PdfReaderUiState(
     val currentPage: Int = 1, // 1-based
     val scrollTargetPage: Int = 1, // 1-based programmatic jump target
     val scrollRequestToken: Int = 0,
+    val scrollRequestSessionId: String = DEFAULT_SCROLL_SESSION_ID,
     val resumedFromSavedPage: Int? = null,
     val zoomScale: Float = 1.0f,
     val isNightModeEnabled: Boolean = false,
@@ -46,6 +47,7 @@ data class PdfReaderUiState(
         get() = documentSession != null && zoomScale > MIN_ZOOM_SCALE + 0.01f
 
     companion object {
+        const val DEFAULT_SCROLL_SESSION_ID = "default_scroll_session"
         const val MIN_ZOOM_SCALE = 1.0f
         const val MAX_ZOOM_SCALE = 3.0f
         const val ZOOM_STEP = 0.25f

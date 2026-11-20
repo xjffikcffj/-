@@ -1,5 +1,6 @@
 package com.studentlearning.platform2026.presentation.pdfreader
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import com.studentlearning.platform2026.core.common.AppResult
@@ -300,4 +301,286 @@ class PdfReaderViewModelTest {
         assertTrue(session.isClosed)
         assertNull(viewModel.uiState.value.documentSession)
     }
+
+    @Test
+    fun `overlapping debounced and immediate page saves preserve newest page without regression`() =
+        runTest {
+            val session = FakePdfDocumentSession(fileId = "file-race", pageCount = 20)
+            val pdfRepo = FakePdfDocumentRepository(openHandler = { _, _ -> AppResult.Success(session) })
+            val progressRepo = FakeReadingProgressRepository(saveDelayMs = 150L)
+
+            val viewModel = PdfReaderViewModel(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                initialFileId = "file-race",
+                initialFileTitle = "ملف سباق التقدم",
+                initialActiveVersionId = "v1"
+            )
+            advanceUntilIdle()
+
+            // Trigger debounced scroll save to page 4, advance right to execution edge, then jump to page 11.
+            viewModel.onVisiblePageChanged(4)
+            advanceTimeBy(310L)
+            viewModel.goToPage(11)
+            advanceUntilIdle()
+
+            assertEquals(11, viewModel.uiState.value.currentPage)
+            assertEquals(11, progressRepo.getProgress("file-race")?.lastPageNumber)
+            val raceSaves = progressRepo.recordedSaves.filter { it.first == "file-race" }.map { it.second }
+            assertEquals(11, raceSaves.last())
+        }
+
+    @Test
+    fun `pending debounced page save flushes on ViewModel clear and file switch without mixing files`() =
+        runTest {
+            val sessionA = FakePdfDocumentSession(fileId = "file-a", pageCount = 15)
+            val sessionB = FakePdfDocumentSession(fileId = "file-b", pageCount = 9)
+            val pdfRepo = FakePdfDocumentRepository(
+                openHandler = { id, _ ->
+                    if (id == "file-a") AppResult.Success(sessionA) else AppResult.Success(sessionB)
+                }
+            )
+            val progressRepo = FakeReadingProgressRepository()
+            val store = ViewModelStore()
+            val factory = PdfReaderViewModel.provideFactory(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                fileId = "file-a",
+                fileTitle = "ملف أ",
+                activeVersionId = "v1"
+            )
+            val viewModel = ViewModelProvider(store, factory)[PdfReaderViewModel::class.java]
+            advanceUntilIdle()
+
+            // Scroll to page 7 and switch immediately before 300ms debounce fires.
+            viewModel.onVisiblePageChanged(7)
+            viewModel.openFile("file-b", "ملف ب", "v1")
+            advanceUntilIdle()
+
+            assertEquals(7, progressRepo.getProgress("file-a")?.lastPageNumber)
+            assertEquals(1, progressRepo.getProgress("file-b")?.lastPageNumber)
+
+            // Scroll file-b to page 5 and exit screen immediately before 300ms debounce fires.
+            viewModel.onVisiblePageChanged(5)
+            store.clear()
+            advanceUntilIdle()
+
+            assertEquals(5, progressRepo.getProgress("file-b")?.lastPageNumber)
+            assertEquals(7, progressRepo.getProgress("file-a")?.lastPageNumber)
+            assertTrue(sessionA.isClosed)
+            assertTrue(sessionB.isClosed)
+        }
+
+    @Test
+    fun `cancelling search mid-execution stops remaining page scans and resets search state`() =
+        runTest {
+            val sessionA = FakePdfDocumentSession(
+                fileId = "file-long",
+                pageCount = 10,
+                pageTexts = mapOf(9 to "التكامل"),
+                searchPageStepDelayMs = 100L
+            )
+            val sessionB = FakePdfDocumentSession(fileId = "file-next", pageCount = 4)
+            val pdfRepo = FakePdfDocumentRepository(
+                openHandler = { id, _ ->
+                    if (id == "file-long") AppResult.Success(sessionA) else AppResult.Success(sessionB)
+                }
+            )
+            val progressRepo = FakeReadingProgressRepository()
+            val viewModel = PdfReaderViewModel(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                initialFileId = "file-long",
+                initialFileTitle = "ملف طويل",
+                initialActiveVersionId = "v1"
+            )
+            advanceUntilIdle()
+
+            viewModel.toggleSearchBar()
+            viewModel.updateSearchQuery("التكامل")
+            viewModel.executeSearch()
+            advanceTimeBy(250L) // Stops after ~2-3 pages out of 10.
+            assertEquals(PdfSearchStatus.SEARCHING, viewModel.uiState.value.searchResult.status)
+
+            viewModel.clearSearch()
+            advanceUntilIdle()
+
+            assertEquals(PdfSearchStatus.IDLE, viewModel.uiState.value.searchResult.status)
+            assertTrue(sessionA.searchCancelledCount >= 1)
+            assertTrue(sessionA.searchPagesVisited < 10)
+
+            // Switching files mid-search cancels search and closes old session without leaking state to file-next.
+            viewModel.updateSearchQuery("التكامل")
+            viewModel.executeSearch()
+            advanceTimeBy(150L)
+            viewModel.openFile("file-next", "ملف جديد", "v1")
+            advanceUntilIdle()
+
+            assertTrue(sessionA.isClosed)
+            assertEquals("file-next", viewModel.uiState.value.fileId)
+            assertEquals(PdfSearchStatus.IDLE, viewModel.uiState.value.searchResult.status)
+        }
+
+    @Test
+    fun `zoom bounds clamp cleanly between 1x and 3x without negative or excessive scale`() =
+        runTest {
+            val session = FakePdfDocumentSession(fileId = "file-zoom", pageCount = 3)
+            val viewModel = PdfReaderViewModel(
+                pdfDocumentRepository = FakePdfDocumentRepository(
+                    openHandler = { _, _ -> AppResult.Success(session) }
+                ),
+                readingProgressRepository = FakeReadingProgressRepository(),
+                initialFileId = "file-zoom",
+                initialFileTitle = "تكبير",
+                initialActiveVersionId = "v1"
+            )
+            advanceUntilIdle()
+
+            viewModel.setZoomScale(0.2f)
+            assertEquals(PdfReaderUiState.MIN_ZOOM_SCALE, viewModel.uiState.value.zoomScale, 0.001f)
+            assertFalse(viewModel.uiState.value.canZoomOut)
+
+            viewModel.setZoomScale(10.0f)
+            assertEquals(PdfReaderUiState.MAX_ZOOM_SCALE, viewModel.uiState.value.zoomScale, 0.001f)
+            assertFalse(viewModel.uiState.value.canZoomIn)
+
+            viewModel.resetZoom()
+            assertEquals(PdfReaderUiState.MIN_ZOOM_SCALE, viewModel.uiState.value.zoomScale, 0.001f)
+        }
+
+    /**
+     * Unit test verifying [PdfReaderViewModel] + [SavedStateHandle] state restoration by constructing
+     * a second [PdfReaderViewModel] instance from saved key/value pairs.
+     *
+     * Limitation: Exercises [PdfReaderViewModel] and [SavedStateHandle] directly in JVM unit tests;
+     * it does NOT perform full Android `Activity` / `NavBackStackEntry` process-death recreation.
+     */
+    @Test
+    fun `surviving ViewModel keeps scroll session across rotation while process death restores SavedStateHandle with fresh session`() =
+        runTest {
+            val session1 = FakePdfDocumentSession(
+                fileId = "file-proc",
+                pageCount = 12,
+                pageTexts = mapOf(
+                    2 to "الفيزياء الحديثة",
+                    9 to "الفيزياء النووية"
+                )
+            )
+            val session2 = FakePdfDocumentSession(
+                fileId = "file-proc",
+                pageCount = 12,
+                pageTexts = mapOf(
+                    2 to "الفيزياء الحديثة",
+                    9 to "الفيزياء النووية"
+                )
+            )
+            val sessionOther = FakePdfDocumentSession(fileId = "file-other", pageCount = 6)
+
+            var openAttempt = 0
+            val pdfRepo = FakePdfDocumentRepository(
+                openHandler = { id, _ ->
+                    when (id) {
+                        "file-proc" -> {
+                            openAttempt++
+                            AppResult.Success(if (openAttempt == 1) session1 else session2)
+                        }
+                        else -> AppResult.Success(sessionOther)
+                    }
+                }
+            )
+            val progressRepo = FakeReadingProgressRepository(
+                initialProgress = mapOf(
+                    "file-other" to FileReadingProgress("file-other", 3, 6, 1L)
+                )
+            )
+            val sharedSavedStateHandle = SavedStateHandle()
+
+            // Process 1: user opens file-proc, jumps several times (token > 1), zooms, toggles night mode,
+            // and scrolls manually to page 7 right before process death (before 300ms DataStore debounce flushes).
+            val vmProcess1 = PdfReaderViewModel(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                initialFileId = "file-proc",
+                initialFileTitle = "الفيزياء",
+                initialActiveVersionId = "v1",
+                savedStateHandle = sharedSavedStateHandle
+            )
+            advanceUntilIdle()
+            val sessionIdBeforeRotation = vmProcess1.uiState.value.scrollRequestSessionId
+
+            vmProcess1.goToPage(3)
+            vmProcess1.goToPage(5)
+            vmProcess1.setZoomScale(2.0f)
+            vmProcess1.toggleNightMode()
+            vmProcess1.onVisiblePageChanged(7) // within 300ms debounce before DataStore write
+
+            // Configuration change (rotation): same ViewModel survives with identical session ID & token.
+            assertEquals(sessionIdBeforeRotation, vmProcess1.uiState.value.scrollRequestSessionId)
+            assertEquals(7, vmProcess1.uiState.value.currentPage)
+            assertEquals(2.0f, vmProcess1.uiState.value.zoomScale, 0.001f)
+            val tokenBeforeDeath = vmProcess1.uiState.value.scrollRequestToken
+            assertTrue(tokenBeforeDeath >= 3)
+
+            // Simulate Process Death: old VM dies, new VM is instantiated with restored SavedStateHandle.
+            val restoredMap = sharedSavedStateHandle.keys().associateWith { key ->
+                sharedSavedStateHandle.get<Any?>(key)
+            }
+            val recreatedHandle = SavedStateHandle(restoredMap)
+            val vmProcess2 = PdfReaderViewModel(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                initialFileId = "file-proc",
+                initialFileTitle = "الفيزياء",
+                initialActiveVersionId = "v1",
+                savedStateHandle = recreatedHandle
+            )
+            advanceUntilIdle()
+
+            val restoredState = vmProcess2.uiState.value
+            assertFalse(restoredState.isLoading)
+            assertEquals(7, restoredState.currentPage)
+            assertEquals(2.0f, restoredState.zoomScale, 0.001f)
+            assertTrue(restoredState.isNightModeEnabled)
+            assertTrue(
+                "Recreated ViewModel must issue a fresh scrollRequestSessionId",
+                restoredState.scrollRequestSessionId != sessionIdBeforeRotation
+            )
+            assertEquals(7, progressRepo.getProgress("file-proc")?.lastPageNumber)
+
+            // Immediately after restoration: Next, Previous, Jump, and Search must all advance tokens cleanly.
+            vmProcess2.nextPage()
+            advanceUntilIdle()
+            assertEquals(8, vmProcess2.uiState.value.currentPage)
+            assertEquals(1, vmProcess2.uiState.value.scrollRequestToken)
+
+            vmProcess2.previousPage()
+            advanceUntilIdle()
+            assertEquals(7, vmProcess2.uiState.value.currentPage)
+            assertEquals(2, vmProcess2.uiState.value.scrollRequestToken)
+
+            vmProcess2.goToPage(11)
+            advanceUntilIdle()
+            assertEquals(11, vmProcess2.uiState.value.currentPage)
+            assertEquals(11, vmProcess2.uiState.value.scrollTargetPage)
+            assertEquals(3, vmProcess2.uiState.value.scrollRequestToken)
+
+            vmProcess2.toggleSearchBar()
+            vmProcess2.updateSearchQuery("الفيزياء")
+            vmProcess2.executeSearch()
+            advanceUntilIdle()
+            assertEquals(PdfSearchStatus.FOUND, vmProcess2.uiState.value.searchResult.status)
+            assertEquals(2, vmProcess2.uiState.value.currentPage)
+            vmProcess2.nextSearchMatch()
+            advanceUntilIdle()
+            assertEquals(9, vmProcess2.uiState.value.currentPage)
+            assertEquals(5, vmProcess2.uiState.value.scrollRequestToken)
+
+            // Opening a different file after restoration resets zoom/search and uses that file's progress.
+            vmProcess2.openFile("file-other", "ملف آخر", "v2")
+            advanceUntilIdle()
+            assertEquals("file-other", vmProcess2.uiState.value.fileId)
+            assertEquals(3, vmProcess2.uiState.value.currentPage)
+            assertEquals(1.0f, vmProcess2.uiState.value.zoomScale, 0.001f)
+            assertFalse(vmProcess2.uiState.value.isSearchBarVisible)
+        }
 }

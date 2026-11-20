@@ -1,1 +1,62 @@
 @import "tailwindcss";
+
+:root {
+  --bg: #FBF8F1;
+  --on-bg: #1A2321;
+  --surface: #FFFFFF;
+  --on-surface: #1A2321;
+  --surface-variant: #F0EBE0;
+  --on-surface-variant: #52605C;
+  --primary: #0E5A4F;
+  --on-primary: #FFFFFF;
+  --primary-container: #D2EFE9;
+  --on-primary-container: #052E28;
+  --secondary: #B57B14;
+  --on-secondary: #FFFFFF;
+  --secondary-container: #FCEFD2;
+  --on-secondary-container: #3E2600;
+  --tertiary: #355966;
+  --on-tertiary: #FFFFFF;
+  --tertiary-container: #D9ECF2;
+  --on-tertiary-container: #0E2933;
+  --outline: #D6CFC2;
+  --outline-variant: #E7E1D5;
+  --error-container: #FDE8E8;
+  --on-error-container: #8B1A1A;
+  --error: #B3261E;
+}
+
+.dark {
+  --bg: #0F1715;
+  --on-bg: #E6ECEA;
+  --surface: #16201E;
+  --on-surface: #E6ECEA;
+  --surface-variant: #212D2A;
+  --on-surface-variant: #A7B5B1;
+  --primary: #5CD4BE;
+  --on-primary: #00372F;
+  --primary-container: #0D473E;
+  --on-primary-container: #D2EFE9;
+  --secondary: #EBC06D;
+  --on-secondary: #3F2A00;
+  --secondary-container: #5C4008;
+  --on-secondary-container: #FCEFD2;
+  --tertiary: #9ACBDD;
+  --on-tertiary: #053543;
+  --tertiary-container: #1F4B5A;
+  --on-tertiary-container: #D9ECF2;
+  --outline: #34433F;
+  --outline-variant: #263330;
+  --error-container: #4C1D1D;
+  --on-error-container: #FAD2D2;
+  --error: #F2B8B5;
+}
+
+html,
+body {
+  font-family: 'Tajawal', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--bg);
+  color: var(--on-bg);
+  direction: rtl;
+  -webkit-font-smoothing: antialiased;
+}

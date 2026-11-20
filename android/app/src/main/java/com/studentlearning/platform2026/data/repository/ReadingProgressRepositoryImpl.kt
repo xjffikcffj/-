@@ -5,6 +5,8 @@ import com.studentlearning.platform2026.data.local.ReadingProgressDataSource
 import com.studentlearning.platform2026.domain.model.FileReadingProgress
 import com.studentlearning.platform2026.domain.repository.ReadingProgressRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class ReadingProgressRepositoryImpl(
@@ -12,27 +14,35 @@ class ReadingProgressRepositoryImpl(
     private val dispatcherProvider: DispatcherProvider
 ) : ReadingProgressRepository {
 
+    private val accessMutex = Mutex()
+
     override fun observeProgress(fileId: String): Flow<FileReadingProgress?> =
         localDataSource.observeProgress(fileId)
 
     override suspend fun getProgress(fileId: String): FileReadingProgress? =
         withContext(dispatcherProvider.io) {
-            localDataSource.getProgress(fileId)
+            accessMutex.withLock {
+                localDataSource.getProgress(fileId)
+            }
         }
 
     override suspend fun saveLastPage(fileId: String, pageNumber: Int, totalPages: Int) {
         withContext(dispatcherProvider.io) {
-            localDataSource.saveLastPage(
-                fileId = fileId,
-                pageNumber = pageNumber,
-                totalPages = totalPages
-            )
+            accessMutex.withLock {
+                localDataSource.saveLastPage(
+                    fileId = fileId,
+                    pageNumber = pageNumber,
+                    totalPages = totalPages
+                )
+            }
         }
     }
 
     override suspend fun clearProgress(fileId: String) {
         withContext(dispatcherProvider.io) {
-            localDataSource.clearProgress(fileId)
+            accessMutex.withLock {
+                localDataSource.clearProgress(fileId)
+            }
         }
     }
 }

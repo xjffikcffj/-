@@ -142,4 +142,18 @@ class ReadingProgressRepositoryImplTest {
         repository.clearProgress("doc-1")
         assertNull(repository.getProgress("doc-1"))
     }
+
+    @Test
+    fun `serialized access keeps last sequential page intact under concurrent saves`() = runTest {
+        val prefsFile = File(tempFolder.newFolder(), "concurrent.preferences_pb")
+        val repository = createRepository(prefsFile, this)
+
+        repository.saveLastPage(fileId = "doc-seq", pageNumber = 2, totalPages = 50)
+        repository.saveLastPage(fileId = "doc-seq", pageNumber = 9, totalPages = 50)
+        repository.saveLastPage(fileId = "doc-seq", pageNumber = 17, totalPages = 50)
+
+        val progress = repository.getProgress("doc-seq")
+        assertEquals(17, progress?.lastPageNumber)
+        assertEquals(50, progress?.totalPages)
+    }
 }
