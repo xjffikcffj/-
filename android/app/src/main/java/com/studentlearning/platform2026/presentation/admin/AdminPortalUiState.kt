@@ -5,8 +5,10 @@ import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 
 enum class AdminManagementSection {
     BRANCHES,
@@ -24,6 +26,9 @@ enum class AdminSuccessMessage {
     SECTION_UPDATED,
     FILE_CREATED,
     FILE_UPDATED,
+    VERSION_CREATED,
+    VERSION_UPDATED,
+    VERSION_PUBLISHED,
     PUBLISH_UPDATED,
     ARCHIVE_UPDATED,
     REORDERED
@@ -59,6 +64,12 @@ sealed interface AdminEditorDialogState {
         val editing: StudyFileMetadata? = null,
         val suggestedOrder: Int = 1
     ) : AdminEditorDialogState
+
+    data class StudyFileVersionEditor(
+        val file: StudyFileMetadata,
+        val editing: StudyFileVersionMetadata? = null,
+        val suggestedVersionNumber: Int = 1
+    ) : AdminEditorDialogState
 }
 
 sealed interface AdminConfirmationAction {
@@ -67,6 +78,10 @@ sealed interface AdminConfirmationAction {
     data class UnpublishSection(val section: StudySection) : AdminConfirmationAction
     data class UnpublishStudyFile(val file: StudyFileMetadata) : AdminConfirmationAction
     data class ArchiveStudyFile(val file: StudyFileMetadata) : AdminConfirmationAction
+    data class PublishStudyFileVersion(
+        val file: StudyFileMetadata,
+        val version: StudyFileVersionMetadata
+    ) : AdminConfirmationAction
 }
 
 data class AdminPortalUiState(
@@ -92,6 +107,11 @@ data class AdminPortalUiState(
     val studyFiles: List<StudyFileMetadata> = emptyList(),
     val isLoadingStudyFiles: Boolean = false,
     val studyFilesError: AdminFailureReason? = null,
+    val versionsDialogFile: StudyFileMetadata? = null,
+    val fileVersions: List<StudyFileVersionMetadata> = emptyList(),
+    val isLoadingFileVersions: Boolean = false,
+    val fileVersionsError: AdminFailureReason? = null,
+    val r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
     val editorDialog: AdminEditorDialogState? = null,
     val confirmationAction: AdminConfirmationAction? = null,
     val feedback: AdminFeedbackState? = null

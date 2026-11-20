@@ -77,7 +77,7 @@
     <string name="about_title">حول التطبيق</string>
     <string name="about_version_label">رقم الإصدار</string>
     <string name="about_stage_label">المرحلة الحالية</string>
-    <string name="about_stage_value">المرحلة السادسة — قارئ PDF المدمج وتقدم القراءة المحلي</string>
+    <string name="about_stage_value">المرحلة الثامنة — إدارة إصدارات الملفات والتحديثات</string>
 
     <!-- Settings: Staff / Admin Portal Entry -->
     <string name="settings_admin_section">الإدارة والمشرفون</string>
@@ -322,4 +322,81 @@
     <string name="pdf_reader_error_not_found">الملف المطلوب غير متوفر حالياً على المصدر.</string>
     <string name="pdf_reader_error_corrupted">الملف تالف أو غير مدعوم أو محمي بكلمة مرور ولا يمكن عرضه.</string>
     <string name="pdf_reader_error_unknown">حدث خطأ غير متوقع أثناء فتح الملف.</string>
+
+    <!-- Phase 7: Offline Downloads & Version Isolation -->
+    <string name="library_file_browse_online">تصفح</string>
+    <string name="library_file_download_offline">تنزيل</string>
+    <string name="library_file_cancel_download">إلغاء</string>
+    <string name="library_file_retry_download">إعادة المحاولة</string>
+    <string name="library_file_downloaded_badge">تم التنزيل</string>
+    <string name="library_file_open_offline">فتح دون اتصال</string>
+    <string name="library_file_open_saved_older">فتح النسخة المحفوظة (%1$s)</string>
+    <string name="library_file_older_saved_notice">لديك نسخة قديمة محفوظة دون اتصال (%1$s) — يتوفر إصدار أحدث (%2$s)</string>
+    <string name="library_file_older_saved_notice_fallback">لديك نسخة قديمة محفوظة دون اتصال — يتوفر إصدار أحدث للتنزيل</string>
+    <string name="library_file_download_queued">في انتظار بدء التنزيل…</string>
+    <string name="library_file_downloading_percent">جاري التنزيل… %1$d%%</string>
+    <string name="library_file_downloading_indeterminate">جاري التنزيل…</string>
+    <string name="library_file_download_cancelled">تم إلغاء التنزيل</string>
+    <string name="library_file_saved_size_kb">محفوظ محلياً (%1$d ك.ب)</string>
+    <string name="library_file_saved_size_mb">محفوظ محلياً (%1$.1f م.ب)</string>
+    <string name="library_offline_fallback_banner">تعذّر الاتصال بالإنترنت. يمكنك فتح الملفات التي سبق تنزيلها في هذا القسم أدناه.</string>
+
+    <string name="download_guest_dialog_title">تسجيل الدخول مطلوب للتنزيل</string>
+    <string name="download_guest_dialog_message">يمكنك تصفح الملف «%1$s» عبر الإنترنت مجاناً كزائر، بينما يتطلب تنزيله وحفظه للعمل دون اتصال تسجيل الدخول بحساب طالب.</string>
+    <string name="download_guest_dialog_sign_in">تسجيل الدخول</string>
+    <string name="download_guest_dialog_sign_up">إنشاء حساب طالب</string>
+    <string name="download_guest_dialog_dismiss">لاحقاً</string>
+
+    <string name="download_error_guest">يتطلب تنزيل الملفات تسجيل الدخول بحساب طالب.</string>
+    <string name="download_error_unauthorized_role">الحساب الحالي لا يملك صلاحية تنزيل الملفات.</string>
+    <string name="download_error_no_version">لم يُنشر إصدار PDF فعلي لهذا الملف بعد.</string>
+    <string name="download_error_broker_not_configured">خدمة تنزيل الملفات بانتظار ربط وسيط الوصول الآمن لـ Cloudflare R2.</string>
+    <string name="download_error_unauthorized_access">انتهت صلاحية رابط التنزيل أو تم رفض الوصول.</string>
+    <string name="download_error_network">انقطع الاتصال بالإنترنت أو تعذّر الوصول إلى الخادم.</string>
+    <string name="download_error_server">تعذّر تحميل الملف من الخادم حالياً. أعد المحاولة لاحقاً.</string>
+    <string name="download_error_insufficient_storage">لا توجد مساحة تخزين كافية على الجهاز لإتمام التنزيل.</string>
+    <string name="download_error_storage_write">تعذّر حفظ الملف في الذاكرة المحلية للجهاز.</string>
+    <string name="download_error_integrity">فشل التحقق من سلامة الملف المُنزّل؛ تم حذف النسخة غير المكتملة.</string>
+    <string name="download_error_cancelled">تم إلغاء عملية التنزيل.</string>
+    <string name="download_error_unknown">تعذّر إتمام التنزيل بسبب خطأ غير متوقع.</string>
+
+    <!-- Phase 8: Study File Version Management & Updates -->
+    <string name="library_file_new_version_badge">إصدار جديد</string>
+    <string name="downloads_delete_local_version">حذف النسخة المحفوظة محلياً</string>
+
+    <string name="admin_manage_versions">إدارة الإصدارات</string>
+    <string name="admin_versions_dialog_title">إدارة إصدارات: %1$s</string>
+    <string name="admin_add_version">إضافة إصدار جديد</string>
+    <string name="admin_edit_version">تعديل بيانات الإصدار</string>
+    <string name="admin_versions_empty">لا توجد إصدارات مسجّلة لهذا الملف بعد.</string>
+    <string name="admin_version_item_title">الإصدار %1$s (رقم %2$d)</string>
+    <string name="admin_version_status_active_published">الإصدار الفعّال المنشور</string>
+    <string name="admin_version_status_archived_history">إصدار سابق محفوظ</string>
+    <string name="admin_version_status_draft">مسودة غير منشورة</string>
+    <string name="admin_version_r2_key_label">مسار التخزين في R2: %1$s</string>
+    <string name="admin_version_r2_pending_label">ملف PDF على Cloudflare R2: بانتظار وسيط الرفع الآمن</string>
+    <string name="admin_version_published_date_label">تاريخ النشر: %1$s</string>
+    <string name="admin_version_notes_label">ملاحظات التحديث: %1$s</string>
+    <string name="admin_action_publish_version">نشر وتفعيل هذا الإصدار</string>
+    <string name="admin_action_close">إغلاق</string>
+
+    <string name="admin_field_version_number">رقم الإصدار التسلسلي (1، 2، 3…)</string>
+    <string name="admin_field_version_label">تسمية الإصدار (مثل 2.0 أو نسخة 2026)</string>
+    <string name="admin_field_version_notes">ملاحظات التحديث (اختياري)</string>
+    <string name="admin_field_publish_version_immediately">تفعيل ونشر هذا الإصدار فوراً كأحدث إصدار للطلاب</string>
+
+    <string name="admin_r2_upload_broker_pending_notice">رفع ملفات PDF الفعلية إلى Cloudflare R2 بانتظار تفعيل وسيط التوقيع الآمن على الخادم؛ لا تُستخدم أي مفاتيح أو روابط وهمية.</string>
+    <string name="admin_r2_upload_broker_configured_notice">وسيط الرفع الآمن لـ Cloudflare R2 مفعّل على الخادم.</string>
+
+    <string name="admin_confirm_publish_version_title">تأكيد تفعيل ونشر الإصدار</string>
+    <string name="admin_confirm_publish_version_message">هل تريد تفعيل الإصدار «%1$s» ليصبح الإصدار الفعّال الوحيد لملف «%2$s»؟ ستبقى الإصدارات السابقة محفوظة في Cloudflare R2 دون حذف.</string>
+
+    <string name="admin_success_version_created">تمت إضافة سجل الإصدار الجديد بنجاح دون حذف الإصدارات السابقة.</string>
+    <string name="admin_success_version_updated">تم تحديث بيانات الإصدار بنجاح.</string>
+    <string name="admin_success_version_published">تم تفعيل الإصدار الجديد بنجاح — يظهر أحدث إصدار منشور فقط في المكتبة مع بقاء النسخ السابقة محفوظة.</string>
+
+    <string name="admin_validation_invalid_version_number">يجب أن يكون رقم الإصدار عدداً صحيحاً موجباً (1 أو أكبر) وغير مكرر لهذا الملف.</string>
+    <string name="admin_validation_empty_version_label">يرجى إدخال تسمية الإصدار (مثل 1.0 أو 2.0).</string>
+    <string name="admin_validation_version_label_too_long">تسمية الإصدار طويلة جداً (الحد الأقصى 40 حرفاً).</string>
+    <string name="admin_validation_version_notes_too_long">ملاحظات الإصدار طويلة جداً (الحد الأقصى 500 حرف).</string>
 </resources>

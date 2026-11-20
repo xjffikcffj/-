@@ -3,6 +3,7 @@ package com.studentlearning.platform2026.domain.repository
 import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 
@@ -83,6 +84,26 @@ interface AdminCatalogRepository {
     suspend fun setStudyFileArchived(
         fileId: String,
         isArchived: Boolean
+    ): AppResult<Unit>
+
+    suspend fun getStudyFileVersions(fileId: String): AppResult<List<StudyFileVersionMetadata>>
+    suspend fun createStudyFileVersion(
+        fileId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        publishAsActive: Boolean,
+        customVersionId: String? = null
+    ): AppResult<StudyFileVersionMetadata>
+    suspend fun updateStudyFileVersionMetadata(
+        fileId: String,
+        versionId: String,
+        versionLabel: String,
+        versionNotes: String?
+    ): AppResult<Unit>
+    suspend fun publishStudyFileVersion(
+        fileId: String,
+        versionId: String
     ): AppResult<Unit>
 
     suspend fun reorderBranches(

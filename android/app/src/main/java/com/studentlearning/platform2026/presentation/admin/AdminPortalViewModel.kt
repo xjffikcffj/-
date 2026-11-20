@@ -9,10 +9,12 @@ import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,10 +23,13 @@ import kotlinx.coroutines.launch
 
 class AdminPortalViewModel(
     private val authRepository: AuthRepository,
-    private val adminCatalogRepository: AdminCatalogRepository
+    private val adminCatalogRepository: AdminCatalogRepository,
+    private val r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(AdminPortalUiState())
+    private val _uiState = MutableStateFlow(
+        AdminPortalUiState(r2BrokerStatus = r2BrokerStatus)
+    )
     val uiState: StateFlow<AdminPortalUiState> = _uiState.asStateFlow()
 
     private var lastLoadedAdminUid: String? = null
@@ -145,7 +150,8 @@ class AdminPortalViewModel(
             authRepository.signOut()
             _uiState.value = AdminPortalUiState(
                 isCheckingSession = false,
-                session = AdminSession()
+                session = AdminSession(),
+                r2BrokerStatus = r2BrokerStatus
             )
         }
     }
@@ -281,16 +287,72 @@ class AdminPortalViewModel(
             _uiState.update { it.copy(isLoadingStudyFiles = true, studyFilesError = null) }
             when (val result = adminCatalogRepository.getStudyFilesForSection(sectionId)) {
                 is AppResult.Success -> {
-                    _uiState.update {
-                        it.copy(
+                    val files = result.data
+                    _uiState.update { state ->
+                        val refreshedDialogFile = state.versionsDialogFile?.let { currentFile ->
+                            files.firstOrNull { it.id == currentFile.id } ?: currentFile
+                        }
+                        state.copy(
                             isLoadingStudyFiles = false,
-                            studyFiles = result.data
+                            studyFiles = files,
+                            versionsDialogFile = refreshedDialogFile
                         )
                     }
                 }
                 is AppResult.Error -> {
                     val reason = (result.cause as? AdminException)?.reason ?: AdminFailureReason.UNKNOWN
                     _uiState.update { it.copy(isLoadingStudyFiles = false, studyFilesError = reason) }
+                }
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun openFileVersionsManager(file: StudyFileMetadata) {
+        if (!_uiState.value.session.canPerformAdminActions) return
+        _uiState.update {
+            it.copy(
+                versionsDialogFile = file,
+                fileVersions = emptyList(),
+                isLoadingFileVersions = true,
+                fileVersionsError = null
+            )
+        }
+        loadFileVersions(file.id)
+    }
+
+    fun dismissFileVersionsManager() {
+        _uiState.update {
+            it.copy(
+                versionsDialogFile = null,
+                fileVersions = emptyList(),
+                isLoadingFileVersions = false,
+                fileVersionsError = null
+            )
+        }
+    }
+
+    fun loadFileVersions(fileId: String = _uiState.value.versionsDialogFile?.id.orEmpty()) {
+        if (!_uiState.value.session.canPerformAdminActions || fileId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingFileVersions = true, fileVersionsError = null) }
+            when (val result = adminCatalogRepository.getStudyFileVersions(fileId)) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoadingFileVersions = false,
+                            fileVersions = result.data
+                        )
+                    }
+                }
+                is AppResult.Error -> {
+                    val reason = (result.cause as? AdminException)?.reason ?: AdminFailureReason.UNKNOWN
+                    _uiState.update {
+                        it.copy(
+                            isLoadingFileVersions = false,
+                            fileVersionsError = reason
+                        )
+                    }
                 }
                 AppResult.Loading -> Unit
             }
@@ -345,6 +407,34 @@ class AdminPortalViewModel(
         if (!ensureCanPerformAdminWrite()) return
         val section = _uiState.value.selectedSection ?: return
         _uiState.update { it.copy(editorDialog = AdminEditorDialogState.StudyFileEditor(section = section, editing = file, suggestedOrder = file.order)) }
+    }
+
+    fun openCreateVersionDialog() {
+        if (!ensureCanPerformAdminWrite()) return
+        val file = _uiState.value.versionsDialogFile ?: return
+        val nextVersionNumber = (_uiState.value.fileVersions.maxOfOrNull { it.versionNumber } ?: 0) + 1
+        _uiState.update {
+            it.copy(
+                editorDialog = AdminEditorDialogState.StudyFileVersionEditor(
+                    file = file,
+                    suggestedVersionNumber = nextVersionNumber
+                )
+            )
+        }
+    }
+
+    fun openEditVersionDialog(version: StudyFileVersionMetadata) {
+        if (!ensureCanPerformAdminWrite()) return
+        val file = _uiState.value.versionsDialogFile ?: return
+        _uiState.update {
+            it.copy(
+                editorDialog = AdminEditorDialogState.StudyFileVersionEditor(
+                    file = file,
+                    editing = version,
+                    suggestedVersionNumber = version.versionNumber
+                )
+            )
+        }
     }
 
     fun dismissEditorDialog() {
@@ -488,6 +578,73 @@ class AdminPortalViewModel(
         }
     }
 
+    fun saveStudyFileVersion(
+        fileId: String,
+        editing: StudyFileVersionMetadata?,
+        customId: String?,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        publishImmediately: Boolean
+    ) {
+        if (!ensureCanPerformAdminWrite()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSubmitting = true, feedback = null) }
+            val result = if (editing == null) {
+                adminCatalogRepository.createStudyFileVersion(
+                    customId = customId,
+                    fileId = fileId,
+                    versionNumber = versionNumber,
+                    versionLabel = versionLabel,
+                    versionNotes = versionNotes,
+                    publishImmediately = publishImmediately
+                )
+            } else {
+                adminCatalogRepository.updateStudyFileVersionMetadata(
+                    fileId = fileId,
+                    versionId = editing.versionId,
+                    versionLabel = versionLabel,
+                    versionNotes = versionNotes
+                )
+            }
+            when (result) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isSubmitting = false,
+                            editorDialog = null,
+                            feedback = AdminFeedbackState(
+                                isError = false,
+                                successMessage = if (editing == null) {
+                                    AdminSuccessMessage.VERSION_CREATED
+                                } else {
+                                    AdminSuccessMessage.VERSION_UPDATED
+                                }
+                            )
+                        )
+                    }
+                    loadFileVersions(fileId)
+                    loadStudyFiles()
+                }
+                is AppResult.Error -> handleSubmissionError(result.cause)
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun requestPublishStudyFileVersion(version: StudyFileVersionMetadata) {
+        if (!ensureCanPerformAdminWrite()) return
+        val file = _uiState.value.versionsDialogFile ?: return
+        _uiState.update {
+            it.copy(
+                confirmationAction = AdminConfirmationAction.PublishStudyFileVersion(
+                    file = file,
+                    version = version
+                )
+            )
+        }
+    }
+
     fun requestToggleBranchPublished(branch: StudyBranch) {
         if (!ensureCanPerformAdminWrite()) return
         if (branch.isPublished) {
@@ -551,6 +708,8 @@ class AdminPortalViewModel(
                 executeSetStudyFilePublished(pending.file.id, isPublished = false)
             is AdminConfirmationAction.ArchiveStudyFile ->
                 executeSetStudyFileArchived(pending.file.id, isArchived = true)
+            is AdminConfirmationAction.PublishStudyFileVersion ->
+                executePublishStudyFileVersion(pending.file.id, pending.version.versionId)
         }
     }
 
@@ -740,6 +899,29 @@ class AdminPortalViewModel(
         }
     }
 
+    private fun executePublishStudyFileVersion(fileId: String, versionId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSubmitting = true, feedback = null) }
+            when (val result = adminCatalogRepository.publishStudyFileVersion(fileId, versionId)) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isSubmitting = false,
+                            feedback = AdminFeedbackState(
+                                isError = false,
+                                successMessage = AdminSuccessMessage.VERSION_PUBLISHED
+                            )
+                        )
+                    }
+                    loadFileVersions(fileId)
+                    loadStudyFiles()
+                }
+                is AppResult.Error -> handleSubmissionError(result.cause)
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
     private fun finishReorder(
         result: AppResult<Unit>,
         onSuccessReload: () -> Unit
@@ -781,6 +963,10 @@ class AdminPortalViewModel(
                 selectedBranchId = null,
                 selectedSubjectId = null,
                 selectedSectionId = null,
+                versionsDialogFile = null,
+                fileVersions = emptyList(),
+                isLoadingFileVersions = false,
+                fileVersionsError = null,
                 editorDialog = null,
                 confirmationAction = null
             )
@@ -837,13 +1023,15 @@ class AdminPortalViewModel(
     companion object {
         fun provideFactory(
             authRepository: AuthRepository,
-            adminCatalogRepository: AdminCatalogRepository
+            adminCatalogRepository: AdminCatalogRepository,
+            r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return AdminPortalViewModel(
                     authRepository = authRepository,
-                    adminCatalogRepository = adminCatalogRepository
+                    adminCatalogRepository = adminCatalogRepository,
+                    r2BrokerStatus = r2BrokerStatus
                 ) as T
             }
         }

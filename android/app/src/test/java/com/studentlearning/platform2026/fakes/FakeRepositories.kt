@@ -4,12 +4,19 @@ import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.DownloadException
+import com.studentlearning.platform2026.domain.model.DownloadFailureReason
+import com.studentlearning.platform2026.domain.model.DownloadStatus
+import com.studentlearning.platform2026.domain.model.DownloadTaskState
 import com.studentlearning.platform2026.domain.model.FileReadingProgress
 import com.studentlearning.platform2026.domain.model.FirebaseConfigurationStatus
 import com.studentlearning.platform2026.domain.model.FirebaseReadiness
+import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
+import com.studentlearning.platform2026.domain.model.OfflineDownloadRequest
 import com.studentlearning.platform2026.domain.model.PdfSearchResult
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileOfflineState
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.model.UserPreferences
@@ -18,11 +25,13 @@ import com.studentlearning.platform2026.domain.pdf.PdfDocumentSession
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
+import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
 import com.studentlearning.platform2026.domain.repository.PreferencesRepository
 import com.studentlearning.platform2026.domain.repository.ReadingProgressRepository
 import com.studentlearning.platform2026.domain.repository.SystemStatusRepository
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -576,4 +585,161 @@ class FakePdfDocumentRepository(
         openCalls++
         return openHandler(fileId, activeVersionId)
     }
+}
+
+class FakeOfflineDownloadsRepository(
+    private val authRepository: FakeAuthRepository? = null
+) : OfflineDownloadsRepository {
+
+    private val savedVersionsFlow = MutableStateFlow<List<LocalDownloadedFileVersion>>(emptyList())
+    private val activeTasksFlow = MutableStateFlow<Map<Pair<String, String>, DownloadTaskState>>(emptyMap())
+
+    var startDownloadCalls: Int = 0
+        private set
+    var cancelDownloadCalls: Int = 0
+        private set
+    var retryDownloadCalls: Int = 0
+        private set
+    var nextStartFailureReason: DownloadFailureReason? = null
+
+    fun putSavedVersion(version: LocalDownloadedFileVersion) {
+        savedVersionsFlow.update { current ->
+            current.filterNot { it.fileId == version.fileId && it.versionId == version.versionId } + version
+        }
+    }
+
+    fun setTaskState(state: DownloadTaskState) {
+        activeTasksFlow.update { it + ((state.fileId to state.versionId) to state) }
+    }
+
+    override fun observeAllSavedVersions(): Flow<List<LocalDownloadedFileVersion>> = savedVersionsFlow
+
+    override fun observeFileOfflineState(
+        fileId: String,
+        activeVersionId: String?
+    ): Flow<StudyFileOfflineState> {
+        return combine(savedVersionsFlow, activeTasksFlow) { saved, tasks ->
+            val forFile = saved.filter { it.fileId == fileId }
+            val task = activeVersionId?.let { tasks[fileId to it] }
+            StudyFileOfflineState(
+                fileId = fileId,
+                activeVersionId = activeVersionId,
+                activeVersionDownload = task,
+                savedVersions = forFile
+            )
+        }
+    }
+
+    override fun observeSectionOfflineStates(
+        files: List<StudyFileMetadata>
+    ): Flow<Map<String, StudyFileOfflineState>> {
+        return combine(savedVersionsFlow, activeTasksFlow) { saved, tasks ->
+            files.associate { file ->
+                val forFile = saved.filter { it.fileId == file.id }
+                val task = file.activeVersionId?.let { tasks[file.id to it] }
+                file.id to StudyFileOfflineState(
+                    fileId = file.id,
+                    activeVersionId = file.activeVersionId,
+                    activeVersionDownload = task,
+                    savedVersions = forFile
+                )
+            }
+        }
+    }
+
+    override suspend fun getVerifiedLocalVersion(
+        fileId: String,
+        versionId: String?
+    ): LocalDownloadedFileVersion? {
+        return if (!versionId.isNullOrBlank()) {
+            savedVersionsFlow.value.firstOrNull { it.fileId == fileId && it.versionId == versionId }
+        } else {
+            savedVersionsFlow.value.firstOrNull { it.fileId == fileId }
+        }
+    }
+
+    override suspend fun getSavedVersionsForFile(fileId: String): List<LocalDownloadedFileVersion> {
+        return savedVersionsFlow.value.filter { it.fileId == fileId }
+    }
+
+    override suspend fun getSavedVersionsForSection(sectionId: String): List<LocalDownloadedFileVersion> {
+        return savedVersionsFlow.value.filter { it.sectionId == sectionId }
+    }
+
+    override suspend fun startDownload(
+        file: StudyFileMetadata,
+        expectedFileSizeBytes: Long?,
+        expectedChecksumSha256: String?
+    ): AppResult<DownloadTaskState> {
+        startDownloadCalls++
+        return startDownload(
+            OfflineDownloadRequest(
+                fileId = file.id,
+                versionId = file.activeVersionId.orEmpty(),
+                versionNumber = file.activeVersionNumber,
+                versionLabel = file.activeVersionLabel,
+                fileTitle = file.title,
+                sectionId = file.sectionId,
+                expectedFileSizeBytes = expectedFileSizeBytes,
+                expectedChecksumSha256 = expectedChecksumSha256
+            )
+        )
+    }
+
+    override suspend fun startDownload(request: OfflineDownloadRequest): AppResult<DownloadTaskState> {
+        val session = authRepository?.sessionFlow?.value
+        if (session == null || !session.isSignedIn || !session.canDownloadOfflineFiles) {
+            val message = "Signing in with a student account is required."
+            return AppResult.Error(
+                message = message,
+                cause = DownloadException(DownloadFailureReason.UNAUTHENTICATED_GUEST, message)
+            )
+        }
+        nextStartFailureReason?.let { reason ->
+            return AppResult.Error(
+                message = "Failed: $reason",
+                cause = DownloadException(reason, "Failed: $reason")
+            )
+        }
+        val queued = DownloadTaskState(
+            fileId = request.fileId,
+            versionId = request.versionId,
+            versionNumber = request.versionNumber,
+            versionLabel = request.versionLabel,
+            status = DownloadStatus.QUEUED
+        )
+        setTaskState(queued)
+        return AppResult.Success(queued)
+    }
+
+    override suspend fun retryDownload(
+        file: StudyFileMetadata,
+        expectedFileSizeBytes: Long?,
+        expectedChecksumSha256: String?
+    ): AppResult<DownloadTaskState> {
+        retryDownloadCalls++
+        return startDownload(file, expectedFileSizeBytes, expectedChecksumSha256)
+    }
+
+    override suspend fun cancelDownload(fileId: String, versionId: String): AppResult<Unit> {
+        cancelDownloadCalls++
+        setTaskState(
+            DownloadTaskState(
+                fileId = fileId,
+                versionId = versionId,
+                status = DownloadStatus.CANCELLED
+            )
+        )
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun deleteLocalVersion(fileId: String, versionId: String): AppResult<Unit> {
+        savedVersionsFlow.update { current ->
+            current.filterNot { it.fileId == fileId && it.versionId == versionId }
+        }
+        activeTasksFlow.update { it - (fileId to versionId) }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun cleanupOrphanedTempFiles() = Unit
 }

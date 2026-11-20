@@ -160,7 +160,8 @@ fun HaqibatiNavHost(
             val adminViewModel: AdminPortalViewModel = viewModel(
                 factory = AdminPortalViewModel.provideFactory(
                     authRepository = appContainer.authRepository,
-                    adminCatalogRepository = appContainer.adminCatalogRepository
+                    adminCatalogRepository = appContainer.adminCatalogRepository,
+                    r2BrokerStatus = appContainer.pdfVersionStorageBroker.getBrokerStatus()
                 )
             )
             AdminPortalScreen(

@@ -3,10 +3,18 @@ package com.studentlearning.platform2026.core.di
 import android.content.Context
 import com.studentlearning.platform2026.core.common.DefaultDispatcherProvider
 import com.studentlearning.platform2026.core.common.DispatcherProvider
+import com.studentlearning.platform2026.data.download.DownloadExecutionEngine
+import com.studentlearning.platform2026.data.download.DownloadStreamFetcher
+import com.studentlearning.platform2026.data.download.DownloadTaskScheduler
+import com.studentlearning.platform2026.data.download.HttpDownloadStreamFetcher
+import com.studentlearning.platform2026.data.download.LocalPdfStorageManager
+import com.studentlearning.platform2026.data.download.WorkManagerDownloadScheduler
+import com.studentlearning.platform2026.data.local.OfflineDownloadsDataSource
 import com.studentlearning.platform2026.data.local.PreferencesDataSource
 import com.studentlearning.platform2026.data.local.ReadingProgressDataSource
 import com.studentlearning.platform2026.data.pdf.AndroidPdfDocumentSessionFactory
 import com.studentlearning.platform2026.data.pdf.BrokeredPdfFileSourceDataSource
+import com.studentlearning.platform2026.data.pdf.BrokeredPdfVersionStorageDataSource
 import com.studentlearning.platform2026.data.pdf.HttpPdfContentFetcher
 import com.studentlearning.platform2026.data.pdf.PdfContentFetcher
 import com.studentlearning.platform2026.data.pdf.PdfDocumentSessionFactory
@@ -22,6 +30,7 @@ import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogDat
 import com.studentlearning.platform2026.data.repository.AdminCatalogRepositoryImpl
 import com.studentlearning.platform2026.data.repository.AuthRepositoryImpl
 import com.studentlearning.platform2026.data.repository.CatalogRepositoryImpl
+import com.studentlearning.platform2026.data.repository.OfflineDownloadsRepositoryImpl
 import com.studentlearning.platform2026.data.repository.PdfDocumentRepositoryImpl
 import com.studentlearning.platform2026.data.repository.PreferencesRepositoryImpl
 import com.studentlearning.platform2026.data.repository.ReadingProgressRepositoryImpl
@@ -29,7 +38,9 @@ import com.studentlearning.platform2026.data.repository.SystemStatusRepositoryIm
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
+import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
+import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker
 import com.studentlearning.platform2026.domain.repository.PreferencesRepository
 import com.studentlearning.platform2026.domain.repository.ReadingProgressRepository
 import com.studentlearning.platform2026.domain.repository.SystemStatusRepository
@@ -51,6 +62,10 @@ class AppContainer(context: Context) {
 
     private val readingProgressDataSource: ReadingProgressDataSource by lazy {
         ReadingProgressDataSource(appContext)
+    }
+
+    private val offlineDownloadsDataSource: OfflineDownloadsDataSource by lazy {
+        OfflineDownloadsDataSource(appContext)
     }
 
     private val firebaseStatusDataSource: FirebaseStatusDataSource by lazy {
@@ -75,6 +90,10 @@ class AppContainer(context: Context) {
         BrokeredPdfFileSourceDataSource(brokerEndpointBaseUrl = null)
     }
 
+    val pdfVersionStorageBroker: PdfVersionStorageBroker by lazy {
+        BrokeredPdfVersionStorageDataSource(brokerEndpointBaseUrl = null)
+    }
+
     private val pdfContentFetcher: PdfContentFetcher by lazy {
         HttpPdfContentFetcher(
             sessionCacheDir = File(appContext.cacheDir, "pdf_viewer_session")
@@ -88,6 +107,28 @@ class AppContainer(context: Context) {
         )
     }
 
+    private val localPdfStorageManager: LocalPdfStorageManager by lazy {
+        LocalPdfStorageManager(storageRoot = appContext.filesDir)
+    }
+
+    private val downloadStreamFetcher: DownloadStreamFetcher by lazy {
+        HttpDownloadStreamFetcher()
+    }
+
+    val downloadExecutionEngine: DownloadExecutionEngine by lazy {
+        DownloadExecutionEngine(
+            sourceDataSource = pdfFileSourceDataSource,
+            streamFetcher = downloadStreamFetcher,
+            storageManager = localPdfStorageManager,
+            downloadsDataSource = offlineDownloadsDataSource,
+            dispatcherProvider = dispatcherProvider
+        )
+    }
+
+    private val downloadTaskScheduler: DownloadTaskScheduler by lazy {
+        WorkManagerDownloadScheduler(context = appContext)
+    }
+
     val preferencesRepository: PreferencesRepository by lazy {
         PreferencesRepositoryImpl(preferencesDataSource)
     }
@@ -99,12 +140,30 @@ class AppContainer(context: Context) {
         )
     }
 
+    val authRepository: AuthRepository by lazy {
+        AuthRepositoryImpl(
+            remoteDataSource = authRemoteDataSource,
+            dispatcherProvider = dispatcherProvider
+        )
+    }
+
+    val offlineDownloadsRepository: OfflineDownloadsRepository by lazy {
+        OfflineDownloadsRepositoryImpl(
+            authRepository = authRepository,
+            downloadsDataSource = offlineDownloadsDataSource,
+            storageManager = localPdfStorageManager,
+            taskScheduler = downloadTaskScheduler,
+            dispatcherProvider = dispatcherProvider
+        )
+    }
+
     val pdfDocumentRepository: PdfDocumentRepository by lazy {
         PdfDocumentRepositoryImpl(
             sourceDataSource = pdfFileSourceDataSource,
             contentFetcher = pdfContentFetcher,
             sessionFactory = pdfSessionFactory,
-            dispatcherProvider = dispatcherProvider
+            dispatcherProvider = dispatcherProvider,
+            offlineDownloadsRepository = offlineDownloadsRepository
         )
     }
 
@@ -115,13 +174,6 @@ class AppContainer(context: Context) {
     val catalogRepository: CatalogRepository by lazy {
         CatalogRepositoryImpl(
             remoteDataSource = catalogRemoteDataSource,
-            dispatcherProvider = dispatcherProvider
-        )
-    }
-
-    val authRepository: AuthRepository by lazy {
-        AuthRepositoryImpl(
-            remoteDataSource = authRemoteDataSource,
             dispatcherProvider = dispatcherProvider
         )
     }

@@ -110,6 +110,12 @@ fun AdminPortalScreen(
         onToggleStudyFilePublish = viewModel::requestToggleStudyFilePublished,
         onToggleStudyFileArchive = viewModel::requestToggleStudyFileArchived,
         onMoveStudyFile = viewModel::moveStudyFile,
+        onOpenFileVersions = viewModel::openFileVersionsManager,
+        onDismissFileVersions = viewModel::dismissFileVersionsManager,
+        onRetryFileVersions = { viewModel.loadFileVersions() },
+        onOpenCreateVersion = viewModel::openCreateVersionDialog,
+        onOpenEditVersion = viewModel::openEditVersionDialog,
+        onRequestPublishVersion = viewModel::requestPublishStudyFileVersion,
         onDismissEditor = viewModel::dismissEditorDialog,
         onSaveBranch = { editing, customId, name, order, isPublished ->
             viewModel.saveBranch(editing, customId, name, order, isPublished)
@@ -129,6 +135,17 @@ fun AdminPortalScreen(
                 description = desc,
                 order = order,
                 isPublished = pub
+            )
+        },
+        onSaveStudyFileVersion = { fileId, editing, customId, versionNumber, label, notes, pub ->
+            viewModel.saveStudyFileVersion(
+                fileId = fileId,
+                editing = editing,
+                customId = customId,
+                versionNumber = versionNumber,
+                versionLabel = label,
+                versionNotes = notes,
+                publishImmediately = pub
             )
         },
         onConfirmAction = viewModel::confirmPendingAction,
@@ -170,11 +187,18 @@ fun AdminPortalScreenContent(
     onToggleStudyFilePublish: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onToggleStudyFileArchive: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onMoveStudyFile: (com.studentlearning.platform2026.domain.model.StudyFileMetadata, Boolean) -> Unit,
+    onOpenFileVersions: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit = {},
+    onDismissFileVersions: () -> Unit = {},
+    onRetryFileVersions: () -> Unit = {},
+    onOpenCreateVersion: () -> Unit = {},
+    onOpenEditVersion: (com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata) -> Unit = {},
+    onRequestPublishVersion: (com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata) -> Unit = {},
     onDismissEditor: () -> Unit,
     onSaveBranch: (com.studentlearning.platform2026.domain.model.StudyBranch?, String?, String, Int, Boolean) -> Unit,
     onSaveSubject: (String, com.studentlearning.platform2026.domain.model.StudySubject?, String?, String, Int, Boolean) -> Unit,
     onSaveSection: (String, com.studentlearning.platform2026.domain.model.StudySection?, String?, String, Int, Boolean) -> Unit,
     onSaveStudyFile: (String, com.studentlearning.platform2026.domain.model.StudyFileMetadata?, String?, String, String?, Int, Boolean) -> Unit,
+    onSaveStudyFileVersion: (String, com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata?, String?, Int, String, String?, Boolean) -> Unit = { _, _, _, _, _, _, _ -> },
     onConfirmAction: () -> Unit,
     onDismissConfirmation: () -> Unit,
     modifier: Modifier = Modifier
@@ -268,7 +292,8 @@ fun AdminPortalScreenContent(
                         onOpenEditStudyFile = onOpenEditStudyFile,
                         onToggleStudyFilePublish = onToggleStudyFilePublish,
                         onToggleStudyFileArchive = onToggleStudyFileArchive,
-                        onMoveStudyFile = onMoveStudyFile
+                        onMoveStudyFile = onMoveStudyFile,
+                        onOpenFileVersions = onOpenFileVersions
                     )
                 }
             }
@@ -276,6 +301,22 @@ fun AdminPortalScreenContent(
     }
 
     if (uiState.session.canPerformAdminActions) {
+        uiState.versionsDialogFile?.let { file ->
+            AdminFileVersionsDialog(
+                file = file,
+                versions = uiState.fileVersions,
+                isLoading = uiState.isLoadingFileVersions,
+                errorReason = uiState.fileVersionsError,
+                r2BrokerStatus = uiState.r2BrokerStatus,
+                canMutate = !uiState.isSubmitting,
+                onDismiss = onDismissFileVersions,
+                onRetry = onRetryFileVersions,
+                onAddVersion = onOpenCreateVersion,
+                onEditVersion = onOpenEditVersion,
+                onPublishVersion = onRequestPublishVersion
+            )
+        }
+
         uiState.editorDialog?.let { dialog ->
             AdminEditorDialogHost(
                 dialogState = dialog,
@@ -302,6 +343,18 @@ fun AdminPortalScreenContent(
                         title,
                         desc,
                         order,
+                        pub
+                    )
+                },
+                onSaveStudyFileVersion = { fileId, customId, versionNumber, label, notes, pub ->
+                    val editing = (dialog as? AdminEditorDialogState.StudyFileVersionEditor)?.editing
+                    onSaveStudyFileVersion(
+                        fileId,
+                        editing,
+                        customId,
+                        versionNumber,
+                        label,
+                        notes,
                         pub
                     )
                 }
@@ -619,7 +672,8 @@ private fun AdminDashboardContent(
     onOpenEditStudyFile: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onToggleStudyFilePublish: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onToggleStudyFileArchive: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
-    onMoveStudyFile: (com.studentlearning.platform2026.domain.model.StudyFileMetadata, Boolean) -> Unit
+    onMoveStudyFile: (com.studentlearning.platform2026.domain.model.StudyFileMetadata, Boolean) -> Unit,
+    onOpenFileVersions: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     val tabs = AdminManagementSection.entries
@@ -890,6 +944,7 @@ private fun AdminDashboardContent(
                                         onMoveUp = { onMoveStudyFile(file, true) },
                                         onMoveDown = { onMoveStudyFile(file, false) },
                                         onEdit = { onOpenEditStudyFile(file) },
+                                        onManageVersions = { onOpenFileVersions(file) },
                                         onTogglePublish = { onToggleStudyFilePublish(file) },
                                         onToggleArchive = { onToggleStudyFileArchive(file) }
                                     )
@@ -1124,6 +1179,7 @@ private fun AdminStudyFileCard(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onEdit: () -> Unit,
+    onManageVersions: () -> Unit,
     onTogglePublish: () -> Unit,
     onToggleArchive: () -> Unit
 ) {
@@ -1229,6 +1285,9 @@ private fun AdminStudyFileCard(
                     Icon(imageVector = Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(text = stringResource(R.string.admin_action_edit))
+                }
+                FilledTonalButton(onClick = onManageVersions, enabled = !isSubmitting) {
+                    Text(text = stringResource(R.string.admin_manage_versions))
                 }
                 OutlinedButton(onClick = onTogglePublish, enabled = !isSubmitting) {
                     Text(
@@ -1343,6 +1402,9 @@ private fun resolveAdminSuccessText(message: AdminSuccessMessage?): String {
         AdminSuccessMessage.SECTION_UPDATED -> R.string.admin_success_section_updated
         AdminSuccessMessage.FILE_CREATED -> R.string.admin_success_file_created
         AdminSuccessMessage.FILE_UPDATED -> R.string.admin_success_file_updated
+        AdminSuccessMessage.VERSION_CREATED -> R.string.admin_success_version_created
+        AdminSuccessMessage.VERSION_UPDATED -> R.string.admin_success_version_updated
+        AdminSuccessMessage.VERSION_PUBLISHED -> R.string.admin_success_version_published
         AdminSuccessMessage.PUBLISH_UPDATED -> R.string.admin_success_publish_updated
         AdminSuccessMessage.ARCHIVE_UPDATED -> R.string.admin_success_archive_updated
         AdminSuccessMessage.REORDERED -> R.string.admin_success_reordered

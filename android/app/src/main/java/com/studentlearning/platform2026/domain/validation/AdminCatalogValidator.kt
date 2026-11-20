@@ -26,9 +26,26 @@ data class ValidatedStudyFileUpdateInput(
     val order: Int
 )
 
+data class ValidatedStudyFileVersionCreateInput(
+    val customVersionId: String?,
+    val fileId: String,
+    val versionNumber: Int,
+    val versionLabel: String,
+    val versionNotes: String?
+)
+
+data class ValidatedStudyFileVersionUpdateInput(
+    val fileId: String,
+    val versionId: String,
+    val versionLabel: String,
+    val versionNotes: String?
+)
+
 object AdminCatalogValidator {
 
     private const val MAX_NAME_LENGTH = 120
+    private const val MAX_VERSION_LABEL_LENGTH = 64
+    private const val MAX_VERSION_NOTES_LENGTH = 500
     private val DOCUMENT_ID_REGEX = Regex("^[a-zA-Z0-9_-]{2,64}$")
 
     fun validateSignIn(email: String, password: String): Pair<String, String> =
@@ -116,6 +133,49 @@ object AdminCatalogValidator {
         )
     }
 
+    fun validateStudyFileVersionCreate(
+        fileId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        customVersionId: String? = null
+    ): ValidatedStudyFileVersionCreateInput {
+        val normalizedFileId = validateRequiredDocumentId(fileId)
+        val normalizedCustomId = normalizeAndValidateCustomId(customVersionId)
+        if (versionNumber < 1) {
+            throw validationException(AdminValidationError.INVALID_VERSION_NUMBER)
+        }
+        val normalizedLabel = normalizeAndValidateVersionLabel(versionLabel)
+        val normalizedNotes = normalizeAndValidateVersionNotes(versionNotes)
+
+        return ValidatedStudyFileVersionCreateInput(
+            customVersionId = normalizedCustomId,
+            fileId = normalizedFileId,
+            versionNumber = versionNumber,
+            versionLabel = normalizedLabel,
+            versionNotes = normalizedNotes
+        )
+    }
+
+    fun validateStudyFileVersionUpdate(
+        fileId: String,
+        versionId: String,
+        versionLabel: String,
+        versionNotes: String?
+    ): ValidatedStudyFileVersionUpdateInput {
+        val normalizedFileId = validateRequiredDocumentId(fileId)
+        val normalizedVersionId = validateRequiredDocumentId(versionId)
+        val normalizedLabel = normalizeAndValidateVersionLabel(versionLabel)
+        val normalizedNotes = normalizeAndValidateVersionNotes(versionNotes)
+
+        return ValidatedStudyFileVersionUpdateInput(
+            fileId = normalizedFileId,
+            versionId = normalizedVersionId,
+            versionLabel = normalizedLabel,
+            versionNotes = normalizedNotes
+        )
+    }
+
     private fun normalizeAndValidateName(name: String): String {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
@@ -123,6 +183,25 @@ object AdminCatalogValidator {
         }
         if (trimmed.length > MAX_NAME_LENGTH) {
             throw validationException(AdminValidationError.NAME_TOO_LONG)
+        }
+        return trimmed
+    }
+
+    private fun normalizeAndValidateVersionLabel(label: String): String {
+        val trimmed = label.trim()
+        if (trimmed.isEmpty()) {
+            throw validationException(AdminValidationError.EMPTY_VERSION_LABEL)
+        }
+        if (trimmed.length > MAX_VERSION_LABEL_LENGTH) {
+            throw validationException(AdminValidationError.VERSION_LABEL_TOO_LONG)
+        }
+        return trimmed
+    }
+
+    private fun normalizeAndValidateVersionNotes(notes: String?): String? {
+        val trimmed = notes?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (trimmed.length > MAX_VERSION_NOTES_LENGTH) {
+            throw validationException(AdminValidationError.VERSION_NOTES_TOO_LONG)
         }
         return trimmed
     }

@@ -6,11 +6,13 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Collections
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Defaults
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Fields
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Subcollections
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 
@@ -70,6 +72,29 @@ interface AdminCatalogRemoteDataSource {
     )
     suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String)
     suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String)
+
+    suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata>
+    suspend fun createStudyFileVersion(
+        customId: String?,
+        fileId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        publishImmediately: Boolean,
+        actorUid: String
+    ): StudyFileVersionMetadata
+    suspend fun updateStudyFileVersionMetadata(
+        fileId: String,
+        versionId: String,
+        versionLabel: String,
+        versionNotes: String?,
+        actorUid: String
+    )
+    suspend fun publishStudyFileVersion(
+        fileId: String,
+        versionId: String,
+        actorUid: String
+    )
 
     suspend fun reorderBranches(
         firstId: String,
@@ -440,6 +465,309 @@ class FirestoreAdminCatalogDataSource(
             .document(fileId)
             .update(payload)
             .awaitResult()
+    }
+
+    override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> {
+        if (fileId.isBlank()) return emptyList()
+
+        val firestore = requireConfiguredFirestore()
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val fileSnap = fileRef.get().awaitResult()
+        if (!fileSnap.exists()) {
+            throw AdminException(
+                reason = AdminFailureReason.NOT_FOUND,
+                message = "Study file '$fileId' does not exist."
+            )
+        }
+
+        val snapshot = fileRef.collection(Subcollections.VERSIONS)
+            .get()
+            .awaitResult()
+
+        val rawDocuments = snapshot.documents.map { it.id to (it.data ?: emptyMap()) }
+        return FirestoreAdminCatalogMapper.mapStudyFileVersionsForAdmin(
+            documents = rawDocuments,
+            expectedFileId = fileId
+        )
+    }
+
+    override suspend fun createStudyFileVersion(
+        customId: String?,
+        fileId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        publishImmediately: Boolean,
+        actorUid: String
+    ): StudyFileVersionMetadata {
+        val firestore = requireConfiguredFirestore()
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
+        val newVersionRef = if (customId != null) {
+            versionsCollection.document(customId)
+        } else {
+            versionsCollection.document()
+        }
+
+        val existingVersionRefs = versionsCollection.get().awaitResult()
+            .documents
+            .map { it.reference }
+
+        val timestamp = FieldValue.serverTimestamp()
+        val createPayload = FirestoreAdminCatalogMapper.buildStudyFileVersionCreatePayload(
+            fileReference = fileRef,
+            versionNumber = versionNumber,
+            versionLabel = versionLabel,
+            versionNotes = versionNotes,
+            isPublished = publishImmediately,
+            actorUid = actorUid,
+            timestampValue = timestamp
+        )
+
+        firestore.runTransaction { transaction ->
+            val fileSnap = transaction.get(fileRef)
+            if (!fileSnap.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file '$fileId' does not exist."
+                )
+            }
+
+            val candidateSnap = transaction.get(newVersionRef)
+            if (candidateSnap.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.INVALID_DOCUMENT_ID,
+                    message = "A version with ID '${newVersionRef.id}' already exists."
+                )
+            }
+
+            val refsToRead = buildList {
+                addAll(existingVersionRefs)
+                val activeId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim().orEmpty()
+                if (activeId.isNotEmpty()) {
+                    add(versionsCollection.document(activeId))
+                }
+            }.distinctBy { it.path }
+
+            val existingSnapshots = refsToRead
+                .filter { it.path != newVersionRef.path }
+                .map { transaction.get(it) }
+
+            for (existingSnap in existingSnapshots) {
+                if (!existingSnap.exists()) continue
+                val existingNumber = (existingSnap.get(Fields.VERSION_NUMBER) as? Number)?.toInt()
+                if (existingNumber == versionNumber) {
+                    throw AdminException(
+                        reason = AdminFailureReason.VALIDATION_ERROR,
+                        validationError = AdminValidationError.INVALID_VERSION_NUMBER,
+                        message = "Version number $versionNumber already exists for file '$fileId'."
+                    )
+                }
+            }
+
+            // Writes after all reads in the transaction
+            if (publishImmediately) {
+                for (existingSnap in existingSnapshots) {
+                    if (!existingSnap.exists()) continue
+                    if (existingSnap.getBoolean(Fields.IS_PUBLISHED) == true) {
+                        transaction.update(
+                            existingSnap.reference,
+                            mapOf(
+                                Fields.IS_PUBLISHED to false,
+                                Fields.UPDATED_BY_UID to actorUid,
+                                Fields.UPDATED_AT to timestamp
+                            )
+                        )
+                    }
+                }
+            }
+
+            transaction.set(newVersionRef, createPayload)
+
+            if (publishImmediately) {
+                val pointerPayload = FirestoreAdminCatalogMapper.buildActiveVersionPointerPayload(
+                    versionId = newVersionRef.id,
+                    versionNumber = versionNumber,
+                    versionLabel = versionLabel,
+                    publishedAtValue = timestamp,
+                    actorUid = actorUid,
+                    timestampValue = timestamp
+                )
+                transaction.update(fileRef, pointerPayload)
+            }
+            null
+        }.awaitResult()
+
+        return StudyFileVersionMetadata(
+            versionId = newVersionRef.id,
+            fileId = fileId,
+            versionNumber = versionNumber,
+            versionLabel = versionLabel,
+            versionNotes = versionNotes,
+            r2ObjectKey = null,
+            fileSizeBytes = null,
+            checksumSha256 = null,
+            isPublished = publishImmediately,
+            fileReferencePath = fileRef.path,
+            updatedByUid = actorUid,
+            isArchived = false
+        )
+    }
+
+    override suspend fun updateStudyFileVersionMetadata(
+        fileId: String,
+        versionId: String,
+        versionLabel: String,
+        versionNotes: String?,
+        actorUid: String
+    ) {
+        val firestore = requireConfiguredFirestore()
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val versionRef = fileRef.collection(Subcollections.VERSIONS).document(versionId)
+        val timestamp = FieldValue.serverTimestamp()
+        val updatePayload = FirestoreAdminCatalogMapper.buildStudyFileVersionMetadataUpdatePayload(
+            versionLabel = versionLabel,
+            versionNotes = versionNotes,
+            actorUid = actorUid,
+            timestampValue = timestamp
+        )
+
+        firestore.runTransaction { transaction ->
+            val fileSnap = transaction.get(fileRef)
+            if (!fileSnap.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file '$fileId' does not exist."
+                )
+            }
+            val versionSnap = transaction.get(versionRef)
+            if (!versionSnap.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file version '$versionId' does not exist."
+                )
+            }
+            val parentRef = versionSnap.getDocumentReference(Fields.FILE_ID)
+            if (parentRef?.path != fileRef.path) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
+                    message = "Version '$versionId' does not belong to file '$fileId'."
+                )
+            }
+
+            transaction.update(versionRef, updatePayload)
+
+            val isCurrentActive = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim() == versionId &&
+                versionSnap.getBoolean(Fields.IS_PUBLISHED) == true
+            if (isCurrentActive) {
+                transaction.update(
+                    fileRef,
+                    mapOf(
+                        Fields.ACTIVE_VERSION_LABEL to versionLabel,
+                        Fields.UPDATED_BY_UID to actorUid,
+                        Fields.UPDATED_AT to timestamp
+                    )
+                )
+            }
+            null
+        }.awaitResult()
+    }
+
+    override suspend fun publishStudyFileVersion(
+        fileId: String,
+        versionId: String,
+        actorUid: String
+    ) {
+        val firestore = requireConfiguredFirestore()
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
+        val targetVersionRef = versionsCollection.document(versionId)
+
+        val existingVersionRefs = versionsCollection.get().awaitResult()
+            .documents
+            .map { it.reference }
+
+        val timestamp = FieldValue.serverTimestamp()
+
+        firestore.runTransaction { transaction ->
+            val fileSnap = transaction.get(fileRef)
+            if (!fileSnap.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file '$fileId' does not exist."
+                )
+            }
+
+            val refsToRead = buildList {
+                add(targetVersionRef)
+                addAll(existingVersionRefs)
+                val currentActiveId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim().orEmpty()
+                if (currentActiveId.isNotEmpty()) {
+                    add(versionsCollection.document(currentActiveId))
+                }
+            }.distinctBy { it.path }
+
+            val snapshotsById = refsToRead.associate { ref ->
+                ref.id to transaction.get(ref)
+            }
+
+            val targetSnap = snapshotsById[versionId]
+            if (targetSnap == null || !targetSnap.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file version '$versionId' does not exist."
+                )
+            }
+
+            val mappedTarget = FirestoreAdminCatalogMapper.mapStudyFileVersionForAdmin(
+                documentId = targetSnap.id,
+                data = targetSnap.data ?: emptyMap(),
+                expectedFileId = fileId
+            ) ?: throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
+                message = "Version '$versionId' has invalid parent link or metadata."
+            )
+
+            // All writes after reads: enforce at most ONE active published version without
+            // deleting any historical version documents or overwriting their R2 object keys.
+            for ((docId, snap) in snapshotsById) {
+                if (docId == versionId || !snap.exists()) continue
+                if (snap.getBoolean(Fields.IS_PUBLISHED) == true) {
+                    transaction.update(
+                        snap.reference,
+                        mapOf(
+                            Fields.IS_PUBLISHED to false,
+                            Fields.UPDATED_BY_UID to actorUid,
+                            Fields.UPDATED_AT to timestamp
+                        )
+                    )
+                }
+            }
+
+            transaction.update(
+                targetVersionRef,
+                mapOf(
+                    Fields.IS_PUBLISHED to true,
+                    Fields.PUBLISHED_AT to timestamp,
+                    Fields.UPDATED_BY_UID to actorUid,
+                    Fields.UPDATED_AT to timestamp
+                )
+            )
+
+            val pointerPayload = FirestoreAdminCatalogMapper.buildActiveVersionPointerPayload(
+                versionId = mappedTarget.versionId,
+                versionNumber = mappedTarget.versionNumber,
+                versionLabel = mappedTarget.versionLabel,
+                publishedAtValue = timestamp,
+                actorUid = actorUid,
+                timestampValue = timestamp
+            )
+            transaction.update(fileRef, pointerPayload)
+            null
+        }.awaitResult()
     }
 
     override suspend fun reorderBranches(

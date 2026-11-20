@@ -271,18 +271,22 @@ fun MainShellScreen(
                     val sectionFilesViewModel: SectionFilesViewModel = viewModel(
                         factory = SectionFilesViewModel.provideFactory(
                             sectionId = sectionId,
-                            catalogRepository = appContainer.catalogRepository
+                            catalogRepository = appContainer.catalogRepository,
+                            authRepository = appContainer.authRepository,
+                            offlineDownloadsRepository = appContainer.offlineDownloadsRepository
                         )
                     )
                     SectionFilesScreen(
                         viewModel = sectionFilesViewModel,
-                        onOpenStudyFile = { file ->
+                        onOpenStudyVersion = { fileId, fileTitle, versionId ->
                             onNavigateToPdfReader(
-                                file.id,
-                                file.title,
-                                file.activeVersionId
+                                fileId,
+                                fileTitle,
+                                versionId
                             )
-                        }
+                        },
+                        onNavigateToSignIn = onNavigateToSignIn,
+                        onNavigateToSignUp = onNavigateToSignUp
                     )
                 }
             }
@@ -290,13 +294,15 @@ fun MainShellScreen(
             composable(route = MainTab.DOWNLOADS.route) {
                 val downloadsViewModel: DownloadsViewModel = viewModel(
                     factory = DownloadsViewModel.provideFactory(
-                        authRepository = appContainer.authRepository
+                        authRepository = appContainer.authRepository,
+                        offlineDownloadsRepository = appContainer.offlineDownloadsRepository
                     )
                 )
                 DownloadsScreen(
                     viewModel = downloadsViewModel,
                     onNavigateToSignIn = onNavigateToSignIn,
-                    onNavigateToSignUp = onNavigateToSignUp
+                    onNavigateToSignUp = onNavigateToSignUp,
+                    onOpenLocalVersion = onNavigateToPdfReader
                 )
             }
 

@@ -267,7 +267,7 @@ fun PdfReaderScreenContent(
                 }
 
                 uiState.documentSession != null -> {
-                    key(uiState.fileId) {
+                    key(uiState.fileId, uiState.activeVersionId) {
                         PdfPagesViewport(
                             uiState = uiState,
                             session = uiState.documentSession,
@@ -631,13 +631,23 @@ private fun PdfPagesViewport(
         initialFirstVisibleItemIndex = (uiState.currentPage - 1)
             .coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
     )
-    var panOffset by rememberSaveable(uiState.fileId, stateSaver = PdfViewportOffsetSaver) {
+    var panOffset by rememberSaveable(
+        uiState.fileId,
+        uiState.activeVersionId,
+        stateSaver = PdfViewportOffsetSaver
+    ) {
         mutableStateOf(PdfViewportOffset())
     }
-    var lastHandledScrollSessionId by rememberSaveable(uiState.fileId) {
+    var lastHandledScrollSessionId by rememberSaveable(
+        uiState.fileId,
+        uiState.activeVersionId
+    ) {
         mutableStateOf(uiState.scrollRequestSessionId)
     }
-    var lastHandledScrollRequestToken by rememberSaveable(uiState.fileId) {
+    var lastHandledScrollRequestToken by rememberSaveable(
+        uiState.fileId,
+        uiState.activeVersionId
+    ) {
         mutableIntStateOf(0)
     }
 

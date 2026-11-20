@@ -39,13 +39,15 @@ object FirestoreCatalogSchema {
         const val MIME_TYPE = "mimeType"
         const val STORAGE_PROVIDER = "storageProvider"
 
-        // Optional pointer fields on parent `study_files/{fileId}` pointing to the active
+        // Pointer fields on parent `study_files/{fileId}` pointing to the single active
         // published document inside `study_files/{fileId}/versions/{versionId}`.
         const val ACTIVE_VERSION_ID = "activeVersionId"
         const val ACTIVE_VERSION_NUMBER = "activeVersionNumber"
         const val ACTIVE_VERSION_LABEL = "activeVersionLabel"
+        const val ACTIVE_VERSION_PUBLISHED_AT = "activeVersionPublishedAt"
 
         // Version-specific fields belonging inside `study_files/{fileId}/versions/{versionId}`.
+        const val FILE_ID = "fileId"
         const val VERSION_NUMBER = "versionNumber"
         const val VERSION_LABEL = "versionLabel"
         const val VERSION_NOTES = "versionNotes"

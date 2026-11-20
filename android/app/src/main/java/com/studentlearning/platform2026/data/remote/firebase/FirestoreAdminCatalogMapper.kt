@@ -10,6 +10,7 @@ import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import java.io.IOException
@@ -134,6 +135,9 @@ object FirestoreAdminCatalogMapper {
         val activeVersionId = (data[Fields.ACTIVE_VERSION_ID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val activeVersionNumber = (data[Fields.ACTIVE_VERSION_NUMBER] as? Number)?.toInt()?.takeIf { it >= 1 }
         val activeVersionLabel = (data[Fields.ACTIVE_VERSION_LABEL] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val activeVersionPublishedAt = FirestoreCatalogMapper.extractEpochMillis(
+            data[Fields.ACTIVE_VERSION_PUBLISHED_AT]
+        )
         val createdByUid = (data[Fields.CREATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val updatedByUid = (data[Fields.UPDATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
 
@@ -152,7 +156,8 @@ object FirestoreAdminCatalogMapper {
             activeVersionNumber = activeVersionNumber,
             activeVersionLabel = activeVersionLabel,
             createdByUid = createdByUid,
-            updatedByUid = updatedByUid
+            updatedByUid = updatedByUid,
+            activeVersionPublishedAtEpochMillis = activeVersionPublishedAt
         )
     }
 
@@ -166,6 +171,71 @@ object FirestoreAdminCatalogMapper {
                 compareBy<StudyFileMetadata> { it.isArchived }
                     .thenBy { it.order }
                     .thenBy { it.title }
+            )
+    }
+
+    /**
+     * Maps a `study_files/{fileId}/versions/{versionId}` document while strictly validating its
+     * parent [Fields.FILE_ID] DocumentReference points to `study_files/{expectedFileId}`.
+     */
+    fun mapStudyFileVersionForAdmin(
+        id: String,
+        data: Map<String, Any?>,
+        expectedFileId: String
+    ): StudyFileVersionMetadata? {
+        if (id.isBlank() || expectedFileId.isBlank()) return null
+
+        val fileRef = FirestoreCatalogMapper.extractReferenceTarget(data[Fields.FILE_ID]) ?: return null
+        if (fileRef.collectionId != Collections.STUDY_FILES || fileRef.documentId != expectedFileId) {
+            return null
+        }
+
+        val versionNumber = (data[Fields.VERSION_NUMBER] as? Number)?.toInt()?.takeIf { it >= 1 }
+            ?: return null
+        val versionLabel = (data[Fields.VERSION_LABEL] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return null
+        val versionNotes = (data[Fields.VERSION_NOTES] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val r2ObjectKey = (data[Fields.R2_OBJECT_KEY] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val fileSizeBytes = (data[Fields.FILE_SIZE_BYTES] as? Number)?.toLong()?.takeIf { it > 0L }
+        val checksumSha256 = (data[Fields.CHECKSUM_SHA256] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
+        val isArchived = (data[Fields.IS_ARCHIVED] as? Boolean) ?: false
+        val createdByUid = (data[Fields.CREATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val updatedByUid = (data[Fields.UPDATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val publishedAt = FirestoreCatalogMapper.extractEpochMillis(data[Fields.PUBLISHED_AT])
+        val createdAt = FirestoreCatalogMapper.extractEpochMillis(data[Fields.CREATED_AT])
+        val updatedAt = FirestoreCatalogMapper.extractEpochMillis(data[Fields.UPDATED_AT])
+
+        return StudyFileVersionMetadata(
+            id = id,
+            fileId = fileRef.documentId,
+            versionNumber = versionNumber,
+            versionLabel = versionLabel,
+            versionNotes = versionNotes,
+            r2ObjectKey = r2ObjectKey,
+            fileSizeBytes = fileSizeBytes,
+            checksumSha256 = checksumSha256,
+            isPublished = isPublished,
+            createdByUid = createdByUid,
+            publishedAtEpochMillis = publishedAt,
+            createdAtEpochMillis = createdAt,
+            fileReferencePath = fileRef.path,
+            updatedByUid = updatedByUid,
+            updatedAtEpochMillis = updatedAt,
+            isArchived = isArchived
+        )
+    }
+
+    fun mapStudyFileVersionsForAdmin(
+        documents: List<Pair<String, Map<String, Any?>>>,
+        expectedFileId: String
+    ): List<StudyFileVersionMetadata> {
+        return documents
+            .mapNotNull { (id, data) -> mapStudyFileVersionForAdmin(id, data, expectedFileId) }
+            .sortedWith(
+                compareByDescending<StudyFileVersionMetadata> { it.versionNumber }
+                    .thenByDescending { it.publishedAtEpochMillis ?: 0L }
+                    .thenByDescending { it.createdAtEpochMillis ?: 0L }
             )
     }
 
@@ -272,10 +342,11 @@ object FirestoreAdminCatalogMapper {
         Fields.MIME_TYPE to Defaults.MIME_TYPE_PDF,
         Fields.STORAGE_PROVIDER to Defaults.STORAGE_PROVIDER_CLOUDFLARE_R2,
         // Pointer-only fields remain null until an independent version document is created
-        // under `study_files/{fileId}/versions/{versionId}` and a real PDF is uploaded to R2.
+        // under `study_files/{fileId}/versions/{versionId}` and published as active.
         Fields.ACTIVE_VERSION_ID to null,
         Fields.ACTIVE_VERSION_NUMBER to null,
         Fields.ACTIVE_VERSION_LABEL to null,
+        Fields.ACTIVE_VERSION_PUBLISHED_AT to null,
         Fields.CREATED_BY_UID to actorUid,
         Fields.UPDATED_BY_UID to actorUid,
         Fields.CREATED_AT to timestampValue,
@@ -304,6 +375,64 @@ object FirestoreAdminCatalogMapper {
         timestampValue: Any
     ): Map<String, Any?> = mapOf(
         Fields.IS_ARCHIVED to isArchived,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    /**
+     * Builds the payload for `study_files/{fileId}/versions/{versionId}`.
+     * Never writes fake R2 keys, fake download URLs, or personal user/student data.
+     */
+    fun buildStudyFileVersionCreatePayload(
+        fileReference: Any,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        isPublished: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.FILE_ID to fileReference,
+        Fields.VERSION_NUMBER to versionNumber,
+        Fields.VERSION_LABEL to versionLabel,
+        Fields.VERSION_NOTES to versionNotes,
+        Fields.R2_OBJECT_KEY to null,
+        Fields.FILE_SIZE_BYTES to null,
+        Fields.CHECKSUM_SHA256 to null,
+        Fields.IS_PUBLISHED to isPublished,
+        Fields.IS_ARCHIVED to false,
+        Fields.PUBLISHED_AT to if (isPublished) timestampValue else null,
+        Fields.CREATED_BY_UID to actorUid,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.CREATED_AT to timestampValue,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildStudyFileVersionMetadataUpdatePayload(
+        versionLabel: String,
+        versionNotes: String?,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        // Preserves versionNumber, fileId parent reference, r2ObjectKey, and publish status.
+        Fields.VERSION_LABEL to versionLabel,
+        Fields.VERSION_NOTES to versionNotes,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildActiveVersionPointerPayload(
+        versionId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        publishedAtValue: Any,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.ACTIVE_VERSION_ID to versionId,
+        Fields.ACTIVE_VERSION_NUMBER to versionNumber,
+        Fields.ACTIVE_VERSION_LABEL to versionLabel,
+        Fields.ACTIVE_VERSION_PUBLISHED_AT to publishedAtValue,
         Fields.UPDATED_BY_UID to actorUid,
         Fields.UPDATED_AT to timestampValue
     )

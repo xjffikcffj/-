@@ -54,7 +54,9 @@ class PdfReaderViewModel(
     val uiState: StateFlow<PdfReaderUiState> = _uiState.asStateFlow()
 
     private data class PendingProgressWrite(
+        val scopeKey: String,
         val fileId: String,
+        val versionId: String?,
         val pageNumber: Int,
         val totalPages: Int,
         val sequence: Long
@@ -68,8 +70,8 @@ class PdfReaderViewModel(
 
     private val progressWriteMutex = Mutex()
     private var progressSequence: Long = 0L
-    private val latestRequestedProgressByFile = mutableMapOf<String, PendingProgressWrite>()
-    private val lastPersistedSequenceByFile = mutableMapOf<String, Long>()
+    private val latestRequestedProgressByScope = mutableMapOf<String, PendingProgressWrite>()
+    private val lastPersistedSequenceByScope = mutableMapOf<String, Long>()
 
     init {
         if (autoOpen && initialFileId.isNotBlank()) {
@@ -86,10 +88,12 @@ class PdfReaderViewModel(
         fileTitle: String,
         activeVersionId: String? = null
     ) {
+        val normalizedVersionId = normalizeVersionId(activeVersionId)
         val current = _uiState.value
+        val currentNormalizedVersionId = normalizeVersionId(current.activeVersionId)
         val sameTargetOpen = activeSession != null &&
             current.fileId == fileId &&
-            current.activeVersionId == activeVersionId &&
+            currentNormalizedVersionId == normalizedVersionId &&
             current.errorReason == null
         if (sameTargetOpen) {
             if (current.fileTitle != fileTitle) {
@@ -98,22 +102,23 @@ class PdfReaderViewModel(
             return
         }
 
-        val previousFileId = current.fileId
+        val previousScopeKey = progressScopeKey(current.fileId, currentNormalizedVersionId)
         val generation = ++loadGeneration
         openJob?.cancel()
         searchJob?.cancel()
-        flushPendingProgress(previousFileId)
+        flushPendingProgress(previousScopeKey)
         closeActiveSession()
 
-        val hasSavedStateForFile = fileId.isNotBlank() &&
+        val hasSavedStateForVersion = fileId.isNotBlank() &&
             savedStateHandle.get<String>(STATE_FILE_ID) == fileId &&
+            normalizeVersionId(savedStateHandle.get<String>(STATE_VERSION_ID)) == normalizedVersionId &&
             savedStateHandle.contains(STATE_CURRENT_PAGE)
-        val restoredSavedPage = if (hasSavedStateForFile) {
+        val restoredSavedPage = if (hasSavedStateForVersion) {
             savedStateHandle.get<Int>(STATE_CURRENT_PAGE)?.coerceAtLeast(1)
         } else {
             null
         }
-        val restoredZoomScale = if (hasSavedStateForFile) {
+        val restoredZoomScale = if (hasSavedStateForVersion) {
             savedStateHandle.get<Float>(STATE_ZOOM_SCALE)?.coerceIn(
                 PdfReaderUiState.MIN_ZOOM_SCALE,
                 PdfReaderUiState.MAX_ZOOM_SCALE
@@ -121,29 +126,30 @@ class PdfReaderViewModel(
         } else {
             1.0f
         }
-        val restoredNightMode = if (hasSavedStateForFile) {
+        val restoredNightMode = if (hasSavedStateForVersion) {
             savedStateHandle.get<Boolean>(STATE_NIGHT_MODE) ?: current.isNightModeEnabled
         } else {
             current.isNightModeEnabled
         }
-        val restoredControlsVisible = if (hasSavedStateForFile) {
+        val restoredControlsVisible = if (hasSavedStateForVersion) {
             savedStateHandle.get<Boolean>(STATE_CONTROLS_VISIBLE) ?: true
         } else {
             current.areControlsVisible
         }
-        val restoredSearchVisible = if (hasSavedStateForFile) {
+        val restoredSearchVisible = if (hasSavedStateForVersion) {
             savedStateHandle.get<Boolean>(STATE_SEARCH_VISIBLE) ?: false
         } else {
             false
         }
-        val restoredSearchQuery = if (hasSavedStateForFile) {
+        val restoredSearchQuery = if (hasSavedStateForVersion) {
             savedStateHandle.get<String>(STATE_SEARCH_QUERY).orEmpty()
         } else {
             ""
         }
 
-        if (!hasSavedStateForFile) {
+        if (!hasSavedStateForVersion) {
             savedStateHandle[STATE_FILE_ID] = fileId
+            savedStateHandle[STATE_VERSION_ID] = normalizedVersionId
             savedStateHandle.remove<Int>(STATE_CURRENT_PAGE)
             savedStateHandle[STATE_ZOOM_SCALE] = 1.0f
             savedStateHandle[STATE_SEARCH_VISIBLE] = false
@@ -154,7 +160,7 @@ class PdfReaderViewModel(
             state.copy(
                 fileId = fileId,
                 fileTitle = fileTitle,
-                activeVersionId = activeVersionId,
+                activeVersionId = normalizedVersionId,
                 isLoading = true,
                 errorReason = null,
                 documentSession = null,
@@ -187,7 +193,7 @@ class PdfReaderViewModel(
         openJob = viewModelScope.launch {
             val openResult = pdfDocumentRepository.openDocument(
                 fileId = fileId,
-                activeVersionId = activeVersionId
+                activeVersionId = normalizedVersionId
             )
 
             if (!isActive || generation != loadGeneration) {
@@ -215,7 +221,10 @@ class PdfReaderViewModel(
 
                     val savedProgress = runCatching {
                         progressWriteMutex.withLock {
-                            readingProgressRepository.getProgress(fileId)
+                            readingProgressRepository.getProgress(
+                                fileId = fileId,
+                                versionId = normalizedVersionId
+                            )
                         }
                     }.getOrNull()
 
@@ -228,6 +237,7 @@ class PdfReaderViewModel(
                         .coerceIn(1, count)
                     activeSession = session
                     savedStateHandle[STATE_FILE_ID] = fileId
+                    savedStateHandle[STATE_VERSION_ID] = normalizedVersionId
                     savedStateHandle[STATE_CURRENT_PAGE] = initialPage
 
                     _uiState.update { state ->
@@ -252,7 +262,12 @@ class PdfReaderViewModel(
                         )
                     }
 
-                    persistPageImmediately(fileId = fileId, pageNumber = initialPage, totalPages = count)
+                    persistPageImmediately(
+                        fileId = fileId,
+                        versionId = normalizedVersionId,
+                        pageNumber = initialPage,
+                        totalPages = count
+                    )
                 }
 
                 is AppResult.Error -> {
@@ -279,7 +294,7 @@ class PdfReaderViewModel(
         loadGeneration = previousGeneration + 1L
         openJob?.cancel()
         searchJob?.cancel()
-        flushPendingProgress(current.fileId)
+        flushPendingProgress(progressScopeKey(current.fileId, current.activeVersionId))
         closeActiveSession()
         savedStateHandle.remove<Int>(STATE_CURRENT_PAGE)
         openFileForce(
@@ -306,10 +321,17 @@ class PdfReaderViewModel(
         val clampedPage = pageNumberOneBased.coerceIn(1, total)
         if (clampedPage == current.currentPage) return
 
+        val normalizedVersionId = normalizeVersionId(current.activeVersionId)
         savedStateHandle[STATE_FILE_ID] = current.fileId
+        savedStateHandle[STATE_VERSION_ID] = normalizedVersionId
         savedStateHandle[STATE_CURRENT_PAGE] = clampedPage
         _uiState.update { it.copy(currentPage = clampedPage) }
-        scheduleProgressSave(fileId = current.fileId, pageNumber = clampedPage, totalPages = total)
+        scheduleProgressSave(
+            fileId = current.fileId,
+            versionId = normalizedVersionId,
+            pageNumber = clampedPage,
+            totalPages = total
+        )
     }
 
     fun goToPage(pageNumberOneBased: Int) {
@@ -318,7 +340,9 @@ class PdfReaderViewModel(
         if (current.documentSession == null || total <= 0) return
 
         val clampedPage = pageNumberOneBased.coerceIn(1, total)
+        val normalizedVersionId = normalizeVersionId(current.activeVersionId)
         savedStateHandle[STATE_FILE_ID] = current.fileId
+        savedStateHandle[STATE_VERSION_ID] = normalizedVersionId
         savedStateHandle[STATE_CURRENT_PAGE] = clampedPage
         _uiState.update { state ->
             state.copy(
@@ -329,7 +353,12 @@ class PdfReaderViewModel(
                 isPageJumpDialogVisible = false
             )
         }
-        persistPageImmediately(fileId = current.fileId, pageNumber = clampedPage, totalPages = total)
+        persistPageImmediately(
+            fileId = current.fileId,
+            versionId = normalizedVersionId,
+            pageNumber = clampedPage,
+            totalPages = total
+        )
     }
 
     fun nextPage() {
@@ -500,69 +529,97 @@ class PdfReaderViewModel(
         goToPage(matches[prevCursor].pageNumber)
     }
 
-    private fun scheduleProgressSave(fileId: String, pageNumber: Int, totalPages: Int) {
+    private fun scheduleProgressSave(
+        fileId: String,
+        versionId: String?,
+        pageNumber: Int,
+        totalPages: Int
+    ) {
         if (fileId.isBlank() || totalPages <= 0) return
+        val normalizedVersionId = normalizeVersionId(versionId)
+        val scopeKey = progressScopeKey(fileId, normalizedVersionId)
         val requested = PendingProgressWrite(
+            scopeKey = scopeKey,
             fileId = fileId,
+            versionId = normalizedVersionId,
             pageNumber = pageNumber,
             totalPages = totalPages,
             sequence = ++progressSequence
         )
-        latestRequestedProgressByFile[fileId] = requested
+        latestRequestedProgressByScope[scopeKey] = requested
         progressSaveJob?.cancel()
         progressSaveJob = viewModelScope.launch {
             delay(PROGRESS_SAVE_DEBOUNCE_MS)
             withContext(NonCancellable) {
-                persistLatestProgressForFile(fileId)
+                persistLatestProgressForScope(scopeKey)
             }
         }
     }
 
-    private fun persistPageImmediately(fileId: String, pageNumber: Int, totalPages: Int) {
+    private fun persistPageImmediately(
+        fileId: String,
+        versionId: String?,
+        pageNumber: Int,
+        totalPages: Int
+    ) {
         if (fileId.isBlank() || totalPages <= 0) return
+        val normalizedVersionId = normalizeVersionId(versionId)
+        val scopeKey = progressScopeKey(fileId, normalizedVersionId)
         val requested = PendingProgressWrite(
+            scopeKey = scopeKey,
             fileId = fileId,
+            versionId = normalizedVersionId,
             pageNumber = pageNumber,
             totalPages = totalPages,
             sequence = ++progressSequence
         )
-        latestRequestedProgressByFile[fileId] = requested
+        latestRequestedProgressByScope[scopeKey] = requested
         progressSaveJob?.cancel()
         progressSaveJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             withContext(NonCancellable) {
-                persistLatestProgressForFile(fileId)
+                persistLatestProgressForScope(scopeKey)
             }
         }
     }
 
-    private fun flushPendingProgress(fileId: String) {
+    private fun flushPendingProgress(scopeKey: String) {
         progressSaveJob?.cancel()
         progressSaveJob = null
-        if (fileId.isBlank()) return
-        val latest = latestRequestedProgressByFile[fileId] ?: return
-        val lastPersisted = lastPersistedSequenceByFile[fileId] ?: 0L
+        if (scopeKey.isBlank()) return
+        val latest = latestRequestedProgressByScope[scopeKey] ?: return
+        val lastPersisted = lastPersistedSequenceByScope[scopeKey] ?: 0L
         if (latest.sequence <= lastPersisted) return
 
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             withContext(NonCancellable) {
-                persistLatestProgressForFile(fileId)
+                persistLatestProgressForScope(scopeKey)
             }
         }
     }
 
-    private suspend fun persistLatestProgressForFile(fileId: String) {
+    private suspend fun persistLatestProgressForScope(scopeKey: String) {
         progressWriteMutex.withLock {
-            val target = latestRequestedProgressByFile[fileId] ?: return@withLock
-            val alreadyPersisted = lastPersistedSequenceByFile[fileId] ?: 0L
+            val target = latestRequestedProgressByScope[scopeKey] ?: return@withLock
+            val alreadyPersisted = lastPersistedSequenceByScope[scopeKey] ?: 0L
             if (target.sequence <= alreadyPersisted) return@withLock
 
             readingProgressRepository.saveLastPage(
                 fileId = target.fileId,
                 pageNumber = target.pageNumber,
-                totalPages = target.totalPages
+                totalPages = target.totalPages,
+                versionId = target.versionId
             )
-            lastPersistedSequenceByFile[fileId] = target.sequence
+            lastPersistedSequenceByScope[scopeKey] = target.sequence
         }
+    }
+
+    private fun normalizeVersionId(versionId: String?): String? {
+        return versionId?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun progressScopeKey(fileId: String, versionId: String?): String {
+        if (fileId.isBlank()) return ""
+        return "${fileId}::${normalizeVersionId(versionId).orEmpty()}"
     }
 
     private fun closeActiveSession() {
@@ -572,10 +629,11 @@ class PdfReaderViewModel(
     }
 
     override fun onCleared() {
-        val currentFileId = _uiState.value.fileId
+        val current = _uiState.value
+        val currentScopeKey = progressScopeKey(current.fileId, current.activeVersionId)
         openJob?.cancel()
         searchJob?.cancel()
-        flushPendingProgress(currentFileId)
+        flushPendingProgress(currentScopeKey)
         _uiState.update { it.copy(documentSession = null) }
         closeActiveSession()
         super.onCleared()
@@ -584,6 +642,7 @@ class PdfReaderViewModel(
     companion object {
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 300L
         private const val STATE_FILE_ID = "pdf_reader_file_id"
+        private const val STATE_VERSION_ID = "pdf_reader_version_id"
         private const val STATE_CURRENT_PAGE = "pdf_reader_current_page"
         private const val STATE_ZOOM_SCALE = "pdf_reader_zoom_scale"
         private const val STATE_NIGHT_MODE = "pdf_reader_night_mode"

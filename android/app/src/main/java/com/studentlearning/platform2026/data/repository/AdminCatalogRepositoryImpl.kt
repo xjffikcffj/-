@@ -7,6 +7,7 @@ import com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatal
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
@@ -228,6 +229,72 @@ class AdminCatalogRepositoryImpl(
     ): AppResult<Unit> = executeAuthorized { actorUid ->
         val validFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
         remoteDataSource.setStudyFileArchived(validFileId, isArchived, actorUid)
+    }
+
+    override suspend fun getStudyFileVersions(fileId: String): AppResult<List<StudyFileVersionMetadata>> =
+        executeAuthorized {
+            val validFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+            remoteDataSource.fetchStudyFileVersions(validFileId)
+        }
+
+    override suspend fun createStudyFileVersion(
+        customId: String?,
+        fileId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        publishImmediately: Boolean
+    ): AppResult<StudyFileVersionMetadata> = executeAuthorized { actorUid ->
+        val validated = AdminCatalogValidator.validateStudyFileVersionCreate(
+            customId = customId,
+            fileId = fileId,
+            versionNumber = versionNumber,
+            versionLabel = versionLabel,
+            versionNotes = versionNotes
+        )
+        remoteDataSource.createStudyFileVersion(
+            customId = validated.customId,
+            fileId = validated.fileId,
+            versionNumber = validated.versionNumber,
+            versionLabel = validated.versionLabel,
+            versionNotes = validated.versionNotes,
+            publishImmediately = publishImmediately,
+            actorUid = actorUid
+        )
+    }
+
+    override suspend fun updateStudyFileVersionMetadata(
+        fileId: String,
+        versionId: String,
+        versionLabel: String,
+        versionNotes: String?
+    ): AppResult<Unit> = executeAuthorized { actorUid ->
+        val validated = AdminCatalogValidator.validateStudyFileVersionUpdate(
+            fileId = fileId,
+            versionId = versionId,
+            versionLabel = versionLabel,
+            versionNotes = versionNotes
+        )
+        remoteDataSource.updateStudyFileVersionMetadata(
+            fileId = validated.fileId,
+            versionId = validated.versionId,
+            versionLabel = validated.versionLabel,
+            versionNotes = validated.versionNotes,
+            actorUid = actorUid
+        )
+    }
+
+    override suspend fun publishStudyFileVersion(
+        fileId: String,
+        versionId: String
+    ): AppResult<Unit> = executeAuthorized { actorUid ->
+        val validFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+        val validVersionId = AdminCatalogValidator.validateRequiredDocumentId(versionId)
+        remoteDataSource.publishStudyFileVersion(
+            fileId = validFileId,
+            versionId = validVersionId,
+            actorUid = actorUid
+        )
     }
 
     override suspend fun reorderBranches(

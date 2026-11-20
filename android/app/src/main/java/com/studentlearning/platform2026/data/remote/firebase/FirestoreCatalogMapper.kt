@@ -1,5 +1,6 @@
 package com.studentlearning.platform2026.data.remote.firebase
 
+import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Collections
@@ -10,6 +11,7 @@ import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import java.io.IOException
+import java.util.Date
 
 data class FirestoreReferenceTarget(
     val collectionId: String,
@@ -147,6 +149,7 @@ object FirestoreCatalogMapper {
         val activeVersionId = (data[Fields.ACTIVE_VERSION_ID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val activeVersionNumber = (data[Fields.ACTIVE_VERSION_NUMBER] as? Number)?.toInt()?.takeIf { it >= 1 }
         val activeVersionLabel = (data[Fields.ACTIVE_VERSION_LABEL] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val activeVersionPublishedAt = extractEpochMillis(data[Fields.ACTIVE_VERSION_PUBLISHED_AT])
 
         return StudyFileMetadata(
             id = id,
@@ -161,7 +164,8 @@ object FirestoreCatalogMapper {
             storageProvider = storageProvider,
             activeVersionId = activeVersionId,
             activeVersionNumber = activeVersionNumber,
-            activeVersionLabel = activeVersionLabel
+            activeVersionLabel = activeVersionLabel,
+            activeVersionPublishedAtEpochMillis = activeVersionPublishedAt
         )
     }
 
@@ -196,6 +200,15 @@ object FirestoreCatalogMapper {
                 path = value.path
             )
             is FirestoreReferenceTarget -> value
+            else -> null
+        }
+    }
+
+    internal fun extractEpochMillis(value: Any?): Long? {
+        return when (value) {
+            is Timestamp -> value.toDate().time
+            is Date -> value.time
+            is Number -> value.toLong().takeIf { it > 0L }
             else -> null
         }
     }

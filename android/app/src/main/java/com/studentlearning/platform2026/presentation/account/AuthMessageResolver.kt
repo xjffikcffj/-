@@ -25,6 +25,10 @@ fun resolveAuthErrorText(
             AdminValidationError.NEGATIVE_ORDER -> R.string.admin_validation_negative_order
             AdminValidationError.INVALID_DOCUMENT_ID -> R.string.admin_validation_invalid_document_id
             AdminValidationError.EMPTY_PARENT_REFERENCE -> R.string.admin_validation_empty_parent
+            AdminValidationError.INVALID_VERSION_NUMBER -> R.string.admin_validation_invalid_version_number
+            AdminValidationError.EMPTY_VERSION_LABEL -> R.string.admin_validation_empty_version_label
+            AdminValidationError.VERSION_LABEL_TOO_LONG -> R.string.admin_validation_version_label_too_long
+            AdminValidationError.VERSION_NOTES_TOO_LONG -> R.string.admin_validation_version_notes_too_long
         }
         return stringResource(validationRes)
     }

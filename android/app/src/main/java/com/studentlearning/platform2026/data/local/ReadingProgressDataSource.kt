@@ -20,11 +20,12 @@ private val Context.haqibatiReadingProgressDataStore: DataStore<Preferences> by 
 )
 
 /**
- * Device-local DataStore persistence for per-file reading progress.
+ * Device-local DataStore persistence for per-(fileId, versionId) reading progress.
  *
- * Keys are derived exclusively from the stable [fileId] (hex-encoded to prevent separator collisions)
- * and NEVER include Firebase Auth UIDs, user emails, or mutable file titles. Signing out or
- * switching accounts never reads, mutates, or clears this DataStore.
+ * Keys are derived exclusively from the stable ([fileId], [versionId]) pair (hex-encoded to
+ * prevent separator collisions) and NEVER include Firebase Auth UIDs, user emails, or mutable
+ * file titles. Signing out or switching accounts never reads, mutates, or clears this DataStore,
+ * and publishing or opening v2 never overwrites v1's saved reading page.
  */
 class ReadingProgressDataSource(
     private val dataStore: DataStore<Preferences>,
@@ -32,14 +33,16 @@ class ReadingProgressDataSource(
 ) {
     constructor(context: Context) : this(dataStore = context.haqibatiReadingProgressDataStore)
 
-    fun observeProgress(fileId: String): Flow<FileReadingProgress?> {
-        if (fileId.isBlank()) {
+    fun observeProgress(fileId: String, versionId: String? = null): Flow<FileReadingProgress?> {
+        val normalizedFileId = fileId.trim()
+        if (normalizedFileId.isEmpty()) {
             return kotlinx.coroutines.flow.flowOf(null)
         }
-        val encodedId = encodeStableFileKey(fileId)
-        val lastPageKey = intPreferencesKey("${PREFIX_LAST_PAGE}$encodedId")
-        val totalPagesKey = intPreferencesKey("${PREFIX_TOTAL_PAGES}$encodedId")
-        val updatedAtKey = longPreferencesKey("${PREFIX_UPDATED_AT}$encodedId")
+        val normalizedVersionId = versionId?.trim()?.takeIf { it.isNotEmpty() }
+        val encodedKey = encodeVersionScopeKey(normalizedFileId, normalizedVersionId)
+        val lastPageKey = intPreferencesKey("${PREFIX_LAST_PAGE}$encodedKey")
+        val totalPagesKey = intPreferencesKey("${PREFIX_TOTAL_PAGES}$encodedKey")
+        val updatedAtKey = longPreferencesKey("${PREFIX_UPDATED_AT}$encodedKey")
 
         return dataStore.data
             .catch { exception ->
@@ -53,25 +56,33 @@ class ReadingProgressDataSource(
                 val savedPage = prefs[lastPageKey] ?: return@map null
                 if (savedPage < 1) return@map null
                 FileReadingProgress(
-                    fileId = fileId,
+                    fileId = normalizedFileId,
                     lastPageNumber = savedPage,
                     totalPages = (prefs[totalPagesKey] ?: 0).coerceAtLeast(0),
-                    updatedAtEpochMillis = prefs[updatedAtKey] ?: 0L
+                    updatedAtEpochMillis = prefs[updatedAtKey] ?: 0L,
+                    versionId = normalizedVersionId
                 )
             }
     }
 
-    suspend fun getProgress(fileId: String): FileReadingProgress? {
-        return observeProgress(fileId).firstOrNull()
+    suspend fun getProgress(fileId: String, versionId: String? = null): FileReadingProgress? {
+        return observeProgress(fileId = fileId, versionId = versionId).firstOrNull()
     }
 
-    suspend fun saveLastPage(fileId: String, pageNumber: Int, totalPages: Int) {
-        if (fileId.isBlank() || totalPages <= 0) return
+    suspend fun saveLastPage(
+        fileId: String,
+        pageNumber: Int,
+        totalPages: Int,
+        versionId: String? = null
+    ) {
+        val normalizedFileId = fileId.trim()
+        if (normalizedFileId.isEmpty() || totalPages <= 0) return
+        val normalizedVersionId = versionId?.trim()?.takeIf { it.isNotEmpty() }
         val safePage = pageNumber.coerceIn(1, totalPages)
-        val encodedId = encodeStableFileKey(fileId)
-        val lastPageKey = intPreferencesKey("${PREFIX_LAST_PAGE}$encodedId")
-        val totalPagesKey = intPreferencesKey("${PREFIX_TOTAL_PAGES}$encodedId")
-        val updatedAtKey = longPreferencesKey("${PREFIX_UPDATED_AT}$encodedId")
+        val encodedKey = encodeVersionScopeKey(normalizedFileId, normalizedVersionId)
+        val lastPageKey = intPreferencesKey("${PREFIX_LAST_PAGE}$encodedKey")
+        val totalPagesKey = intPreferencesKey("${PREFIX_TOTAL_PAGES}$encodedKey")
+        val updatedAtKey = longPreferencesKey("${PREFIX_UPDATED_AT}$encodedKey")
 
         dataStore.edit { prefs ->
             prefs[lastPageKey] = safePage
@@ -80,12 +91,14 @@ class ReadingProgressDataSource(
         }
     }
 
-    suspend fun clearProgress(fileId: String) {
-        if (fileId.isBlank()) return
-        val encodedId = encodeStableFileKey(fileId)
-        val lastPageKey = intPreferencesKey("${PREFIX_LAST_PAGE}$encodedId")
-        val totalPagesKey = intPreferencesKey("${PREFIX_TOTAL_PAGES}$encodedId")
-        val updatedAtKey = longPreferencesKey("${PREFIX_UPDATED_AT}$encodedId")
+    suspend fun clearProgress(fileId: String, versionId: String? = null) {
+        val normalizedFileId = fileId.trim()
+        if (normalizedFileId.isEmpty()) return
+        val normalizedVersionId = versionId?.trim()?.takeIf { it.isNotEmpty() }
+        val encodedKey = encodeVersionScopeKey(normalizedFileId, normalizedVersionId)
+        val lastPageKey = intPreferencesKey("${PREFIX_LAST_PAGE}$encodedKey")
+        val totalPagesKey = intPreferencesKey("${PREFIX_TOTAL_PAGES}$encodedKey")
+        val updatedAtKey = longPreferencesKey("${PREFIX_UPDATED_AT}$encodedKey")
 
         dataStore.edit { prefs ->
             prefs.remove(lastPageKey)
@@ -94,9 +107,17 @@ class ReadingProgressDataSource(
         }
     }
 
-    private fun encodeStableFileKey(fileId: String): String {
-        return fileId.trim()
-            .toByteArray(Charsets.UTF_8)
+    private fun encodeVersionScopeKey(fileId: String, versionId: String?): String {
+        val encodedFile = encodeHex(fileId)
+        return if (versionId == null) {
+            encodedFile
+        } else {
+            "${encodedFile}_v_${encodeHex(versionId)}"
+        }
+    }
+
+    private fun encodeHex(value: String): String {
+        return value.toByteArray(Charsets.UTF_8)
             .joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 

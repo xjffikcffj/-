@@ -23,6 +23,8 @@ interface PdfFileSourceDataSource {
  * - Creates NO fake URLs or placeholder PDF files when unconfigured.
  * - Reports [PdfFailureReason.NO_PUBLISHED_VERSION] if the file metadata has no published version yet.
  * - Reports [PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED] until the secure signed-URL broker is attached.
+ * - Transport policy: the broker must stream PDF bytes directly over HTTPS (`HTTP 200 OK`) or return a
+ *   direct HTTPS target URL prior to fetching; 3xx redirects are intentionally disabled in the HTTP client.
  */
 class BrokeredPdfFileSourceDataSource(
     private val brokerEndpointBaseUrl: String? = null
