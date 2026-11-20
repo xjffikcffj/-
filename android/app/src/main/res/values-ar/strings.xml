@@ -1,0 +1,81 @@
+<resources>
+    <string name="app_name">حقيبتي</string>
+    <string name="app_tagline">مساحتك التعليمية المنظمة</string>
+    <string name="splash_loading">جاري تهيئة بيئة التطبيق…</string>
+    <string name="splash_init_error">تعذّرت تهيئة التطبيق. يرجى المحاولة مرة أخرى.</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_library">المكتبة</string>
+    <string name="nav_downloads">التنزيلات</string>
+    <string name="nav_settings">الإعدادات</string>
+    <string name="action_back">رجوع</string>
+    <string name="action_retry">إعادة المحاولة</string>
+
+    <!-- Home -->
+    <string name="home_welcome_title">مرحباً بك في حقيبتي</string>
+    <string name="home_welcome_subtitle">تم تأسيس البنية الأساسية ونظام التنقل والواجهات الرئيسية للتطبيق باللغة العربية واتجاه RTL.</string>
+    <string name="home_quick_sections_title">الأقسام الرئيسية</string>
+    <string name="home_quick_library_subtitle">استعراض الفروع والمواد والأقسام الدراسية</string>
+    <string name="home_quick_downloads_subtitle">إدارة الملفات المحفوظة للقراءة دون اتصال</string>
+    <string name="home_quick_settings_subtitle">المظهر، اللغة، وحالة الربط السحابي</string>
+    <string name="home_foundation_section_title">أساس التطبيق</string>
+    <string name="home_architecture_label">البنية الهندسية</string>
+    <string name="home_architecture_value">Clean Architecture + MVVM</string>
+    <string name="home_rtl_label">دعم اللغة والاتجاه</string>
+    <string name="home_rtl_value">العربية الكاملة (RTL)</string>
+    <string name="home_package_id_label">معرّف الحزمة</string>
+    <string name="home_toggle_light_mode">الوضع الفاتح</string>
+    <string name="home_toggle_dark_mode">الوضع الداكن</string>
+
+    <!-- Firebase Readiness -->
+    <string name="home_firebase_section_title">جاهزية الربط مع Firebase</string>
+    <string name="home_firebase_project_label">المشروع المعتمد</string>
+    <string name="home_firebase_region_label">موقع قاعدة البيانات</string>
+    <string name="home_firebase_status_unconfigured">بانتظار إضافة ملف google-services.json داخل مجلد app لتفعيل التهيئة.</string>
+    <string name="home_firebase_status_initialized">تمت تهيئة إعدادات Firebase محلياً للمشروع المعتمد (مطلوب اختبار الاتصال الفعلي عند تفعيل الخدمات).</string>
+    <string name="home_firebase_status_mismatch">تحذير: ملف google-services.json الحالي لا يطابق المشروع المعتمد student-learning-platform-2026.</string>
+
+    <!-- Library Catalog (Branches -> Subjects -> Sections) -->
+    <string name="library_branches_title">الفروع الدراسية</string>
+    <string name="library_branches_subtitle">اختر الفرع الدراسي لعرض المواد التابعة له</string>
+    <string name="library_branches_empty_title">لا توجد فروع منشورة حالياً</string>
+    <string name="library_branches_empty_message">لم يتم نشر أي فروع دراسية في قاعدة البيانات بعد.</string>
+
+    <string name="library_subjects_subtitle">اختر المادة الدراسية لعرض أقسامها المنشورة</string>
+    <string name="library_subjects_empty_title">لا توجد مواد منشورة لهذا الفرع</string>
+    <string name="library_subjects_empty_message">لم تُنشر مواد دراسية ضمن هذا الفرع حالياً.</string>
+
+    <string name="library_sections_subtitle">الأقسام الدراسية المنشورة ضمن هذه المادة</string>
+    <string name="library_sections_empty_title">لا توجد أقسام منشورة حالياً</string>
+    <string name="library_sections_empty_message">ستظهر الأقسام الدراسية هنا فور إضافتها ونشرها من لوحة إدارة المشرفين.</string>
+
+    <string name="catalog_loading_message">جاري تحميل البيانات…</string>
+    <string name="catalog_error_title">تعذّر تحميل البيانات</string>
+    <string name="catalog_error_not_configured">الاتصال بـ Firebase غير مفعّل محلياً بعد؛ يلزم إضافة ملف google-services.json وتكوين المشروع.</string>
+    <string name="catalog_error_permission_denied">الوصول إلى بيانات Firestore مقيّد مؤقتاً بقواعد الأمان الحالية، وسيعمل فور اعتماد صلاحيات القراءة.</string>
+    <string name="catalog_error_network">تعذّر الاتصال بالشبكة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.</string>
+    <string name="catalog_error_unknown">حدث خطأ غير متوقع أثناء جلب البيانات. يرجى المحاولة مجدداً.</string>
+
+    <!-- Downloads -->
+    <string name="downloads_title">التنزيلات المحلية</string>
+    <string name="downloads_empty_title">لا توجد ملفات محفوظة حالياً</string>
+    <string name="downloads_empty_message">ستظهر الملفات التعليمية التي يتم تنزيلها للوصول دون اتصال في هذا القسم عند تفعيل وحدة التخزين والتنزيلات.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_appearance_section">المظهر واللغة</string>
+    <string name="settings_dark_mode_title">الوضع الداكن</string>
+    <string name="settings_dark_mode_subtitle">تبديل ألوان الواجهة بين الوضع الفاتح والداكن</string>
+    <string name="settings_language_title">لغة التطبيق والاتجاه</string>
+    <string name="settings_language_value">العربية (من اليمين إلى اليسار RTL)</string>
+    <string name="settings_system_section">التطبيق والربط</string>
+    <string name="settings_about_title">حول تطبيق حقيبتي</string>
+    <string name="settings_about_subtitle">معلومات الإصدار والهوية التقنية</string>
+
+    <!-- About -->
+    <string name="about_title">حول التطبيق</string>
+    <string name="about_version_label">رقم الإصدار</string>
+    <string name="about_stage_label">المرحلة الحالية</string>
+    <string name="about_stage_value">المرحلة السادسة — قارئ PDF المدمج وتقدم القراءة المحلي</string>
+</resources>

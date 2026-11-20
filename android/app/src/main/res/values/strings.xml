@@ -1,0 +1,325 @@
+<resources>
+    <string name="app_name">حقيبتي</string>
+    <string name="app_tagline">مساحتك التعليمية المنظمة</string>
+    <string name="splash_loading">جاري تهيئة بيئة التطبيق…</string>
+    <string name="splash_init_error">تعذّرت تهيئة التطبيق. يرجى المحاولة مرة أخرى.</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_library">المكتبة</string>
+    <string name="nav_downloads">التنزيلات</string>
+    <string name="nav_settings">الإعدادات</string>
+    <string name="action_back">رجوع</string>
+    <string name="action_retry">إعادة المحاولة</string>
+
+    <!-- Home -->
+    <string name="home_welcome_title">مرحباً بك في حقيبتي</string>
+    <string name="home_welcome_subtitle">تم تأسيس البنية الأساسية ونظام التنقل والواجهات الرئيسية للتطبيق باللغة العربية واتجاه RTL.</string>
+    <string name="home_quick_sections_title">الأقسام الرئيسية</string>
+    <string name="home_quick_library_subtitle">استعراض الفروع والمواد والأقسام الدراسية</string>
+    <string name="home_quick_downloads_subtitle">إدارة الملفات المحفوظة للقراءة دون اتصال</string>
+    <string name="home_quick_settings_subtitle">المظهر، اللغة، وحالة الربط السحابي</string>
+    <string name="home_foundation_section_title">أساس التطبيق</string>
+    <string name="home_architecture_label">البنية الهندسية</string>
+    <string name="home_architecture_value">Clean Architecture + MVVM</string>
+    <string name="home_rtl_label">دعم اللغة والاتجاه</string>
+    <string name="home_rtl_value">العربية الكاملة (RTL)</string>
+    <string name="home_package_id_label">معرّف الحزمة</string>
+    <string name="home_toggle_light_mode">الوضع الفاتح</string>
+    <string name="home_toggle_dark_mode">الوضع الداكن</string>
+
+    <!-- Firebase Readiness -->
+    <string name="home_firebase_section_title">جاهزية الربط مع Firebase</string>
+    <string name="home_firebase_project_label">المشروع المعتمد</string>
+    <string name="home_firebase_region_label">موقع قاعدة البيانات</string>
+    <string name="home_firebase_status_unconfigured">بانتظار إضافة ملف google-services.json داخل مجلد app لتفعيل التهيئة.</string>
+    <string name="home_firebase_status_initialized">تمت تهيئة إعدادات Firebase محلياً للمشروع المعتمد (مطلوب اختبار الاتصال الفعلي عند تفعيل الخدمات).</string>
+    <string name="home_firebase_status_mismatch">تحذير: ملف google-services.json الحالي لا يطابق المشروع المعتمد student-learning-platform-2026.</string>
+
+    <!-- Library Catalog (Branches -> Subjects -> Sections) -->
+    <string name="library_branches_title">الفروع الدراسية</string>
+    <string name="library_branches_subtitle">اختر الفرع الدراسي لعرض المواد التابعة له</string>
+    <string name="library_branches_empty_title">لا توجد فروع منشورة حالياً</string>
+    <string name="library_branches_empty_message">لم يتم نشر أي فروع دراسية في قاعدة البيانات بعد.</string>
+
+    <string name="library_subjects_subtitle">اختر المادة الدراسية لعرض أقسامها المنشورة</string>
+    <string name="library_subjects_empty_title">لا توجد مواد منشورة لهذا الفرع</string>
+    <string name="library_subjects_empty_message">لم تُنشر مواد دراسية ضمن هذا الفرع حالياً.</string>
+
+    <string name="library_sections_subtitle">الأقسام الدراسية المنشورة ضمن هذه المادة</string>
+    <string name="library_sections_empty_title">لا توجد أقسام منشورة حالياً</string>
+    <string name="library_sections_empty_message">ستظهر الأقسام الدراسية هنا فور إضافتها ونشرها من لوحة إدارة المشرفين.</string>
+
+    <string name="catalog_loading_message">جاري تحميل البيانات…</string>
+    <string name="catalog_error_title">تعذّر تحميل البيانات</string>
+    <string name="catalog_error_not_configured">الاتصال بـ Firebase غير مفعّل محلياً بعد؛ يلزم إضافة ملف google-services.json وتكوين المشروع.</string>
+    <string name="catalog_error_permission_denied">الوصول إلى بيانات Firestore مقيّد مؤقتاً بقواعد الأمان الحالية، وسيعمل فور اعتماد صلاحيات القراءة.</string>
+    <string name="catalog_error_network">تعذّر الاتصال بالشبكة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.</string>
+    <string name="catalog_error_unknown">حدث خطأ غير متوقع أثناء جلب البيانات. يرجى المحاولة مجدداً.</string>
+
+    <!-- Downloads -->
+    <string name="downloads_title">التنزيلات المحلية</string>
+    <string name="downloads_empty_title">لا توجد ملفات محفوظة حالياً</string>
+    <string name="downloads_empty_message">ستظهر الملفات التعليمية التي يتم تنزيلها للوصول دون اتصال في هذا القسم عند تفعيل وحدة التخزين والتنزيلات.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_appearance_section">المظهر واللغة</string>
+    <string name="settings_dark_mode_title">الوضع الداكن</string>
+    <string name="settings_dark_mode_subtitle">تبديل ألوان الواجهة بين الوضع الفاتح والداكن</string>
+    <string name="settings_language_title">لغة التطبيق والاتجاه</string>
+    <string name="settings_language_value">العربية (من اليمين إلى اليسار RTL)</string>
+    <string name="settings_system_section">التطبيق والربط</string>
+    <string name="settings_about_title">حول تطبيق حقيبتي</string>
+    <string name="settings_about_subtitle">معلومات الإصدار والهوية التقنية</string>
+
+    <!-- About -->
+    <string name="about_title">حول التطبيق</string>
+    <string name="about_version_label">رقم الإصدار</string>
+    <string name="about_stage_label">المرحلة الحالية</string>
+    <string name="about_stage_value">المرحلة السادسة — قارئ PDF المدمج وتقدم القراءة المحلي</string>
+
+    <!-- Settings: Staff / Admin Portal Entry -->
+    <string name="settings_admin_section">الإدارة والمشرفون</string>
+    <string name="settings_admin_portal_title">لوحة المشرفين وإدارة المحتوى</string>
+    <string name="settings_admin_portal_signed_out_subtitle">تسجيل دخول المالك أو المشرفين لإدارة الفروع والمواد والأقسام</string>
+    <string name="settings_admin_portal_authorized_subtitle">تم التعرّف على صلاحية (%1$s) — فتح لوحة إدارة المحتوى</string>
+    <string name="settings_admin_portal_pending_verification_subtitle">مسجّل الدخول — بانتظار تحديث والتحقق من بيانات الصلاحية</string>
+    <string name="settings_admin_portal_unauthorized_subtitle">تم تسجيل الدخول بحساب لا يحمل صلاحية مشرف أو مالك</string>
+
+    <!-- Admin Portal & Auth Gate -->
+    <string name="admin_portal_title">لوحة المشرفين</string>
+    <string name="admin_role_owner">المالك (Owner)</string>
+    <string name="admin_role_admin">مشرف (Admin)</string>
+    <string name="admin_sign_out">تسجيل الخروج</string>
+    <string name="admin_refresh_session">تحديث الصلاحيات</string>
+    <string name="admin_checking_session">جاري التحقق من الجلسة وصلاحيات الإدارة…</string>
+
+    <string name="admin_sign_in_title">دخول الإدارة والمشرفين</string>
+    <string name="admin_sign_in_subtitle">مخصّص للمالك والمشرفين المعتمدين فقط عبر Firebase Authentication وCustom Claims.</string>
+    <string name="admin_email_label">البريد الإلكتروني</string>
+    <string name="admin_password_label">كلمة المرور</string>
+    <string name="admin_sign_in_action">تسجيل الدخول</string>
+    <string name="admin_security_notice">لا تكفي واجهة التطبيق وحدها لمنح الصلاحية؛ يقرأ التطبيق Claims فقط بينما تتحقق الخوادم وتفرض قواعد أمان Firestore صلاحيات الكتابة الفعلية.</string>
+
+    <string name="admin_pending_claims_title">تعذّر تحديث بيانات الصلاحية حالياً</string>
+    <string name="admin_pending_claims_message">الحساب (%1$s) ما زال مسجّل الدخول، لكن تعذّر تحديث رمز الصلاحيات من الشبكة. تم إيقاف العمليات الإدارية مؤقتاً حتى نجاح التحديث.</string>
+    <string name="admin_stale_claims_banner_title">صلاحيات العرض محفوظة مؤقتاً — التعديل موقوف</string>
+    <string name="admin_stale_claims_banner_message">تعذّر تحديث بيانات الصلاحية حالياً (انقطاع الشبكة أو خطأ مؤقت). لا يُسمح بأي عملية إنشاء أو تعديل أو نشر حتى استعادة التحقق بنجاح.</string>
+
+    <string name="admin_access_denied_title">غير مصرّح بالوصول إلى لوحة الإدارة</string>
+    <string name="admin_access_denied_message">الحساب المسجّل حالياً (%1$s) لا يملك صلاحية المالك أو المشرف المعتمدة في الرمز الأمني، لذلك تم حجب أدوات الإدارة.</string>
+    <string name="admin_rules_banner">الحالة الأمنية: تخضع عمليات القراءة والكتابة الإدارية لقواعد أمان Firestore المعتمدة على الخادم. في حال تقييد القواعد حالياً سيظهر رفض الصلاحيات بوضوح دون حفظ وهمي.</string>
+
+    <!-- Admin Tabs & Context -->
+    <string name="admin_tab_branches">الفروع</string>
+    <string name="admin_tab_subjects">المواد</string>
+    <string name="admin_tab_sections">الأقسام</string>
+    <string name="admin_tab_pdf_files">ملفات PDF</string>
+    <string name="admin_context_branch_label">الفرع المختار: %1$s</string>
+    <string name="admin_context_subject_label">المادة المختارة: %1$s</string>
+    <string name="admin_context_section_label">القسم المختار: %1$s</string>
+    <string name="admin_select_branch_prompt">اختر فرعاً من تبويب الفروع أولاً لإدارة مواده.</string>
+    <string name="admin_select_subject_prompt">اختر مادة من تبويب المواد أولاً لإدارة أقسامها.</string>
+    <string name="admin_select_section_prompt">اختر قسماً من تبويب الأقسام أولاً لإعداد ملفات PDF الخاصة به.</string>
+
+    <!-- Admin Empty & List Labels -->
+    <string name="admin_empty_branches">لا توجد فروع مضافة بعد في قاعدة البيانات.</string>
+    <string name="admin_empty_subjects">لا توجد مواد مسجّلة ضمن هذا الفرع.</string>
+    <string name="admin_empty_sections">لا توجد أقسام مسجّلة ضمن هذه المادة.</string>
+    <string name="admin_empty_pdf_files">لا توجد بيانات ملفات PDF مسجّلة ضمن هذا القسم.</string>
+
+    <string name="admin_add_branch">إضافة فرع</string>
+    <string name="admin_edit_branch">تعديل الفرع</string>
+    <string name="admin_add_subject">إضافة مادة</string>
+    <string name="admin_edit_subject">تعديل المادة</string>
+    <string name="admin_add_section">إضافة قسم</string>
+    <string name="admin_edit_section">تعديل القسم</string>
+    <string name="admin_add_pdf_file">إعداد ملف PDF</string>
+    <string name="admin_edit_pdf_file">تعديل بيانات ملف PDF</string>
+
+    <string name="admin_open_subjects">إدارة المواد</string>
+    <string name="admin_open_sections">إدارة الأقسام</string>
+    <string name="admin_open_pdf_files">ملفات PDF</string>
+    <string name="admin_action_edit">تعديل</string>
+    <string name="admin_action_publish">نشر</string>
+    <string name="admin_action_unpublish">إلغاء النشر</string>
+    <string name="admin_action_archive">أرشفة</string>
+    <string name="admin_action_restore">إلغاء الأرشفة</string>
+    <string name="admin_action_move_up">تحريك لأعلى</string>
+    <string name="admin_action_move_down">تحريك لأسفل</string>
+    <string name="admin_action_save">حفظ</string>
+    <string name="admin_action_cancel">إلغاء</string>
+    <string name="admin_action_confirm">تأكيد</string>
+
+    <string name="admin_status_published">منشور</string>
+    <string name="admin_status_unpublished">غير منشور</string>
+    <string name="admin_status_archived">مؤرشف</string>
+    <string name="admin_order_badge">الترتيب: %1$d</string>
+    <string name="admin_reference_badge">المرجع: %1$s</string>
+    <string name="admin_version_badge">الإصدار الفعّال %1$s (رقم %2$d)</string>
+    <string name="admin_no_active_version_badge">بانتظار إضافة إصدار PDF</string>
+    <string name="admin_r2_pending_badge">سجل الإصدارات ورفع PDF إلى Cloudflare R2 مؤجلان لمراحل لاحقة (لا يوجد ملف أو رابط بعد)</string>
+    <string name="admin_r2_deferred_notice">تنبيه: هذه المرحلة تعدّ هوية الملف الأساسية (study_files) فقط، بينما تُحفظ الإصدارات وملفات PDF وروابط R2 لاحقاً في سجل إصدارات مستقل دون استبدال البيانات السابقة.</string>
+    <string name="admin_file_edit_preserves_versions_notice">يعدّل هذا النموذج هوية الملف الأساسية فقط (العنوان، الوصف، الترتيب) ولا يمسّ رقم الإصدار أو ملفات PDF في سجل الإصدارات.</string>
+    <string name="admin_active_version_readonly">مؤشر الإصدار الفعّال (للقراءة فقط): %1$s (رقم %2$d)</string>
+
+    <!-- Admin Form Fields -->
+    <string name="admin_field_custom_id">المعرّف التقني الاختياري (أحرف إنجليزية/أرقام/_/-)</string>
+    <string name="admin_field_name">الاسم بالعربية</string>
+    <string name="admin_field_title">عنوان الملف التعليمي</string>
+    <string name="admin_field_description">وصف مختصر (اختياري)</string>
+    <string name="admin_field_order">الترتيب (0 أو أكبر)</string>
+    <string name="admin_field_publish_immediately">نشر العنصر للطلاب مباشرة</string>
+
+    <!-- Admin Confirmations -->
+    <string name="admin_confirm_unpublish_title">تأكيد إلغاء النشر</string>
+    <string name="admin_confirm_unpublish_message">هل تريد إلغاء نشر «%1$s»؟ سيختفي عن الطلاب دون حذف بياناته من قاعدة البيانات.</string>
+    <string name="admin_confirm_archive_title">تأكيد أرشفة الملف</string>
+    <string name="admin_confirm_archive_message">هل تريد أرشفة «%1$s»؟ تُستخدم الأرشفة لحماية المحتوى من الحذف العرضي مع إمكانية استعادته لاحقاً.</string>
+
+    <!-- Admin Feedback & Errors -->
+    <string name="admin_success_branch_created">تمت إضافة الفرع بنجاح.</string>
+    <string name="admin_success_branch_updated">تم تحديث بيانات الفرع.</string>
+    <string name="admin_success_subject_created">تمت إضافة المادة وربطها بالفرع عبر DocumentReference.</string>
+    <string name="admin_success_subject_updated">تم تحديث بيانات المادة.</string>
+    <string name="admin_success_section_created">تمت إضافة القسم وربطه بالمادة عبر DocumentReference.</string>
+    <string name="admin_success_section_updated">تم تحديث بيانات القسم.</string>
+    <string name="admin_success_file_created">تم حفظ الهوية الأساسية لملف PDF بنجاح.</string>
+    <string name="admin_success_file_updated">تم تحديث بيانات ملف PDF الأساسية دون المساس بالإصدارات.</string>
+    <string name="admin_success_publish_updated">تم تحديث حالة النشر.</string>
+    <string name="admin_success_archive_updated">تم تحديث حالة الأرشفة.</string>
+    <string name="admin_success_reordered">تم تحديث الترتيب بنجاح.</string>
+
+    <string name="admin_error_not_configured">خدمات Firebase غير مفعّلة محلياً بعد؛ أضف ملف google-services.json للمشروع المعتمد أولاً.</string>
+    <string name="admin_error_unauthenticated">يجب تسجيل الدخول بحساب إداري معتمد أولاً.</string>
+    <string name="admin_error_insufficient_role">الحساب المسجّل لا يملك صلاحية owner أو admin المعتمدة.</string>
+    <string name="admin_error_session_verification_required">تعذّر التأكد من حداثة بيانات الصلاحية. يرجى تحديث الصلاحيات عند توفر الاتصال قبل تنفيذ أي تعديل.</string>
+    <string name="admin_error_permission_denied">تم رفض العملية من خادم Firestore: قواعد الأمان الحالية تمنع القراءة أو الكتابة مؤقتاً حتى اعتماد قواعد الإدارة النهائية.</string>
+    <string name="admin_error_invalid_credentials">البريد الإلكتروني أو كلمة المرور غير صحيحة.</string>
+    <string name="admin_error_network">تعذّر الاتصال بالشبكة. يرجى التحقق من الإنترنت والمحاولة مجدداً.</string>
+    <string name="admin_error_not_found">العنصر المطلوب غير موجود في قاعدة البيانات.</string>
+    <string name="admin_error_unknown">تعذّر إتمام العملية الإدارية. يرجى المحاولة مجدداً.</string>
+
+    <string name="admin_validation_empty_email">يرجى إدخال البريد الإلكتروني.</string>
+    <string name="admin_validation_invalid_email">صيغة البريد الإلكتروني غير صحيحة.</string>
+    <string name="admin_validation_empty_password">يرجى إدخال كلمة المرور.</string>
+    <string name="admin_validation_empty_name">يرجى إدخال الاسم أو العنوان.</string>
+    <string name="admin_validation_name_too_long">الاسم طويل جداً (الحد الأقصى 120 حرفاً).</string>
+    <string name="admin_validation_negative_order">يجب أن يكون الترتيب صفراً أو عدداً صحيحاً موجباً.</string>
+    <string name="admin_validation_invalid_document_id">المعرّف التقني غير صالح أو مستخدم مسبقاً (استخدم 2–64 حرفاً إنجليزياً أو أرقاماً أو _ أو -).</string>
+    <string name="admin_validation_empty_parent">يجب تحديد العنصر الأب قبل تنفيذ العملية.</string>
+
+    <!-- Phase 5: Student Accounts, Roles & Auth Errors -->
+    <string name="settings_account_section">الحساب والصلاحيات</string>
+    <string name="account_role_guest">زائر (Guest)</string>
+    <string name="account_role_student">طالب (Student)</string>
+    <string name="account_role_admin">مشرف (Admin)</string>
+    <string name="account_role_owner">مالك (Owner)</string>
+
+    <string name="account_guest_title">تتصفح التطبيق كزائر</string>
+    <string name="account_guest_permissions_summary">يمكنك استعراض الفروع والمواد والأقسام المنشورة عبر الإنترنت دون تسجيل دخول. سجّل الدخول بحساب طالب لفتح ميزة التنزيلات دون اتصال عند تفعيلها.</string>
+    <string name="account_student_permissions_summary">صلاحية طالب: تصفح المحتوى المنشور، إدارة حسابك، والاستفادة من التنزيلات المحلية عند تفعيلها. لا يشمل صلاحيات الإدارة.</string>
+    <string name="account_admin_permissions_summary">صلاحية مشرف معتمدة من الخادم: إدارة المحتوى الدراسي دون صلاحيات المالك الحصرية.</string>
+    <string name="account_owner_permissions_summary">صلاحية المالك الكاملة المعتمدة من الخادم.</string>
+    <string name="account_local_device_independence_note">بيانات الاستخدام والتفضيلات الشخصية والمفضلة وتقدم القراءة والتنزيلات تبقى محفوظة محلياً لكل جهاز فقط ولا تُمسح عند تسجيل الخروج.</string>
+    <string name="account_signed_out_success">تم تسجيل الخروج بنجاح مع بقاء إعداداتك وبياناتك المحلية محفوظة على هذا الجهاز.</string>
+    <string name="account_session_refreshed_success">تم تحديث بيانات الحساب والصلاحيات بنجاح.</string>
+    <string name="account_status_label">حالة الجلسة</string>
+    <string name="account_active_email_label">البريد المسجّل</string>
+
+    <string name="auth_sign_in_screen_title">تسجيل الدخول</string>
+    <string name="auth_sign_in_subtitle">سجّل الدخول بحسابك في حقيبتي. يحصل الحساب العادي على صلاحية طالب، بينما تُضبط صلاحيات المشرف والمالك من الخادم فقط.</string>
+    <string name="auth_sign_up_screen_title">إنشاء حساب طالب</string>
+    <string name="auth_sign_up_subtitle">أنشئ حساب طالب جديد باستخدام البريد الإلكتروني وكلمة المرور دون الحاجة لبيانات شخصية إضافية.</string>
+    <string name="auth_forgot_password_screen_title">استعادة كلمة المرور</string>
+    <string name="auth_forgot_password_subtitle">أدخل بريدك الإلكتروني لإرسال رابط إعادة تعيين كلمة المرور عبر Firebase Authentication.</string>
+
+    <string name="auth_field_confirm_password">تأكيد كلمة المرور</string>
+    <string name="auth_password_rules_hint">8 أحرف على الأقل وتتضمن حرفاً ورقماً على الأقل.</string>
+    <string name="auth_toggle_show_password">إظهار كلمة المرور</string>
+    <string name="auth_toggle_hide_password">إخفاء كلمة المرور</string>
+
+    <string name="auth_action_sign_in">تسجيل الدخول</string>
+    <string name="auth_action_create_account">إنشاء حساب طالب</string>
+    <string name="auth_action_send_reset">إرسال رابط الاستعادة</string>
+    <string name="auth_action_forgot_password">نسيت كلمة المرور؟ استعادة كلمة المرور</string>
+    <string name="auth_action_go_to_sign_up">ليس لديك حساب؟ إنشاء حساب طالب جديد</string>
+    <string name="auth_action_go_to_sign_in">لديك حساب بالفعل؟ تسجيل الدخول</string>
+    <string name="auth_action_back_to_sign_in">العودة إلى تسجيل الدخول</string>
+    <string name="auth_action_continue_as_guest">المتابعة كزائر</string>
+    <string name="auth_action_continue_to_app">متابعة إلى حقيبتي</string>
+
+    <string name="auth_sign_up_student_role_notice">ملاحظة أمنية: تُنشأ الحسابات الجديدة بدور «طالب» افتراضياً، ولا يمكن ترقية أي حساب إلى مشرف أو مالك من واجهة التطبيق.</string>
+    <string name="auth_sign_up_success_title">تم إنشاء حساب الطالب بنجاح</string>
+    <string name="auth_sign_up_success_message">تم تسجيل دخولك بالحساب (%1$s) بصلاحية طالب افتراضية.</string>
+    <string name="auth_sign_in_success_title">أهلاً بك في حقيبتي</string>
+    <string name="auth_sign_in_success_message">تم تسجيل الدخول بالحساب (%1$s) — الدور الحالي: %2$s.</string>
+    <string name="auth_password_reset_success_title">تم إرسال رابط الاستعادة</string>
+    <string name="auth_password_reset_success_message">أُرسلت رسالة إعادة تعيين كلمة المرور إلى (%1$s) إن كان البريد مرتبطاً بحساب فعّال. تحقّق من صندوق الوارد أو البريد غير المرغوب.</string>
+
+    <string name="downloads_guest_notice_title">التنزيلات متاحة للحسابات المسجّلة</string>
+    <string name="downloads_guest_notice_message">بصفتك زائراً يمكنك تصفح الفروع والمواد والأقسام بحرية. عند تفعيل التنزيلات لاحقاً ستحتاج إلى تسجيل الدخول بحساب طالب لحفظ الملفات على هذا الجهاز.</string>
+
+    <string name="auth_validation_password_too_short">يجب أن تتكون كلمة المرور من 8 أحرف على الأقل.</string>
+    <string name="auth_validation_password_weak">يجب أن تجمع كلمة المرور بين حروف وأرقام (حرف واحد ورقم واحد على الأقل).</string>
+    <string name="auth_validation_empty_confirm_password">يرجى إدخال تأكيد كلمة المرور.</string>
+    <string name="auth_validation_passwords_mismatch">كلمتا المرور غير متطابقتين.</string>
+
+    <string name="auth_error_email_already_in_use">هذا البريد الإلكتروني مستخدم مسبقاً لحساب آخر. يمكنك تسجيل الدخول أو استعادة كلمة المرور.</string>
+    <string name="auth_error_weak_password">كلمة المرور ضعيفة وفق سياسة الأمان. اختر كلمة مرور أقوى.</string>
+    <string name="auth_error_account_disabled">تم تعطيل هذا الحساب حالياً. تواصل مع الإدارة للمراجعة.</string>
+    <string name="auth_error_account_not_found">تعذّر العثور على حساب مرتبط بهذا البريد الإلكتروني أو قد يكون محذوفاً.</string>
+    <string name="auth_error_too_many_requests">تم تجاوز عدد المحاولات المسموح بها مؤقتاً. انتظر قليلاً ثم أعد المحاولة.</string>
+
+    <!-- Phase 6: Section Study Files & Embedded RTL PDF Reader -->
+    <string name="library_files_subtitle">الملفات التعليمية المنشورة ضمن هذا القسم</string>
+    <string name="library_files_empty_title">لا توجد ملفات منشورة في هذا القسم</string>
+    <string name="library_files_empty_message">لم يتم نشر ملفات تعليمية ضمن هذا القسم بعد.</string>
+    <string name="library_file_open_reader">فتح للقراءة</string>
+    <string name="library_file_version_badge">الإصدار %1$s</string>
+    <string name="library_file_awaiting_version">بانتظار نشر نسخة PDF من الإدارة</string>
+
+    <string name="pdf_reader_default_title">عارض PDF</string>
+    <string name="pdf_reader_loading">جاري تجهيز صفحات الملف…</string>
+    <string name="pdf_reader_page_loading">جاري تحميل الصفحة %1$d…</string>
+    <string name="pdf_reader_page_indicator">صفحة %1$d من %2$d</string>
+    <string name="pdf_reader_page_jump_action">الانتقال إلى صفحة</string>
+    <string name="pdf_reader_page_jump_title">الانتقال إلى صفحة محددة</string>
+    <string name="pdf_reader_page_jump_hint">أدخل رقم الصفحة (1 إلى %1$d)</string>
+    <string name="pdf_reader_page_jump_confirm">انتقال</string>
+    <string name="pdf_reader_page_jump_invalid">أدخل رقماً صحيحاً بين 1 و %1$d.</string>
+    <string name="pdf_reader_previous_page">الصفحة السابقة</string>
+    <string name="pdf_reader_next_page">الصفحة التالية</string>
+
+    <string name="pdf_reader_zoom_in">تكبير</string>
+    <string name="pdf_reader_zoom_out">تصغير</string>
+    <string name="pdf_reader_zoom_reset">إعادة ضبط التكبير</string>
+    <string name="pdf_reader_zoom_percent">%1$d%%</string>
+
+    <string name="pdf_reader_night_mode">الوضع الليلي للقراءة</string>
+    <string name="pdf_reader_day_mode">الوضع النهاري للقراءة</string>
+    <string name="pdf_reader_toggle_search">بحث داخل الملف</string>
+    <string name="pdf_reader_search_hint">ابحث عن كلمة أو عبارة…</string>
+    <string name="pdf_reader_search_execute">بحث</string>
+    <string name="pdf_reader_search_clear">مسح البحث</string>
+    <string name="pdf_reader_search_searching">جاري البحث في صفحات الملف…</string>
+    <string name="pdf_reader_search_match_counter">%1$d من %2$d (صفحة %3$d)</string>
+    <string name="pdf_reader_search_prev_match">النتيجة السابقة</string>
+    <string name="pdf_reader_search_next_match">النتيجة التالية</string>
+    <string name="pdf_reader_search_no_results">لا توجد نتائج مطابقة للبحث في هذا الملف.</string>
+    <string name="pdf_reader_search_no_extractable_text">هذا الملف لا يحتوي على نص قابل للاستخراج (قد تكون الصفحات مصوّرة)، لذا لا يتوفر البحث النصي له حالياً.</string>
+    <string name="pdf_reader_search_error">تعذّر إتمام البحث داخل هذا الملف.</string>
+
+    <string name="pdf_reader_local_progress_badge">يُحفظ تقدم القراءة محلياً على هذا الجهاز فقط</string>
+    <string name="pdf_reader_resumed_page_note">تمت العودة إلى آخر صفحة قرأتها (%1$d)</string>
+
+    <string name="pdf_reader_error_title">تعذّر فتح ملف PDF</string>
+    <string name="pdf_reader_error_no_version">لم يُرفع أو يُنشر إصدار PDF فعلي لهذا الملف بعد.</string>
+    <string name="pdf_reader_error_broker_not_configured">طبقة القارئ جاهزة، بانتظار ربط وسيط الوصول الآمن لملفات Cloudflare R2 لتزويد روابط القراءة المؤقتة.</string>
+    <string name="pdf_reader_error_unauthorized">انتهت صلاحية رابط الوصول أو ليست لديك صلاحية قراءة هذا الملف حالياً.</string>
+    <string name="pdf_reader_error_network">تعذّر جلب الملف بسبب انقطاع الإنترنت أو ضعف الاتصال. تحقّق من الشبكة وأعد المحاولة.</string>
+    <string name="pdf_reader_error_not_found">الملف المطلوب غير متوفر حالياً على المصدر.</string>
+    <string name="pdf_reader_error_corrupted">الملف تالف أو غير مدعوم أو محمي بكلمة مرور ولا يمكن عرضه.</string>
+    <string name="pdf_reader_error_unknown">حدث خطأ غير متوقع أثناء فتح الملف.</string>
+</resources>

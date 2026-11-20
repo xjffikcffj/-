@@ -1,0 +1,350 @@
+package com.studentlearning.platform2026.data.remote.firebase
+
+import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Collections
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Defaults
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Fields
+import com.studentlearning.platform2026.domain.model.AdminException
+import com.studentlearning.platform2026.domain.model.AdminFailureReason
+import com.studentlearning.platform2026.domain.model.StudyBranch
+import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudySection
+import com.studentlearning.platform2026.domain.model.StudySubject
+import java.io.IOException
+
+object FirestoreAdminCatalogMapper {
+
+    fun mapBranchForAdmin(id: String, data: Map<String, Any?>): StudyBranch? {
+        if (id.isBlank()) return null
+
+        val name = extractText(data, Fields.NAME_AR, Fields.NAME, Fields.TITLE) ?: return null
+        val order = (data[Fields.ORDER] as? Number)?.toInt() ?: Int.MAX_VALUE
+        val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
+
+        return StudyBranch(
+            id = id,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            referencePath = "${Collections.BRANCHES}/$id"
+        )
+    }
+
+    fun mapBranchesForAdmin(documents: List<Pair<String, Map<String, Any?>>>): List<StudyBranch> {
+        return documents
+            .mapNotNull { (id, data) -> mapBranchForAdmin(id, data) }
+            .sortedWith(compareBy<StudyBranch> { it.order }.thenBy { it.name })
+    }
+
+    fun mapSubjectForAdmin(
+        id: String,
+        data: Map<String, Any?>,
+        expectedBranchId: String
+    ): StudySubject? {
+        if (id.isBlank() || expectedBranchId.isBlank()) return null
+
+        // Confirmed schema: subjects.branchId is a DocumentReference to branches/{branchId}.
+        val branchRef = FirestoreCatalogMapper.extractReferenceTarget(data[Fields.BRANCH_ID]) ?: return null
+        if (branchRef.collectionId != Collections.BRANCHES || branchRef.documentId != expectedBranchId) {
+            return null
+        }
+
+        val name = extractText(data, Fields.NAME_AR, Fields.NAME, Fields.TITLE) ?: return null
+        val order = (data[Fields.ORDER] as? Number)?.toInt() ?: Int.MAX_VALUE
+        val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
+
+        return StudySubject(
+            id = id,
+            branchId = branchRef.documentId,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            branchReferencePath = branchRef.path
+        )
+    }
+
+    fun mapSubjectsForAdmin(
+        documents: List<Pair<String, Map<String, Any?>>>,
+        expectedBranchId: String
+    ): List<StudySubject> {
+        return documents
+            .mapNotNull { (id, data) -> mapSubjectForAdmin(id, data, expectedBranchId) }
+            .sortedWith(compareBy<StudySubject> { it.order }.thenBy { it.name })
+    }
+
+    fun mapSectionForAdmin(
+        id: String,
+        data: Map<String, Any?>,
+        expectedSubjectId: String
+    ): StudySection? {
+        if (id.isBlank() || expectedSubjectId.isBlank()) return null
+
+        // Confirmed schema: sections.subjectId is a DocumentReference to subjects/{subjectId}; no branchId field.
+        val subjectRef = FirestoreCatalogMapper.extractReferenceTarget(data[Fields.SUBJECT_ID]) ?: return null
+        if (subjectRef.collectionId != Collections.SUBJECTS || subjectRef.documentId != expectedSubjectId) {
+            return null
+        }
+
+        val name = extractText(data, Fields.NAME_AR, Fields.NAME, Fields.TITLE) ?: return null
+        val order = (data[Fields.ORDER] as? Number)?.toInt() ?: Int.MAX_VALUE
+        val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
+
+        return StudySection(
+            id = id,
+            subjectId = subjectRef.documentId,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            subjectReferencePath = subjectRef.path
+        )
+    }
+
+    fun mapSectionsForAdmin(
+        documents: List<Pair<String, Map<String, Any?>>>,
+        expectedSubjectId: String
+    ): List<StudySection> {
+        return documents
+            .mapNotNull { (id, data) -> mapSectionForAdmin(id, data, expectedSubjectId) }
+            .sortedWith(compareBy<StudySection> { it.order }.thenBy { it.name })
+    }
+
+    fun mapStudyFileForAdmin(
+        id: String,
+        data: Map<String, Any?>,
+        expectedSectionId: String
+    ): StudyFileMetadata? {
+        if (id.isBlank() || expectedSectionId.isBlank()) return null
+
+        val sectionRef = FirestoreCatalogMapper.extractReferenceTarget(data[Fields.SECTION_ID]) ?: return null
+        if (sectionRef.collectionId != Collections.SECTIONS || sectionRef.documentId != expectedSectionId) {
+            return null
+        }
+
+        val title = extractText(data, Fields.TITLE, Fields.NAME_AR, Fields.NAME) ?: return null
+        val order = (data[Fields.ORDER] as? Number)?.toInt() ?: Int.MAX_VALUE
+        val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
+        val isArchived = (data[Fields.IS_ARCHIVED] as? Boolean) ?: false
+        val description = (data[Fields.DESCRIPTION] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val mimeType = (data[Fields.MIME_TYPE] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: Defaults.MIME_TYPE_PDF
+        val storageProvider = (data[Fields.STORAGE_PROVIDER] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: Defaults.STORAGE_PROVIDER_CLOUDFLARE_R2
+        val activeVersionId = (data[Fields.ACTIVE_VERSION_ID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val activeVersionNumber = (data[Fields.ACTIVE_VERSION_NUMBER] as? Number)?.toInt()?.takeIf { it >= 1 }
+        val activeVersionLabel = (data[Fields.ACTIVE_VERSION_LABEL] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val createdByUid = (data[Fields.CREATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val updatedByUid = (data[Fields.UPDATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+
+        return StudyFileMetadata(
+            id = id,
+            sectionId = sectionRef.documentId,
+            sectionReferencePath = sectionRef.path,
+            title = title,
+            description = description,
+            order = order,
+            isPublished = isPublished,
+            isArchived = isArchived,
+            mimeType = mimeType,
+            storageProvider = storageProvider,
+            activeVersionId = activeVersionId,
+            activeVersionNumber = activeVersionNumber,
+            activeVersionLabel = activeVersionLabel,
+            createdByUid = createdByUid,
+            updatedByUid = updatedByUid
+        )
+    }
+
+    fun mapStudyFilesForAdmin(
+        documents: List<Pair<String, Map<String, Any?>>>,
+        expectedSectionId: String
+    ): List<StudyFileMetadata> {
+        return documents
+            .mapNotNull { (id, data) -> mapStudyFileForAdmin(id, data, expectedSectionId) }
+            .sortedWith(
+                compareBy<StudyFileMetadata> { it.isArchived }
+                    .thenBy { it.order }
+                    .thenBy { it.title }
+            )
+    }
+
+    fun buildBranchCreatePayload(
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.NAME to name,
+        Fields.ORDER to order,
+        Fields.IS_PUBLISHED to isPublished,
+        Fields.CREATED_BY_UID to actorUid,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.CREATED_AT to timestampValue,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildSubjectCreatePayload(
+        branchReference: Any,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.BRANCH_ID to branchReference,
+        Fields.NAME to name,
+        Fields.ORDER to order,
+        Fields.IS_PUBLISHED to isPublished,
+        Fields.CREATED_BY_UID to actorUid,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.CREATED_AT to timestampValue,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildSectionCreatePayload(
+        subjectReference: Any,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        // Strict confirmed schema: sections has NO branchId field.
+        Fields.SUBJECT_ID to subjectReference,
+        Fields.NAME to name,
+        Fields.ORDER to order,
+        Fields.IS_PUBLISHED to isPublished,
+        Fields.CREATED_BY_UID to actorUid,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.CREATED_AT to timestampValue,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildCatalogItemUpdatePayload(
+        name: String,
+        order: Int,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.NAME to name,
+        Fields.ORDER to order,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildOrderUpdatePayload(
+        order: Int,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.ORDER to order,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildPublishStateUpdatePayload(
+        isPublished: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.IS_PUBLISHED to isPublished,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildStudyFileCreatePayload(
+        sectionReference: Any,
+        title: String,
+        description: String?,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.SECTION_ID to sectionReference,
+        Fields.TITLE to title,
+        Fields.DESCRIPTION to description,
+        Fields.ORDER to order,
+        Fields.IS_PUBLISHED to isPublished,
+        Fields.IS_ARCHIVED to false,
+        Fields.MIME_TYPE to Defaults.MIME_TYPE_PDF,
+        Fields.STORAGE_PROVIDER to Defaults.STORAGE_PROVIDER_CLOUDFLARE_R2,
+        // Pointer-only fields remain null until an independent version document is created
+        // under `study_files/{fileId}/versions/{versionId}` and a real PDF is uploaded to R2.
+        Fields.ACTIVE_VERSION_ID to null,
+        Fields.ACTIVE_VERSION_NUMBER to null,
+        Fields.ACTIVE_VERSION_LABEL to null,
+        Fields.CREATED_BY_UID to actorUid,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.CREATED_AT to timestampValue,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildStudyFileUpdatePayload(
+        title: String,
+        description: String?,
+        order: Int,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        // Intentionally excludes activeVersionId/version/R2 fields so editing file identity
+        // never overwrites version history or active version pointers.
+        Fields.TITLE to title,
+        Fields.DESCRIPTION to description,
+        Fields.ORDER to order,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun buildArchiveStateUpdatePayload(
+        isArchived: Boolean,
+        actorUid: String,
+        timestampValue: Any
+    ): Map<String, Any?> = mapOf(
+        Fields.IS_ARCHIVED to isArchived,
+        Fields.UPDATED_BY_UID to actorUid,
+        Fields.UPDATED_AT to timestampValue
+    )
+
+    fun mapThrowableToAdminReason(throwable: Throwable): AdminFailureReason {
+        val nestedAdmin = throwable as? AdminException ?: throwable.cause as? AdminException
+        if (nestedAdmin != null) return nestedAdmin.reason
+
+        return when (throwable) {
+            is FirebaseAuthException -> when (throwable.errorCode) {
+                "ERROR_EMAIL_ALREADY_IN_USE" -> AdminFailureReason.EMAIL_ALREADY_IN_USE
+                "ERROR_WEAK_PASSWORD" -> AdminFailureReason.WEAK_PASSWORD
+                "ERROR_USER_DISABLED" -> AdminFailureReason.ACCOUNT_DISABLED
+                "ERROR_USER_NOT_FOUND" -> AdminFailureReason.ACCOUNT_NOT_FOUND
+                "ERROR_USER_TOKEN_EXPIRED" -> AdminFailureReason.UNAUTHENTICATED
+                "ERROR_INVALID_CREDENTIAL",
+                "ERROR_WRONG_PASSWORD",
+                "ERROR_INVALID_EMAIL" -> AdminFailureReason.INVALID_CREDENTIALS
+                "ERROR_TOO_MANY_REQUESTS" -> AdminFailureReason.TOO_MANY_REQUESTS
+                "ERROR_NETWORK_REQUEST_FAILED" -> AdminFailureReason.NETWORK_UNAVAILABLE
+                else -> AdminFailureReason.UNKNOWN
+            }
+            is FirebaseNetworkException -> AdminFailureReason.NETWORK_UNAVAILABLE
+            is FirebaseFirestoreException -> when (throwable.code) {
+                FirebaseFirestoreException.Code.PERMISSION_DENIED -> AdminFailureReason.PERMISSION_DENIED
+                FirebaseFirestoreException.Code.UNAUTHENTICATED -> AdminFailureReason.UNAUTHENTICATED
+                FirebaseFirestoreException.Code.NOT_FOUND -> AdminFailureReason.NOT_FOUND
+                FirebaseFirestoreException.Code.UNAVAILABLE,
+                FirebaseFirestoreException.Code.DEADLINE_EXCEEDED -> AdminFailureReason.NETWORK_UNAVAILABLE
+                else -> AdminFailureReason.UNKNOWN
+            }
+            is IOException -> AdminFailureReason.NETWORK_UNAVAILABLE
+            else -> AdminFailureReason.UNKNOWN
+        }
+    }
+
+    private fun extractText(data: Map<String, Any?>, vararg keys: String): String? {
+        for (key in keys) {
+            val value = (data[key] as? String)?.trim()
+            if (!value.isNullOrEmpty()) return value
+        }
+        return null
+    }
+}

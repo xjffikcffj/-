@@ -1,0 +1,580 @@
+package com.studentlearning.platform2026.data.remote.firebase
+
+import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Collections
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Defaults
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Fields
+import com.studentlearning.platform2026.domain.model.AdminException
+import com.studentlearning.platform2026.domain.model.AdminFailureReason
+import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.StudyBranch
+import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudySection
+import com.studentlearning.platform2026.domain.model.StudySubject
+
+interface AdminCatalogRemoteDataSource {
+    suspend fun fetchAllBranches(): List<StudyBranch>
+    suspend fun createBranch(
+        customId: String?,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudyBranch
+    suspend fun updateBranch(branchId: String, name: String, order: Int, actorUid: String)
+    suspend fun setBranchPublished(branchId: String, isPublished: Boolean, actorUid: String)
+
+    suspend fun fetchAllSubjects(branchId: String): List<StudySubject>
+    suspend fun createSubject(
+        customId: String?,
+        branchId: String,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudySubject
+    suspend fun updateSubject(subjectId: String, name: String, order: Int, actorUid: String)
+    suspend fun setSubjectPublished(subjectId: String, isPublished: Boolean, actorUid: String)
+
+    suspend fun fetchAllSections(subjectId: String): List<StudySection>
+    suspend fun createSection(
+        customId: String?,
+        subjectId: String,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudySection
+    suspend fun updateSection(sectionId: String, name: String, order: Int, actorUid: String)
+    suspend fun setSectionPublished(sectionId: String, isPublished: Boolean, actorUid: String)
+
+    suspend fun fetchStudyFilesForSection(sectionId: String): List<StudyFileMetadata>
+    suspend fun createStudyFileMetadata(
+        customId: String?,
+        sectionId: String,
+        title: String,
+        description: String?,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudyFileMetadata
+    suspend fun updateStudyFileMetadata(
+        fileId: String,
+        sectionId: String,
+        title: String,
+        description: String?,
+        order: Int,
+        actorUid: String
+    )
+    suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String)
+    suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String)
+
+    suspend fun reorderBranches(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    )
+    suspend fun reorderSubjects(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    )
+    suspend fun reorderSections(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    )
+    suspend fun reorderStudyFiles(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    )
+}
+
+class FirestoreAdminCatalogDataSource(
+    private val firestoreProvider: FirestoreProvider
+) : AdminCatalogRemoteDataSource {
+
+    override suspend fun fetchAllBranches(): List<StudyBranch> {
+        val firestore = requireConfiguredFirestore()
+        val snapshot = firestore.collection(Collections.BRANCHES)
+            .get()
+            .awaitResult()
+
+        val rawDocuments = snapshot.documents.map { it.id to (it.data ?: emptyMap()) }
+        return FirestoreAdminCatalogMapper.mapBranchesForAdmin(rawDocuments)
+    }
+
+    override suspend fun createBranch(
+        customId: String?,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudyBranch {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildBranchCreatePayload(
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        val docRef = createDocumentAtomically(firestore, Collections.BRANCHES, customId, payload)
+
+        return StudyBranch(
+            id = docRef.id,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            referencePath = docRef.path
+        )
+    }
+
+    override suspend fun updateBranch(branchId: String, name: String, order: Int, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildCatalogItemUpdatePayload(
+            name = name,
+            order = order,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.BRANCHES)
+            .document(branchId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun setBranchPublished(branchId: String, isPublished: Boolean, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.BRANCHES)
+            .document(branchId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun fetchAllSubjects(branchId: String): List<StudySubject> {
+        if (branchId.isBlank()) return emptyList()
+
+        val firestore = requireConfiguredFirestore()
+        val branchReference: DocumentReference = firestore
+            .collection(Collections.BRANCHES)
+            .document(branchId)
+
+        val snapshot = firestore.collection(Collections.SUBJECTS)
+            .whereEqualTo(Fields.BRANCH_ID, branchReference)
+            .get()
+            .awaitResult()
+
+        val rawDocuments = snapshot.documents.map { it.id to (it.data ?: emptyMap()) }
+        return FirestoreAdminCatalogMapper.mapSubjectsForAdmin(rawDocuments, expectedBranchId = branchId)
+    }
+
+    override suspend fun createSubject(
+        customId: String?,
+        branchId: String,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudySubject {
+        val firestore = requireConfiguredFirestore()
+        val branchReference = firestore.collection(Collections.BRANCHES).document(branchId)
+        val payload = FirestoreAdminCatalogMapper.buildSubjectCreatePayload(
+            branchReference = branchReference,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        val docRef = createDocumentAtomically(firestore, Collections.SUBJECTS, customId, payload)
+
+        return StudySubject(
+            id = docRef.id,
+            branchId = branchId,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            branchReferencePath = branchReference.path
+        )
+    }
+
+    override suspend fun updateSubject(subjectId: String, name: String, order: Int, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildCatalogItemUpdatePayload(
+            name = name,
+            order = order,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.SUBJECTS)
+            .document(subjectId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun setSubjectPublished(subjectId: String, isPublished: Boolean, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.SUBJECTS)
+            .document(subjectId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun fetchAllSections(subjectId: String): List<StudySection> {
+        if (subjectId.isBlank()) return emptyList()
+
+        val firestore = requireConfiguredFirestore()
+        val subjectReference: DocumentReference = firestore
+            .collection(Collections.SUBJECTS)
+            .document(subjectId)
+
+        val snapshot = firestore.collection(Collections.SECTIONS)
+            .whereEqualTo(Fields.SUBJECT_ID, subjectReference)
+            .get()
+            .awaitResult()
+
+        val rawDocuments = snapshot.documents.map { it.id to (it.data ?: emptyMap()) }
+        return FirestoreAdminCatalogMapper.mapSectionsForAdmin(rawDocuments, expectedSubjectId = subjectId)
+    }
+
+    override suspend fun createSection(
+        customId: String?,
+        subjectId: String,
+        name: String,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudySection {
+        val firestore = requireConfiguredFirestore()
+        val subjectReference = firestore.collection(Collections.SUBJECTS).document(subjectId)
+        val payload = FirestoreAdminCatalogMapper.buildSectionCreatePayload(
+            subjectReference = subjectReference,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        val docRef = createDocumentAtomically(firestore, Collections.SECTIONS, customId, payload)
+
+        return StudySection(
+            id = docRef.id,
+            subjectId = subjectId,
+            name = name,
+            order = order,
+            isPublished = isPublished,
+            subjectReferencePath = subjectReference.path
+        )
+    }
+
+    override suspend fun updateSection(sectionId: String, name: String, order: Int, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildCatalogItemUpdatePayload(
+            name = name,
+            order = order,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.SECTIONS)
+            .document(sectionId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun setSectionPublished(sectionId: String, isPublished: Boolean, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.SECTIONS)
+            .document(sectionId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun fetchStudyFilesForSection(sectionId: String): List<StudyFileMetadata> {
+        if (sectionId.isBlank()) return emptyList()
+
+        val firestore = requireConfiguredFirestore()
+        val sectionReference: DocumentReference = firestore
+            .collection(Collections.SECTIONS)
+            .document(sectionId)
+
+        val snapshot = firestore.collection(Collections.STUDY_FILES)
+            .whereEqualTo(Fields.SECTION_ID, sectionReference)
+            .get()
+            .awaitResult()
+
+        val rawDocuments = snapshot.documents.map { it.id to (it.data ?: emptyMap()) }
+        return FirestoreAdminCatalogMapper.mapStudyFilesForAdmin(rawDocuments, expectedSectionId = sectionId)
+    }
+
+    override suspend fun createStudyFileMetadata(
+        customId: String?,
+        sectionId: String,
+        title: String,
+        description: String?,
+        order: Int,
+        isPublished: Boolean,
+        actorUid: String
+    ): StudyFileMetadata {
+        val firestore = requireConfiguredFirestore()
+        val sectionReference = firestore.collection(Collections.SECTIONS).document(sectionId)
+        val payload = FirestoreAdminCatalogMapper.buildStudyFileCreatePayload(
+            sectionReference = sectionReference,
+            title = title,
+            description = description,
+            order = order,
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        val docRef = createDocumentAtomically(firestore, Collections.STUDY_FILES, customId, payload)
+
+        return StudyFileMetadata(
+            id = docRef.id,
+            sectionId = sectionId,
+            sectionReferencePath = sectionReference.path,
+            title = title,
+            description = description,
+            order = order,
+            isPublished = isPublished,
+            isArchived = false,
+            mimeType = Defaults.MIME_TYPE_PDF,
+            storageProvider = Defaults.STORAGE_PROVIDER_CLOUDFLARE_R2,
+            activeVersionId = null,
+            activeVersionNumber = null,
+            activeVersionLabel = null,
+            createdByUid = actorUid,
+            updatedByUid = actorUid
+        )
+    }
+
+    override suspend fun updateStudyFileMetadata(
+        fileId: String,
+        sectionId: String,
+        title: String,
+        description: String?,
+        order: Int,
+        actorUid: String
+    ) {
+        val firestore = requireConfiguredFirestore()
+        val expectedSectionRef = firestore.collection(Collections.SECTIONS).document(sectionId)
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val payload = FirestoreAdminCatalogMapper.buildStudyFileUpdatePayload(
+            title = title,
+            description = description,
+            order = order,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+
+        // Verify atomically that the file exists and belongs to the expected section,
+        // without altering activeVersionId or any version subcollection document.
+        firestore.runTransaction { transaction ->
+            val snapshot = transaction.get(fileRef)
+            if (!snapshot.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file '$fileId' does not exist."
+                )
+            }
+            val currentSectionRef = snapshot.getDocumentReference(Fields.SECTION_ID)
+            if (currentSectionRef?.path != expectedSectionRef.path) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
+                    message = "Study file '$fileId' does not belong to section '$sectionId'."
+                )
+            }
+            transaction.update(fileRef, payload)
+            null
+        }.awaitResult()
+    }
+
+    override suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
+            isPublished = isPublished,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.STUDY_FILES)
+            .document(fileId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
+        val firestore = requireConfiguredFirestore()
+        val payload = FirestoreAdminCatalogMapper.buildArchiveStateUpdatePayload(
+            isArchived = isArchived,
+            actorUid = actorUid,
+            timestampValue = FieldValue.serverTimestamp()
+        )
+        firestore.collection(Collections.STUDY_FILES)
+            .document(fileId)
+            .update(payload)
+            .awaitResult()
+    }
+
+    override suspend fun reorderBranches(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    ) {
+        reorderCollectionItemsAtomically(
+            collectionName = Collections.BRANCHES,
+            firstId = firstId,
+            firstNewOrder = firstNewOrder,
+            secondId = secondId,
+            secondNewOrder = secondNewOrder,
+            actorUid = actorUid
+        )
+    }
+
+    override suspend fun reorderSubjects(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    ) {
+        reorderCollectionItemsAtomically(
+            collectionName = Collections.SUBJECTS,
+            firstId = firstId,
+            firstNewOrder = firstNewOrder,
+            secondId = secondId,
+            secondNewOrder = secondNewOrder,
+            actorUid = actorUid
+        )
+    }
+
+    override suspend fun reorderSections(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    ) {
+        reorderCollectionItemsAtomically(
+            collectionName = Collections.SECTIONS,
+            firstId = firstId,
+            firstNewOrder = firstNewOrder,
+            secondId = secondId,
+            secondNewOrder = secondNewOrder,
+            actorUid = actorUid
+        )
+    }
+
+    override suspend fun reorderStudyFiles(
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    ) {
+        reorderCollectionItemsAtomically(
+            collectionName = Collections.STUDY_FILES,
+            firstId = firstId,
+            firstNewOrder = firstNewOrder,
+            secondId = secondId,
+            secondNewOrder = secondNewOrder,
+            actorUid = actorUid
+        )
+    }
+
+    private suspend fun createDocumentAtomically(
+        firestore: FirebaseFirestore,
+        collectionName: String,
+        customId: String?,
+        payload: Map<String, Any?>
+    ): DocumentReference {
+        val collection = firestore.collection(collectionName)
+        if (customId == null) {
+            val docRef = collection.document()
+            docRef.set(payload).awaitResult()
+            return docRef
+        }
+
+        val candidate = collection.document(customId)
+        firestore.runTransaction { transaction ->
+            val snapshot = transaction.get(candidate)
+            if (snapshot.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.INVALID_DOCUMENT_ID,
+                    message = "A document with ID '$customId' already exists."
+                )
+            }
+            transaction.set(candidate, payload)
+            null
+        }.awaitResult()
+        return candidate
+    }
+
+    private suspend fun reorderCollectionItemsAtomically(
+        collectionName: String,
+        firstId: String,
+        firstNewOrder: Int,
+        secondId: String,
+        secondNewOrder: Int,
+        actorUid: String
+    ) {
+        val firestore = requireConfiguredFirestore()
+        val collection = firestore.collection(collectionName)
+        val timestamp = FieldValue.serverTimestamp()
+        val batch = firestore.batch()
+        batch.update(
+            collection.document(firstId),
+            FirestoreAdminCatalogMapper.buildOrderUpdatePayload(
+                order = firstNewOrder,
+                actorUid = actorUid,
+                timestampValue = timestamp
+            )
+        )
+        batch.update(
+            collection.document(secondId),
+            FirestoreAdminCatalogMapper.buildOrderUpdatePayload(
+                order = secondNewOrder,
+                actorUid = actorUid,
+                timestampValue = timestamp
+            )
+        )
+        batch.commit().awaitResult()
+    }
+
+    private fun requireConfiguredFirestore(): FirebaseFirestore {
+        return firestoreProvider.getFirestoreOrNull()
+            ?: throw AdminException(
+                reason = AdminFailureReason.FIREBASE_NOT_CONFIGURED,
+                message = "Firebase is not configured locally yet."
+            )
+    }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "حقيبتي (Haqibati)",
+  "description": "التأسيس التقني لتطبيق حقيبتي التعليمي على منصة Android باستخدام Kotlin وJetpack Compose.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
