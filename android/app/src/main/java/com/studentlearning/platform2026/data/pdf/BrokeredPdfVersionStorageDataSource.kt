@@ -6,6 +6,7 @@ import com.studentlearning.platform2026.domain.model.PdfLoadException
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker
 import com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import java.net.URLEncoder
 
 /**
@@ -14,21 +15,17 @@ import java.net.URLEncoder
  * - Builds deterministic, collision-free per-version storage keys (`study-files/{fileId}/versions/{versionId}/document.pdf`)
  *   without ever creating per-student cloud copies or embedding Firebase UIDs.
  * - Contains ZERO Cloudflare R2 credentials, access keys, secrets, or fake upload URLs.
- * - Reports [PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION] until the secure
- *   backend signed-URL broker endpoint is configured.
+ * - Never treats an arbitrary `https://` string in [brokerEndpointBaseUrl] as ready; reports
+ *   [PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION] and fails closed for upload
+ *   slot negotiation and server binary verification until a real backend verification client is integrated.
  */
 class BrokeredPdfVersionStorageDataSource(
+    @Suppress("unused")
     private val brokerEndpointBaseUrl: String? = null
 ) : PdfVersionStorageBroker {
 
-    override fun getBrokerStatus(): PdfBrokerConfigurationStatus {
-        val base = brokerEndpointBaseUrl?.trim()
-        return if (!base.isNullOrBlank() && base.startsWith("https://", ignoreCase = true)) {
-            PdfBrokerConfigurationStatus.CONFIGURED
-        } else {
-            PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
-        }
-    }
+    override fun getBrokerStatus(): PdfBrokerConfigurationStatus =
+        PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
 
     override fun buildVersionObjectKey(fileId: String, versionId: String): String {
         val safeFileId = sanitizePathComponent(fileId)
@@ -56,21 +53,24 @@ class BrokeredPdfVersionStorageDataSource(
             )
         }
 
-        if (getBrokerStatus() != PdfBrokerConfigurationStatus.CONFIGURED) {
-            return AppResult.Error(
-                message = "Secure Cloudflare R2 upload broker is not configured yet.",
-                cause = PdfLoadException(
-                    reason = PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED,
-                    message = "Secure Cloudflare R2 upload broker is not configured yet."
-                )
-            )
-        }
-
         return AppResult.Error(
-            message = "Signed upload slot negotiation requires backend broker integration.",
+            message = "Real backend signed upload slot broker is not integrated yet.",
             cause = PdfLoadException(
                 reason = PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED,
-                message = "Signed upload slot negotiation requires backend broker integration."
+                message = "Real backend signed upload slot broker is not integrated yet."
+            )
+        )
+    }
+
+    override suspend fun verifyUploadedPdfBinary(
+        fileId: String,
+        versionId: String
+    ): AppResult<VerifiedPdfBinaryProof> {
+        return AppResult.Error(
+            message = "Real backend R2 binary verification service is not integrated yet.",
+            cause = PdfLoadException(
+                reason = PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED,
+                message = "Real backend R2 binary verification service is not integrated yet."
             )
         )
     }

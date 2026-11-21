@@ -296,6 +296,7 @@ class AdminPortalViewModelTest {
             versionLabel = "1.0",
             r2ObjectKey = "study-files/file-1/versions/v1/bio.pdf",
             fileSizeBytes = 10_240L,
+            checksumSha256 = "e".repeat(64),
             isPublished = false
         )
         val catalogRepository = FakeAdminCatalogRepository().apply {
@@ -372,49 +373,217 @@ class AdminPortalViewModelTest {
     }
 
     @Test
-    fun `archived parent study file cannot be republished until unarchived`() = runTest {
-        val authRepository = FakeAuthRepository(
-            AdminSession(
-                isSignedIn = true,
-                uid = "owner-1",
-                email = "owner@example.com",
-                role = AdminRole.OWNER,
-                hasLoadedTokenClaims = true,
-                areClaimsConfirmedCurrent = true
+    fun `archived parent study file cannot be republished until unarchived and requires active published version`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-1",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
             )
-        )
-        val archivedFile = StudyFileMetadata(
-            id = "file-archived",
-            sectionId = "sec-1",
-            title = "ملف مؤرشف",
-            order = 1,
-            isPublished = false,
-            isArchived = true
-        )
-        val catalogRepository = FakeAdminCatalogRepository().apply {
-            studyFiles.add(archivedFile)
+            val archivedFile = StudyFileMetadata(
+                id = "file-archived",
+                sectionId = "sec-1",
+                title = "ملف مؤرشف",
+                order = 1,
+                isPublished = false,
+                isArchived = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersionLabel = "1.0"
+            )
+            val activeVersion = StudyFileVersionMetadata(
+                id = "v1",
+                fileId = "file-archived",
+                versionNumber = 1,
+                versionLabel = "1.0",
+                r2ObjectKey = "study-files/file-archived/versions/v1/document.pdf",
+                fileSizeBytes = 8192L,
+                checksumSha256 = "f".repeat(64),
+                isPublished = true,
+                isArchived = false
+            )
+            val draftFileNoVersion = StudyFileMetadata(
+                id = "file-no-version",
+                sectionId = "sec-1",
+                title = "ملف بلا إصدار",
+                order = 2,
+                isPublished = false,
+                isArchived = false,
+                activeVersionId = null
+            )
+            val catalogRepository = FakeAdminCatalogRepository().apply {
+                studyFiles.addAll(listOf(archivedFile, draftFileNoVersion))
+                versions.add(activeVersion)
+            }
+            val viewModel = AdminPortalViewModel(
+                authRepository = authRepository,
+                adminCatalogRepository = catalogRepository
+            )
+            advanceUntilIdle()
+
+            // Parent file without an active published version cannot be published.
+            viewModel.requestToggleStudyFilePublished(draftFileNoVersion)
+            advanceUntilIdle()
+            assertEquals(true, viewModel.uiState.value.feedback?.isError)
+            assertEquals(
+                AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                viewModel.uiState.value.feedback?.validationError
+            )
+            assertFalse(catalogRepository.studyFiles[1].isPublished)
+
+            // Archived file cannot be published until unarchived.
+            viewModel.requestToggleStudyFilePublished(archivedFile)
+            advanceUntilIdle()
+            assertEquals(true, viewModel.uiState.value.feedback?.isError)
+            assertEquals(
+                AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+                viewModel.uiState.value.feedback?.validationError
+            )
+            assertFalse(catalogRepository.studyFiles.first().isPublished)
+
+            viewModel.requestToggleStudyFileArchived(archivedFile)
+            advanceUntilIdle()
+            assertFalse(catalogRepository.studyFiles.first().isArchived)
+
+            viewModel.requestToggleStudyFilePublished(catalogRepository.studyFiles.first())
+            advanceUntilIdle()
+            assertTrue(catalogRepository.studyFiles.first().isPublished)
+
+            // Creating a new study file as a draft succeeds while broker is pending.
+            viewModel.saveStudyFile(
+                sectionId = "sec-1",
+                editing = null,
+                customId = "draft-file-2",
+                title = "مسودة جديدة",
+                description = null,
+                order = 3,
+                isPublished = false
+            )
+            advanceUntilIdle()
+            assertEquals(AdminSuccessMessage.FILE_CREATED, viewModel.uiState.value.feedback?.successMessage)
+            assertFalse(catalogRepository.studyFiles.first { it.id == "draft-file-2" }.isPublished)
         }
-        val viewModel = AdminPortalViewModel(
-            authRepository = authRepository,
-            adminCatalogRepository = catalogRepository
-        )
-        advanceUntilIdle()
 
-        viewModel.requestToggleStudyFilePublished(archivedFile)
-        advanceUntilIdle()
-        assertEquals(true, viewModel.uiState.value.feedback?.isError)
-        assertEquals(
-            AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
-            viewModel.uiState.value.feedback?.validationError
-        )
-        assertFalse(catalogRepository.studyFiles.first().isPublished)
+    @Test
+    fun `archiving published file unpublishes atomically and restoring keeps it unpublished while preserving versions`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-1",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val publishedFile = StudyFileMetadata(
+                id = "file-live",
+                sectionId = "sec-1",
+                title = "ملزمة الفيزياء",
+                order = 1,
+                isPublished = true,
+                isArchived = false,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersionLabel = "1.0"
+            )
+            val nullNumberFile = publishedFile.copy(
+                id = "file-null-num",
+                isPublished = false,
+                activeVersionNumber = null
+            )
+            val mismatchNumberFile = publishedFile.copy(
+                id = "file-mismatch-num",
+                isPublished = false,
+                activeVersionNumber = 99
+            )
+            val catalogRepository = FakeAdminCatalogRepository().apply {
+                studyFiles.addAll(listOf(publishedFile, nullNumberFile, mismatchNumberFile))
+                versions.addAll(
+                    listOf(
+                        StudyFileVersionMetadata(
+                            id = "v1",
+                            fileId = "file-live",
+                            versionNumber = 1,
+                            versionLabel = "1.0",
+                            r2ObjectKey = "study-files/file-live/versions/v1/document.pdf",
+                            fileSizeBytes = 4096L,
+                            checksumSha256 = "a".repeat(64),
+                            isPublished = true
+                        ),
+                        StudyFileVersionMetadata(
+                            id = "v1",
+                            fileId = "file-null-num",
+                            versionNumber = 1,
+                            versionLabel = "1.0",
+                            r2ObjectKey = "study-files/file-null-num/versions/v1/document.pdf",
+                            fileSizeBytes = 4096L,
+                            checksumSha256 = "b".repeat(64),
+                            isPublished = true
+                        ),
+                        StudyFileVersionMetadata(
+                            id = "v1",
+                            fileId = "file-mismatch-num",
+                            versionNumber = 1,
+                            versionLabel = "1.0",
+                            r2ObjectKey = "study-files/file-mismatch-num/versions/v1/document.pdf",
+                            fileSizeBytes = 4096L,
+                            checksumSha256 = "c".repeat(64),
+                            isPublished = true
+                        )
+                    )
+                )
+            }
+            val viewModel = AdminPortalViewModel(
+                authRepository = authRepository,
+                adminCatalogRepository = catalogRepository
+            )
+            advanceUntilIdle()
 
-        viewModel.requestToggleStudyFileArchived(archivedFile)
-        advanceUntilIdle()
-        assertFalse(catalogRepository.studyFiles.first().isArchived)
+            // Archiving a published file requires confirmation and atomically sets isPublished = false
+            // while keeping activeVersionId and version records intact.
+            viewModel.requestToggleStudyFileArchived(publishedFile)
+            assertTrue(viewModel.uiState.value.confirmationAction is AdminConfirmationAction.ArchiveStudyFile)
+            viewModel.confirmPendingAction()
+            advanceUntilIdle()
 
-        viewModel.requestToggleStudyFilePublished(catalogRepository.studyFiles.first())
-        advanceUntilIdle()
-        assertTrue(catalogRepository.studyFiles.first().isPublished)
-    }
+            val archivedState = catalogRepository.studyFiles.first { it.id == "file-live" }
+            assertTrue(archivedState.isArchived)
+            assertFalse(archivedState.isPublished)
+            assertEquals("v1", archivedState.activeVersionId)
+            assertEquals(1, catalogRepository.versions.count { it.fileId == "file-live" })
+
+            // Restoring from archive must keep isPublished = false (never auto-publish).
+            viewModel.requestToggleStudyFileArchived(archivedState)
+            advanceUntilIdle()
+
+            val restoredState = catalogRepository.studyFiles.first { it.id == "file-live" }
+            assertFalse(restoredState.isArchived)
+            assertFalse(restoredState.isPublished)
+            assertEquals("v1", restoredState.activeVersionId)
+
+            // Reject publishing when activeVersionNumber is null.
+            viewModel.requestToggleStudyFilePublished(nullNumberFile)
+            advanceUntilIdle()
+            assertEquals(
+                AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                viewModel.uiState.value.feedback?.validationError
+            )
+            assertFalse(catalogRepository.studyFiles.first { it.id == "file-null-num" }.isPublished)
+
+            // Reject publishing when activeVersionNumber mismatches the active version's versionNumber.
+            viewModel.requestToggleStudyFilePublished(mismatchNumberFile)
+            advanceUntilIdle()
+            assertEquals(
+                AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                viewModel.uiState.value.feedback?.validationError
+            )
+            assertFalse(catalogRepository.studyFiles.first { it.id == "file-mismatch-num" }.isPublished)
+        }
 }

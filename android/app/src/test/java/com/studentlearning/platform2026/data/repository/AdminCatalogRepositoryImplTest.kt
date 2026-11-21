@@ -4,11 +4,15 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.remote.firebase.AdminCatalogRemoteDataSource
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogMapper
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.data.pdf.BrokeredPdfVersionStorageDataSource
+import com.studentlearning.platform2026.domain.model.PdfFailureReason
+import com.studentlearning.platform2026.domain.model.PdfLoadException
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -17,12 +21,14 @@ import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker
 import com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -42,6 +48,24 @@ class AdminCatalogRepositoryImplTest {
     private fun fakeVersionStorageBroker(
         statusProvider: () -> PdfBrokerConfigurationStatus = {
             PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+        },
+        verifyProvider: (fileId: String, versionId: String) -> AppResult<VerifiedPdfBinaryProof> = { fileId, versionId ->
+            if (statusProvider() != PdfBrokerConfigurationStatus.CONFIGURED) {
+                AppResult.Error(
+                    message = "Cloudflare R2 verification broker is not configured.",
+                    cause = PdfLoadException(PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED)
+                )
+            } else {
+                AppResult.Success(
+                    VerifiedPdfBinaryProof(
+                        fileId = fileId,
+                        versionId = versionId,
+                        r2ObjectKey = "study-files/$fileId/versions/$versionId/document.pdf",
+                        fileSizeBytes = 12_345L,
+                        checksumSha256 = "a".repeat(64)
+                    )
+                )
+            }
         }
     ): PdfVersionStorageBroker = object : PdfVersionStorageBroker {
         override fun getBrokerStatus(): PdfBrokerConfigurationStatus = statusProvider()
@@ -73,6 +97,11 @@ class AdminCatalogRepositoryImplTest {
                 )
             )
         }
+
+        override suspend fun verifyUploadedPdfBinary(
+            fileId: String,
+            versionId: String
+        ): AppResult<VerifiedPdfBinaryProof> = verifyProvider(fileId, versionId)
     }
 
     @Test
@@ -453,7 +482,23 @@ class AdminCatalogRepositoryImplTest {
                 areClaimsConfirmedCurrent = true
             )
         )
-        val remote = RecordingAdminRemoteDataSource(initialFileArchived = true)
+        val preservedActiveVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-archived",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            r2ObjectKey = "study-files/file-archived/versions/v1/document.pdf",
+            fileSizeBytes = 12_345L,
+            checksumSha256 = "a".repeat(64),
+            isPublished = true,
+            isArchived = false
+        )
+        val remote = RecordingAdminRemoteDataSource(
+            initialFileArchived = true,
+            initialActiveVersionId = "v1",
+            initialActiveVersionNumber = 1,
+            initialActiveVersion = preservedActiveVersion
+        )
         val repository = AdminCatalogRepositoryImpl(
             authRepository = authRepository,
             remoteDataSource = remote,
@@ -475,10 +520,257 @@ class AdminCatalogRepositoryImplTest {
         assertEquals(true, remote.lastFilePublished)
     }
 
+    @Test
+    fun `changing brokerEndpointBaseUrl to arbitrary https URL never unlocks CONFIGURED or version publish`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-uid",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val remote = RecordingAdminRemoteDataSource()
+            val adapterWithHttpsUrl = BrokeredPdfVersionStorageDataSource(
+                brokerEndpointBaseUrl = "https://fake-or-unverified.example.invalid"
+            )
+            assertEquals(
+                PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
+                adapterWithHttpsUrl.getBrokerStatus()
+            )
+            assertTrue(
+                adapterWithHttpsUrl.verifyUploadedPdfBinary("file-1", "v1") is AppResult.Error
+            )
+            val repository = AdminCatalogRepositoryImpl(
+                authRepository = authRepository,
+                remoteDataSource = remote,
+                dispatcherProvider = testDispatchers,
+                pdfVersionStorageBroker = adapterWithHttpsUrl
+            )
+
+            val publishResult = repository.publishStudyFileVersion(fileId = "file-1", versionId = "v1")
+            assertTrue(publishResult is AppResult.Error)
+            assertEquals(
+                AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                ((publishResult as AppResult.Error).cause as AdminException).validationError
+            )
+            assertEquals(0, remote.writeCallCount)
+
+            // Draft creation remains completely operational even while broker is pending.
+            val draftFile = repository.createStudyFileMetadata(
+                customId = "file-1",
+                sectionId = "sec-1",
+                title = "ملزمة جديدة",
+                description = null,
+                order = 1,
+                isPublished = false
+            )
+            assertTrue(draftFile is AppResult.Success)
+            val draftVersion = repository.createStudyFileVersion(
+                fileId = "file-1",
+                versionNumber = 1,
+                versionLabel = "1.0",
+                versionNotes = null,
+                publishAsActive = false,
+                customVersionId = "v1"
+            )
+            assertTrue(draftVersion is AppResult.Success)
+        }
+
+    @Test
+    fun `blocks version publish when server binary verification fails or returns invalid proof`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-uid",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val remote = RecordingAdminRemoteDataSource()
+        var proofToReturn: AppResult<VerifiedPdfBinaryProof> = AppResult.Error(
+            message = "Object missing in R2",
+            cause = PdfLoadException(PdfFailureReason.FILE_NOT_FOUND)
+        )
+        val broker = fakeVersionStorageBroker(
+            statusProvider = { PdfBrokerConfigurationStatus.CONFIGURED },
+            verifyProvider = { _, _ -> proofToReturn }
+        )
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = broker
+        )
+
+        val missingResult = repository.publishStudyFileVersion("file-1", "v1")
+        assertTrue(missingResult is AppResult.Error)
+        assertEquals(
+            AdminValidationError.VERSION_PDF_BINARY_MISSING,
+            ((missingResult as AppResult.Error).cause as AdminException).validationError
+        )
+        assertEquals(0, remote.writeCallCount)
+
+        // Mismatched object key / invalid sha256 returned by broker must also be rejected before Firestore.
+        proofToReturn = AppResult.Success(
+            VerifiedPdfBinaryProof(
+                fileId = "file-1",
+                versionId = "v1",
+                r2ObjectKey = "study-files/other-file/versions/v1/document.pdf",
+                fileSizeBytes = 10_000L,
+                checksumSha256 = "f".repeat(64)
+            )
+        )
+        val mismatchedKeyResult = repository.publishStudyFileVersion("file-1", "v1")
+        assertTrue(mismatchedKeyResult is AppResult.Error)
+        assertEquals(0, remote.writeCallCount)
+    }
+
+    @Test
+    fun `blocks creating a published parent study file without an active published version`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-uid",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val remote = RecordingAdminRemoteDataSource()
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
+
+        val blockedCreate = repository.createStudyFileMetadata(
+            customId = "file-new",
+            sectionId = "sec-1",
+            title = "ملزمة",
+            description = null,
+            order = 1,
+            isPublished = true
+        )
+        assertTrue(blockedCreate is AppResult.Error)
+        assertEquals(
+            AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+            ((blockedCreate as AppResult.Error).cause as AdminException).validationError
+        )
+        assertEquals(0, remote.writeCallCount)
+    }
+
+    @Test
+    fun `archiving published study file sets isPublished false and restoring keeps it unpublished`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-uid",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val remote = RecordingAdminRemoteDataSource(initialFileArchived = false).apply {
+            lastFilePublished = true
+        }
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
+
+        val archiveResult = repository.setStudyFileArchived("file-1", isArchived = true)
+        assertTrue(archiveResult is AppResult.Success)
+        assertTrue(remote.isFileArchived)
+        assertEquals(false, remote.lastFilePublished)
+
+        val restoreResult = repository.setStudyFileArchived("file-1", isArchived = false)
+        assertTrue(restoreResult is AppResult.Success)
+        assertFalse(remote.isFileArchived)
+        assertEquals(false, remote.lastFilePublished)
+    }
+
+    @Test
+    fun `setStudyFilePublished via remote validates active version number and PDF proof while allowing unpublish`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-uid",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val validVersion = StudyFileVersionMetadata(
+                id = "v1",
+                fileId = "file-1",
+                versionNumber = 1,
+                versionLabel = "1.0",
+                r2ObjectKey = "study-files/file-1/versions/v1/document.pdf",
+                fileSizeBytes = 4096L,
+                checksumSha256 = "d".repeat(64),
+                isPublished = true,
+                isArchived = false
+            )
+            val remote = RecordingAdminRemoteDataSource(
+                initialActiveVersionId = "v1",
+                initialActiveVersionNumber = 0,
+                initialActiveVersion = validVersion
+            )
+            val repository = AdminCatalogRepositoryImpl(
+                authRepository = authRepository,
+                remoteDataSource = remote,
+                dispatcherProvider = testDispatchers,
+                pdfVersionStorageBroker = fakeVersionStorageBroker()
+            )
+
+            // activeVersionNumber = 0 must be rejected just like production FirestoreAdminCatalogDataSource.
+            val zeroNumPublish = repository.setStudyFilePublished("file-1", isPublished = true)
+            assertTrue(zeroNumPublish is AppResult.Error)
+            assertEquals(
+                AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                ((zeroNumPublish as AppResult.Error).cause as AdminException).validationError
+            )
+
+            // Missing checksum proof must be rejected on publish.
+            remote.activeVersionNumber = 1
+            remote.activeVersion = validVersion.copy(checksumSha256 = null)
+            val missingProofPublish = repository.setStudyFilePublished("file-1", isPublished = true)
+            assertTrue(missingProofPublish is AppResult.Error)
+            assertEquals(
+                AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                ((missingProofPublish as AppResult.Error).cause as AdminException).validationError
+            )
+
+            // Unpublishing remains allowed even when version metadata is incomplete.
+            remote.activeVersionId = null
+            remote.activeVersionNumber = null
+            remote.activeVersion = null
+            val unpublishResult = repository.setStudyFilePublished("file-1", isPublished = false)
+            assertTrue(unpublishResult is AppResult.Success)
+            assertEquals(false, remote.lastFilePublished)
+        }
+
     private class RecordingAdminRemoteDataSource(
         private val failWriteWithPermissionDenied: Boolean = false,
         private val failReadWithPermissionDenied: Boolean = false,
-        initialFileArchived: Boolean = false
+        private val initialFileExists: Boolean = true,
+        initialFileArchived: Boolean = false,
+        initialActiveVersionId: String? = null,
+        initialActiveVersionNumber: Int? = null,
+        initialActiveVersion: StudyFileVersionMetadata? = null
     ) : AdminCatalogRemoteDataSource {
         var writeCallCount = 0
         var lastActorUid: String? = null
@@ -489,6 +781,9 @@ class AdminCatalogRepositoryImplTest {
         var lastPublishedVersion: Pair<String, String>? = null
         var isFileArchived: Boolean = initialFileArchived
         var lastFilePublished: Boolean? = null
+        var activeVersionId: String? = initialActiveVersionId
+        var activeVersionNumber: Int? = initialActiveVersionNumber
+        var activeVersion: StudyFileVersionMetadata? = initialActiveVersion
 
         override suspend fun fetchAllBranches(): List<StudyBranch> {
             if (failReadWithPermissionDenied) {
@@ -607,13 +902,15 @@ class AdminCatalogRepositoryImplTest {
         override suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String) {
             writeCallCount++
             lastActorUid = actorUid
-            if (isPublished && isFileArchived) {
-                throw AdminException(
-                    reason = AdminFailureReason.VALIDATION_ERROR,
-                    validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
-                    message = "Cannot publish archived study file '$fileId'; unarchive it first."
-                )
-            }
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = fileId,
+                exists = initialFileExists,
+                isArchived = isFileArchived,
+                targetPublished = isPublished,
+                activeVersionId = activeVersionId,
+                activeVersionNumber = activeVersionNumber,
+                activeVersion = activeVersion
+            )
             lastFilePublished = isPublished
         }
 
@@ -621,6 +918,7 @@ class AdminCatalogRepositoryImplTest {
             writeCallCount++
             lastActorUid = actorUid
             isFileArchived = isArchived
+            lastFilePublished = false
         }
 
         override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> =
@@ -663,11 +961,26 @@ class AdminCatalogRepositoryImplTest {
         override suspend fun publishStudyFileVersion(
             fileId: String,
             versionId: String,
-            actorUid: String
+            actorUid: String,
+            verifiedProof: VerifiedPdfBinaryProof
         ) {
             writeCallCount++
             lastActorUid = actorUid
             lastPublishedVersion = fileId to versionId
+            val resolvedNumber = (activeVersionNumber ?: 0) + 1
+            activeVersionId = versionId
+            activeVersionNumber = resolvedNumber
+            activeVersion = StudyFileVersionMetadata(
+                id = versionId,
+                fileId = fileId,
+                versionNumber = resolvedNumber,
+                versionLabel = "$resolvedNumber.0",
+                r2ObjectKey = verifiedProof.r2ObjectKey,
+                fileSizeBytes = verifiedProof.fileSizeBytes,
+                checksumSha256 = verifiedProof.checksumSha256,
+                isPublished = true,
+                isArchived = false
+            )
         }
 
         override suspend fun reorderBranches(

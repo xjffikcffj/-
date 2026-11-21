@@ -1,10 +1,13 @@
 package com.studentlearning.platform2026.data.repository
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.local.ReadingProgressDataSource
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import kotlinx.coroutines.CoroutineDispatcher
@@ -188,4 +191,35 @@ class ReadingProgressRepositoryImplTest {
         val recreated = createRepository(prefsFile, this)
         assertEquals(19, recreated.getProgress("physics-ch1", versionId = "v2")?.lastPageNumber)
     }
+
+    @Test
+    fun `archiving and restoring parent file in catalog leaves local PDF reading progress intact`() =
+        runTest {
+            val prefsFile = File(tempFolder.newFolder(), "archive_progress.preferences_pb")
+            val progressRepository = createRepository(prefsFile, this)
+            progressRepository.saveLastPage(fileId = "chem-ch2", pageNumber = 11, totalPages = 35, versionId = "v1")
+            progressRepository.saveLastPage(fileId = "chem-ch2", pageNumber = 24, totalPages = 40, versionId = "v2")
+
+            val adminCatalog = FakeAdminCatalogRepository().apply {
+                studyFiles.add(
+                    StudyFileMetadata(
+                        id = "chem-ch2",
+                        sectionId = "sec-1",
+                        title = "الكيمياء",
+                        order = 1,
+                        isPublished = true,
+                        isArchived = false,
+                        activeVersionId = "v2",
+                        activeVersionNumber = 2,
+                        activeVersionLabel = "2.0"
+                    )
+                )
+            }
+
+            assertEquals(true, adminCatalog.setStudyFileArchived("chem-ch2", isArchived = true) is AppResult.Success)
+            assertEquals(true, adminCatalog.setStudyFileArchived("chem-ch2", isArchived = false) is AppResult.Success)
+
+            assertEquals(11, progressRepository.getProgress("chem-ch2", versionId = "v1")?.lastPageNumber)
+            assertEquals(24, progressRepository.getProgress("chem-ch2", versionId = "v2")?.lastPageNumber)
+        }
 }

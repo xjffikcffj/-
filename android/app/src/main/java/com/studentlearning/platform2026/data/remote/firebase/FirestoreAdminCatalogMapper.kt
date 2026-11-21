@@ -13,12 +13,11 @@ import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
+import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
 import java.io.IOException
-import java.net.URLEncoder
 
 object FirestoreAdminCatalogMapper {
-
-    private val SHA256_HEX_REGEX = Regex("^[a-fA-F0-9]{64}$")
 
     fun mapBranchForAdmin(id: String, data: Map<String, Any?>): StudyBranch? {
         if (id.isBlank()) return null
@@ -248,44 +247,42 @@ object FirestoreAdminCatalogMapper {
         r2ObjectKey: String?,
         fileSizeBytes: Long?,
         checksumSha256: String? = null
+    ): Boolean = AdminCatalogValidator.hasReliableUploadedPdfProof(
+        fileId = fileId,
+        versionId = versionId,
+        r2ObjectKey = r2ObjectKey,
+        fileSizeBytes = fileSizeBytes,
+        checksumSha256 = checksumSha256
+    )
+
+    fun matchesVerifiedPdfBinaryProof(
+        version: StudyFileVersionMetadata,
+        verifiedProof: VerifiedPdfBinaryProof,
+        expectedFileId: String
     ): Boolean {
-        val cleanFileId = fileId.trim()
-        val cleanVersionId = versionId.trim()
-        if (cleanFileId.isEmpty() || cleanVersionId.isEmpty()) return false
+        val cleanFileId = expectedFileId.trim()
+        if (cleanFileId.isEmpty()) return false
+        if (version.fileId != cleanFileId || verifiedProof.fileId.trim() != cleanFileId) return false
+        if (version.id.isBlank() || verifiedProof.versionId.trim() != version.id) return false
 
-        val cleanKey = r2ObjectKey?.trim().orEmpty()
-        if (cleanKey.isEmpty()) return false
-        if (cleanKey.contains("://") ||
-            cleanKey.contains("..") ||
-            cleanKey.contains("?") ||
-            cleanKey.contains("#") ||
-            cleanKey.contains("fake", ignoreCase = true) ||
-            cleanKey.contains("placeholder", ignoreCase = true)
-        ) {
-            return false
-        }
+        val proofIsStructurallyValid = hasReliableUploadedPdfProof(
+            fileId = cleanFileId,
+            versionId = version.id,
+            r2ObjectKey = verifiedProof.r2ObjectKey,
+            fileSizeBytes = verifiedProof.fileSizeBytes,
+            checksumSha256 = verifiedProof.checksumSha256
+        ) && hasReliableUploadedPdfProof(
+            fileId = cleanFileId,
+            versionId = version.id,
+            r2ObjectKey = version.r2ObjectKey,
+            fileSizeBytes = version.fileSizeBytes,
+            checksumSha256 = version.checksumSha256
+        )
+        if (!proofIsStructurallyValid) return false
 
-        val encodedFileId = encodeR2PathSegment(cleanFileId)
-        val encodedVersionId = encodeR2PathSegment(cleanVersionId)
-        val encodedPrefix = "study-files/$encodedFileId/versions/$encodedVersionId/"
-        val rawPrefix = "study-files/$cleanFileId/versions/$cleanVersionId/"
-        val matchingPrefix = when {
-            cleanKey.startsWith(encodedPrefix) -> encodedPrefix
-            cleanKey.startsWith(rawPrefix) -> rawPrefix
-            else -> return false
-        }
-        val fileName = cleanKey.removePrefix(matchingPrefix)
-        if (fileName.isBlank() || fileName.contains("/") || !fileName.endsWith(".pdf")) {
-            return false
-        }
-
-        if (fileSizeBytes == null || fileSizeBytes <= 0L) return false
-
-        val cleanChecksum = checksumSha256?.trim()
-        if (!cleanChecksum.isNullOrEmpty() && !SHA256_HEX_REGEX.matches(cleanChecksum)) {
-            return false
-        }
-        return true
+        return version.r2ObjectKey?.trim() == verifiedProof.r2ObjectKey.trim() &&
+            version.fileSizeBytes == verifiedProof.fileSizeBytes &&
+            version.checksumSha256?.trim()?.equals(verifiedProof.checksumSha256.trim(), ignoreCase = true) == true
     }
 
     fun extractRegisteredVersionNumbers(data: Map<String, Any?>): Set<Int> {
@@ -299,7 +296,10 @@ object FirestoreAdminCatalogMapper {
         fileId: String,
         exists: Boolean,
         isArchived: Boolean,
-        targetPublished: Boolean
+        targetPublished: Boolean,
+        activeVersionId: String? = null,
+        activeVersionNumber: Int? = null,
+        activeVersion: StudyFileVersionMetadata? = null
     ) {
         if (!exists) {
             throw AdminException(
@@ -307,17 +307,55 @@ object FirestoreAdminCatalogMapper {
                 message = "Study file '$fileId' does not exist."
             )
         }
-        if (targetPublished && isArchived) {
+        if (!targetPublished) return
+
+        if (isArchived) {
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
                 message = "Cannot publish archived study file '$fileId'; unarchive it first."
             )
         }
-    }
 
-    private fun encodeR2PathSegment(value: String): String {
-        return URLEncoder.encode(value.trim(), Charsets.UTF_8.name()).replace("+", "%20")
+        val cleanActiveId = activeVersionId?.trim().orEmpty()
+        if (cleanActiveId.isEmpty() ||
+            activeVersion == null ||
+            activeVersion.fileId != fileId ||
+            activeVersion.id != cleanActiveId ||
+            !activeVersion.isPublished ||
+            activeVersionNumber == null ||
+            activeVersionNumber < 1 ||
+            activeVersionNumber != activeVersion.versionNumber
+        ) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                message = "Cannot publish study file '$fileId' without an active published PDF version matching activeVersionId and activeVersionNumber."
+            )
+        }
+
+        if (activeVersion.isArchived) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH,
+                message = "Cannot publish study file '$fileId' while active version '$cleanActiveId' is archived."
+            )
+        }
+
+        val hasPdfProof = hasReliableUploadedPdfProof(
+            fileId = fileId,
+            versionId = activeVersion.id,
+            r2ObjectKey = activeVersion.r2ObjectKey,
+            fileSizeBytes = activeVersion.fileSizeBytes,
+            checksumSha256 = activeVersion.checksumSha256
+        )
+        if (!hasPdfProof) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Cannot publish study file '$fileId' because its active version lacks reliable PDF proof."
+            )
+        }
     }
 
     fun buildBranchCreatePayload(
@@ -456,6 +494,10 @@ object FirestoreAdminCatalogMapper {
         timestampValue: Any
     ): Map<String, Any?> = mapOf(
         Fields.IS_ARCHIVED to isArchived,
+        // Archiving atomically unpublishes the parent file (`isPublished = false`).
+        // Restoring from archive explicitly keeps `isPublished = false` so it never auto-publishes
+        // without passing full active-version and PDF proof checks in `setStudyFilePublished`.
+        Fields.IS_PUBLISHED to false,
         Fields.UPDATED_BY_UID to actorUid,
         Fields.UPDATED_AT to timestampValue
     )

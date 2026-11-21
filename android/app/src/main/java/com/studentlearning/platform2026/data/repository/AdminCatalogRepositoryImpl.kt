@@ -185,13 +185,20 @@ class AdminCatalogRepositoryImpl(
             description = description,
             order = order
         )
+        if (isPublished) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                message = "Cannot create a published study file before publishing a verified active PDF version."
+            )
+        }
         remoteDataSource.createStudyFileMetadata(
             customId = validated.customId,
             sectionId = validated.sectionId,
             title = validated.title,
             description = validated.description,
             order = validated.order,
-            isPublished = isPublished,
+            isPublished = false,
             actorUid = actorUid
         )
     }
@@ -306,13 +313,41 @@ class AdminCatalogRepositoryImpl(
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
-                message = "Cloudflare R2 upload broker is not configured; cannot publish version without verified PDF accessibility."
+                message = "Cloudflare R2 upload and verification service is not ready; cannot publish version without verified PDF binary."
+            )
+        }
+        val verification = pdfVersionStorageBroker.verifyUploadedPdfBinary(
+            fileId = validFileId,
+            versionId = validVersionId
+        )
+        val verifiedProof = (verification as? AppResult.Success)?.data
+            ?: throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Cloudflare R2 binary verification failed; cannot publish version without server-verified PDF proof.",
+                cause = (verification as? AppResult.Error)?.cause
+            )
+        if (verifiedProof.fileId.trim() != validFileId ||
+            verifiedProof.versionId.trim() != validVersionId ||
+            !AdminCatalogValidator.hasReliableUploadedPdfProof(
+                fileId = validFileId,
+                versionId = validVersionId,
+                r2ObjectKey = verifiedProof.r2ObjectKey,
+                fileSizeBytes = verifiedProof.fileSizeBytes,
+                checksumSha256 = verifiedProof.checksumSha256
+            )
+        ) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Server PDF verification returned invalid or mismatched proof for '$validFileId/$validVersionId'."
             )
         }
         remoteDataSource.publishStudyFileVersion(
             fileId = validFileId,
             versionId = validVersionId,
-            actorUid = actorUid
+            actorUid = actorUid,
+            verifiedProof = verifiedProof
         )
     }
 

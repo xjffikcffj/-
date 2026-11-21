@@ -1,0 +1,279 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===== Identity & RBAC Helpers =====
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userRole() {
+      return isSignedIn() && request.auth.token.role is string
+        ? request.auth.token.role
+        : '';
+    }
+
+    function isOwner() {
+      return userRole() == 'owner';
+    }
+
+    function isAdminOrOwner() {
+      return userRole() == 'owner' || userRole() == 'admin';
+    }
+
+    // ===== Path, Type, and Audit Helpers =====
+    function isValidDocId(docId) {
+      return docId is string
+        && docId.size() >= 1
+        && docId.size() <= 128
+        && docId.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isDocRefInCollection(ref, colName) {
+      return ref is path
+        && string(ref).split('/').size() == 6
+        && string(ref).split('/')[0] == ''
+        && string(ref).split('/')[1] == 'databases'
+        && string(ref).split('/')[2] == database
+        && string(ref).split('/')[3] == 'documents'
+        && string(ref).split('/')[4] == colName
+        && string(ref).split('/')[5].size() > 0
+        && ref == path('/databases/' + database + '/documents/' + colName + '/' + string(ref).split('/')[5]);
+    }
+
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
+    }
+
+    function isOptionalString(val, maxLen) {
+      return val == null || (val is string && val.size() <= maxLen);
+    }
+
+    function isValidOrder(val) {
+      return val is int && val >= 0;
+    }
+
+    function isValidAuditCreate(data) {
+      return data.createdByUid == request.auth.uid
+        && data.updatedByUid == request.auth.uid
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isValidAuditUpdate(data, oldData) {
+      return data.updatedByUid == request.auth.uid
+        && data.updatedAt == request.time
+        && (!('createdByUid' in oldData) || ('createdByUid' in data && data.createdByUid == oldData.createdByUid))
+        && (!('createdAt' in oldData) || ('createdAt' in data && data.createdAt == oldData.createdAt))
+        && ('createdByUid' in oldData || !('createdByUid' in data))
+        && ('createdAt' in oldData || !('createdAt' in data));
+    }
+
+    function isValidCatalogNameOnUpdate(data, oldData) {
+      return data.diff(oldData).affectedKeys().hasAny(['name'])
+        ? isNonEmptyString(data.name, 120)
+        : (
+            ('name' in data && isNonEmptyString(data.name, 120))
+            || (!('name' in data) && ('nameAr' in oldData) && isNonEmptyString(oldData.nameAr, 120))
+          );
+    }
+
+    function isValidStudyFileTitleOnUpdate(data, oldData) {
+      return data.diff(oldData).affectedKeys().hasAny(['title'])
+        ? isNonEmptyString(data.title, 120)
+        : (
+            ('title' in data && isNonEmptyString(data.title, 120))
+            || (!('title' in data) && ('nameAr' in oldData) && isNonEmptyString(oldData.nameAr, 120))
+            || (!('title' in data) && ('name' in oldData) && isNonEmptyString(oldData.name, 120))
+          );
+    }
+
+    // ===== 1. branches: Admin/Owner read; Owner-only create/update; no client delete =====
+    match /branches/{branchId} {
+      allow read: if isAdminOrOwner();
+
+      allow create: if isOwner()
+        && isValidDocId(branchId)
+        && request.resource.data.keys().hasOnly([
+          'name', 'order', 'isPublished',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'order', 'isPublished',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyString(request.resource.data.name, 120)
+        && isValidOrder(request.resource.data.order)
+        && request.resource.data.isPublished is bool
+        && isValidAuditCreate(request.resource.data);
+
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'order', 'isPublished', 'updatedByUid', 'updatedAt'
+        ])
+        && isValidCatalogNameOnUpdate(request.resource.data, resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['order'])
+            || isValidOrder(request.resource.data.order))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPublished'])
+            || request.resource.data.isPublished is bool)
+        && isValidAuditUpdate(request.resource.data, resource.data);
+
+      allow delete: if false;
+    }
+
+    // ===== 2. subjects: Admin/Owner read/create/update; Owner-only unpublish (true -> false); no delete =====
+    match /subjects/{subjectId} {
+      allow read: if isAdminOrOwner();
+
+      allow create: if isAdminOrOwner()
+        && isValidDocId(subjectId)
+        && request.resource.data.keys().hasOnly([
+          'branchId', 'name', 'order', 'isPublished',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'branchId', 'name', 'order', 'isPublished',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyString(request.resource.data.name, 120)
+        && isValidOrder(request.resource.data.order)
+        && request.resource.data.isPublished is bool
+        && isValidAuditCreate(request.resource.data)
+        && isDocRefInCollection(request.resource.data.branchId, 'branches')
+        && exists(request.resource.data.branchId);
+
+      allow update: if isAdminOrOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'order', 'isPublished', 'updatedByUid', 'updatedAt'
+        ])
+        && isValidCatalogNameOnUpdate(request.resource.data, resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['order'])
+            || isValidOrder(request.resource.data.order))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPublished'])
+            || request.resource.data.isPublished is bool)
+        && (!(resource.data.get('isPublished', false) == true && request.resource.data.get('isPublished', false) == false) || isOwner())
+        && isValidAuditUpdate(request.resource.data, resource.data);
+
+      allow delete: if false;
+    }
+
+    // ===== 3. sections: Admin/Owner read/create/update; no branchId field; no delete =====
+    match /sections/{sectionId} {
+      allow read: if isAdminOrOwner();
+
+      allow create: if isAdminOrOwner()
+        && isValidDocId(sectionId)
+        && request.resource.data.keys().hasOnly([
+          'subjectId', 'name', 'order', 'isPublished',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'subjectId', 'name', 'order', 'isPublished',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyString(request.resource.data.name, 120)
+        && isValidOrder(request.resource.data.order)
+        && request.resource.data.isPublished is bool
+        && isValidAuditCreate(request.resource.data)
+        && isDocRefInCollection(request.resource.data.subjectId, 'subjects')
+        && exists(request.resource.data.subjectId);
+
+      allow update: if isAdminOrOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'order', 'isPublished', 'updatedByUid', 'updatedAt'
+        ])
+        && isValidCatalogNameOnUpdate(request.resource.data, resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['order'])
+            || isValidOrder(request.resource.data.order))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPublished'])
+            || request.resource.data.isPublished is bool)
+        && isValidAuditUpdate(request.resource.data, resource.data);
+
+      allow delete: if false;
+    }
+
+    // ===== 4. study_files: Admin/Owner read, draft create, metadata edit, archive/restore, unpublish =====
+    // Blocks ALL client writes to isPublished=true, activeVersion*, registeredVersionNumbers, or R2 fields.
+    match /study_files/{fileId} {
+      allow read: if isAdminOrOwner();
+
+      allow create: if isAdminOrOwner()
+        && isValidDocId(fileId)
+        && request.resource.data.keys().hasOnly([
+          'sectionId', 'title', 'description', 'order',
+          'isPublished', 'isArchived', 'mimeType', 'storageProvider',
+          'activeVersionId', 'activeVersionNumber', 'activeVersionLabel', 'activeVersionPublishedAt',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'sectionId', 'title', 'description', 'order',
+          'isPublished', 'isArchived', 'mimeType', 'storageProvider',
+          'activeVersionId', 'activeVersionNumber', 'activeVersionLabel', 'activeVersionPublishedAt',
+          'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyString(request.resource.data.title, 120)
+        && isOptionalString(request.resource.data.description, 1000)
+        && isValidOrder(request.resource.data.order)
+        && request.resource.data.isPublished == false
+        && request.resource.data.isArchived == false
+        && request.resource.data.mimeType == 'application/pdf'
+        && request.resource.data.storageProvider == 'cloudflare_r2'
+        && request.resource.data.activeVersionId == null
+        && request.resource.data.activeVersionNumber == null
+        && request.resource.data.activeVersionLabel == null
+        && request.resource.data.activeVersionPublishedAt == null
+        && isValidAuditCreate(request.resource.data)
+        && isDocRefInCollection(request.resource.data.sectionId, 'sections')
+        && exists(request.resource.data.sectionId);
+
+      allow update: if isAdminOrOwner()
+        && isValidAuditUpdate(request.resource.data, resource.data)
+        && (
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title', 'description', 'order', 'updatedByUid', 'updatedAt'
+            ])
+            && isValidStudyFileTitleOnUpdate(request.resource.data, resource.data)
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['description'])
+                || isOptionalString(request.resource.data.description, 1000))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['order'])
+                || isValidOrder(request.resource.data.order))
+          )
+          ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'isArchived', 'isPublished', 'updatedByUid', 'updatedAt'
+            ])
+            && request.resource.data.isArchived is bool
+            && request.resource.data.isPublished == false
+          )
+          ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'isPublished', 'updatedByUid', 'updatedAt'
+            ])
+            && request.resource.data.isPublished == false
+          )
+        );
+
+      allow delete: if false;
+
+      // ===== 5. versions: Admin/Owner read-only; all writes strictly via trusted server =====
+      match /versions/{versionId} {
+        allow read: if isAdminOrOwner();
+        allow create, update, delete: if false;
+      }
+    }
+
+    // ===== 6. upload_sessions: server-only via Admin SDK =====
+    match /upload_sessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    // ===== 7. Default-deny catch-all =====
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

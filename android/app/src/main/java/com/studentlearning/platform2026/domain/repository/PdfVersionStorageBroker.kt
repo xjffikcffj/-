@@ -19,6 +19,14 @@ data class PdfVersionUploadSlot(
     val signedUploadUrl: String
 )
 
+data class VerifiedPdfBinaryProof(
+    val fileId: String,
+    val versionId: String,
+    val r2ObjectKey: String,
+    val fileSizeBytes: Long,
+    val checksumSha256: String
+)
+
 interface PdfVersionStorageBroker {
     fun getBrokerStatus(): PdfBrokerConfigurationStatus
 
@@ -30,4 +38,9 @@ interface PdfVersionStorageBroker {
         fileSizeBytes: Long,
         checksumSha256: String
     ): AppResult<PdfVersionUploadSlot>
+
+    suspend fun verifyUploadedPdfBinary(
+        fileId: String,
+        versionId: String
+    ): AppResult<VerifiedPdfBinaryProof>
 }

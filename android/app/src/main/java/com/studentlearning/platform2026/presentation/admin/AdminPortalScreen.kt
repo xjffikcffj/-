@@ -1291,6 +1291,22 @@ private fun AdminStudyFileCard(
                 }
             }
 
+            val canPublishOrUnpublish = !isSubmitting &&
+                (file.isPublished || (!file.isArchived && file.hasValidActiveVersionForPublish))
+            val publishDisabledReasonRes = when {
+                file.isPublished -> null
+                file.isArchived -> R.string.admin_study_file_publish_disabled_archived
+                !file.hasValidActiveVersionForPublish -> R.string.admin_study_file_publish_disabled_no_active_version
+                else -> null
+            }
+            if (publishDisabledReasonRes != null) {
+                Text(
+                    text = stringResource(publishDisabledReasonRes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(spacing.xs),
                 verticalArrangement = Arrangement.spacedBy(spacing.xs)
@@ -1303,7 +1319,7 @@ private fun AdminStudyFileCard(
                 FilledTonalButton(onClick = onManageVersions, enabled = !isSubmitting) {
                     Text(text = stringResource(R.string.admin_manage_versions))
                 }
-                OutlinedButton(onClick = onTogglePublish, enabled = !isSubmitting) {
+                OutlinedButton(onClick = onTogglePublish, enabled = canPublishOrUnpublish) {
                     Text(
                         text = stringResource(
                             if (file.isPublished) R.string.admin_action_unpublish else R.string.admin_action_publish

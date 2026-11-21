@@ -81,13 +81,15 @@ class FirestoreCatalogDataSource(
         if (sectionId.isBlank()) return emptyList()
 
         val firestore = requireConfiguredFirestore()
+        val spec = buildPublishedStudyFilesQuerySpec(sectionId)
         val sectionReference: DocumentReference = firestore
             .collection(Collections.SECTIONS)
-            .document(sectionId)
+            .document(spec.sectionId)
 
-        val snapshot = firestore.collection(Collections.STUDY_FILES)
-            .whereEqualTo(Fields.SECTION_ID, sectionReference)
-            .whereEqualTo(Fields.IS_PUBLISHED, true)
+        val snapshot = firestore.collection(spec.collection)
+            .whereEqualTo(spec.sectionIdField, sectionReference)
+            .whereEqualTo(spec.isPublishedField, spec.isPublishedValue)
+            .whereEqualTo(spec.isArchivedField, spec.isArchivedValue)
             .get()
             .awaitResult()
 
@@ -96,7 +98,29 @@ class FirestoreCatalogDataSource(
         }
         return FirestoreCatalogMapper.mapStudyFiles(
             documents = rawDocuments,
-            expectedSectionId = sectionId
+            expectedSectionId = spec.sectionId
+        )
+    }
+
+    internal data class PublishedStudyFilesQuerySpec(
+        val collection: String,
+        val sectionIdField: String,
+        val sectionId: String,
+        val isPublishedField: String,
+        val isPublishedValue: Boolean,
+        val isArchivedField: String,
+        val isArchivedValue: Boolean
+    )
+
+    internal fun buildPublishedStudyFilesQuerySpec(sectionId: String): PublishedStudyFilesQuerySpec {
+        return PublishedStudyFilesQuerySpec(
+            collection = Collections.STUDY_FILES,
+            sectionIdField = Fields.SECTION_ID,
+            sectionId = sectionId.trim(),
+            isPublishedField = Fields.IS_PUBLISHED,
+            isPublishedValue = true,
+            isArchivedField = Fields.IS_ARCHIVED,
+            isArchivedValue = false
         )
     }
 

@@ -32,6 +32,7 @@ fun resolveAuthErrorText(
             AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION -> R.string.admin_validation_file_archived_publish
             AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH -> R.string.admin_validation_version_archived_publish
             AdminValidationError.VERSION_PDF_BINARY_MISSING -> R.string.admin_validation_version_pdf_missing
+            AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION -> R.string.admin_validation_study_file_no_active_version
         }
         return stringResource(validationRes)
     }

@@ -5,6 +5,8 @@ import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSch
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -157,6 +159,8 @@ class FirestoreAdminCatalogMapperTest {
     fun `mapStudyFileVersionsForAdmin enforces file DocumentReference and sorts descending by versionNumber`() {
         val fileRef = FirestoreReferenceTarget("study_files", "file-1", "study_files/file-1")
         val wrongRef = FirestoreReferenceTarget("study_files", "file-2", "study_files/file-2")
+        val shaV1 = "1".repeat(64)
+        val shaV2 = "2".repeat(64)
         val docs = listOf(
             "ver_1" to mapOf(
                 Fields.FILE_ID to fileRef,
@@ -164,7 +168,8 @@ class FirestoreAdminCatalogMapperTest {
                 Fields.VERSION_LABEL to "1.0",
                 Fields.IS_PUBLISHED to false,
                 Fields.R2_OBJECT_KEY to "study-files/file-1/versions/ver_1/document.pdf",
-                Fields.FILE_SIZE_BYTES to 10_240L
+                Fields.FILE_SIZE_BYTES to 10_240L,
+                Fields.CHECKSUM_SHA256 to shaV1
             ),
             "ver_2" to mapOf(
                 Fields.FILE_ID to fileRef,
@@ -173,6 +178,15 @@ class FirestoreAdminCatalogMapperTest {
                 Fields.IS_PUBLISHED to true,
                 Fields.IS_ARCHIVED to false,
                 Fields.R2_OBJECT_KEY to "study-files/file-1/versions/ver_2/document.pdf",
+                Fields.FILE_SIZE_BYTES to 20_480L,
+                Fields.CHECKSUM_SHA256 to shaV2
+            ),
+            "ver_missing_sha" to mapOf(
+                Fields.FILE_ID to fileRef,
+                Fields.VERSION_NUMBER to 5L,
+                Fields.VERSION_LABEL to "5.0",
+                Fields.IS_PUBLISHED to false,
+                Fields.R2_OBJECT_KEY to "study-files/file-1/versions/ver_missing_sha/document.pdf",
                 Fields.FILE_SIZE_BYTES to 20_480L
             ),
             "string_ref_rejected" to mapOf(
@@ -189,54 +203,54 @@ class FirestoreAdminCatalogMapperTest {
 
         val result = FirestoreAdminCatalogMapper.mapStudyFileVersionsForAdmin(docs, expectedFileId = "file-1")
 
-        assertEquals(listOf("ver_2", "ver_1"), result.map { it.id })
-        assertTrue(result[0].isPublished)
-        assertTrue(result[0].hasUploadedPdfBinary)
-        assertFalse(result[1].isPublished)
+        assertEquals(listOf("ver_missing_sha", "ver_2", "ver_1"), result.map { it.id })
+        assertFalse(result[0].hasUploadedPdfBinary)
+        assertTrue(result[1].isPublished)
         assertTrue(result[1].hasUploadedPdfBinary)
+        assertFalse(result[2].isPublished)
+        assertTrue(result[2].hasUploadedPdfBinary)
     }
 
     @Test
-    fun `hasReliableUploadedPdfProof validates key format file size and sha256 strictly`() {
+    fun `hasReliableUploadedPdfProof requires valid 64-hex sha256 matching R2 key and file and version ids`() {
+        val validSha = "a".repeat(64)
         assertTrue(
             FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
                 fileId = "file-1",
                 versionId = "ver_2",
                 r2ObjectKey = "study-files/file-1/versions/ver_2/physics.pdf",
                 fileSizeBytes = 12345L,
-                checksumSha256 = "a".repeat(64)
+                checksumSha256 = validSha
             )
         )
+        // Missing (null) sha256 must be rejected.
         assertFalse(
             FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
                 fileId = "file-1",
                 versionId = "ver_2",
-                r2ObjectKey = null,
-                fileSizeBytes = 12345L
+                r2ObjectKey = "study-files/file-1/versions/ver_2/physics.pdf",
+                fileSizeBytes = 12345L,
+                checksumSha256 = null
             )
         )
+        // Blank / empty sha256 must be rejected.
         assertFalse(
             FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
                 fileId = "file-1",
                 versionId = "ver_2",
-                r2ObjectKey = "https://cdn.example.com/file.pdf",
-                fileSizeBytes = 12345L
+                r2ObjectKey = "study-files/file-1/versions/ver_2/physics.pdf",
+                fileSizeBytes = 12345L,
+                checksumSha256 = "   "
             )
         )
+        // Invalid hex or wrong length sha256 must be rejected.
         assertFalse(
             FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
                 fileId = "file-1",
                 versionId = "ver_2",
                 r2ObjectKey = "study-files/file-1/versions/ver_2/document.pdf",
-                fileSizeBytes = 0L
-            )
-        )
-        assertFalse(
-            FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
-                fileId = "file-1",
-                versionId = "ver_2",
-                r2ObjectKey = "study-files/file-1/versions/other_ver/document.pdf",
-                fileSizeBytes = 5000L
+                fileSizeBytes = 5000L,
+                checksumSha256 = "not-a-sha"
             )
         )
         assertFalse(
@@ -245,7 +259,114 @@ class FirestoreAdminCatalogMapperTest {
                 versionId = "ver_2",
                 r2ObjectKey = "study-files/file-1/versions/ver_2/document.pdf",
                 fileSizeBytes = 5000L,
-                checksumSha256 = "not-a-sha"
+                checksumSha256 = "z".repeat(64)
+            )
+        )
+        assertFalse(
+            FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = "file-1",
+                versionId = "ver_2",
+                r2ObjectKey = null,
+                fileSizeBytes = 12345L,
+                checksumSha256 = validSha
+            )
+        )
+        assertFalse(
+            FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = "file-1",
+                versionId = "ver_2",
+                r2ObjectKey = "https://cdn.example.com/file.pdf",
+                fileSizeBytes = 12345L,
+                checksumSha256 = validSha
+            )
+        )
+        assertFalse(
+            FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = "file-1",
+                versionId = "ver_2",
+                r2ObjectKey = "study-files/file-1/versions/ver_2/document.pdf",
+                fileSizeBytes = 0L,
+                checksumSha256 = validSha
+            )
+        )
+        // Mismatched versionId in R2 key must be rejected.
+        assertFalse(
+            FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = "file-1",
+                versionId = "ver_2",
+                r2ObjectKey = "study-files/file-1/versions/other_ver/document.pdf",
+                fileSizeBytes = 5000L,
+                checksumSha256 = validSha
+            )
+        )
+        // Mismatched fileId in R2 key must be rejected.
+        assertFalse(
+            FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = "file-1",
+                versionId = "ver_2",
+                r2ObjectKey = "study-files/other-file/versions/ver_2/document.pdf",
+                fileSizeBytes = 5000L,
+                checksumSha256 = validSha
+            )
+        )
+        // UI model check (hasUploadedPdfBinary) must stay 100% consistent with Firestore proof validation.
+        val versionMissingSha = StudyFileVersionMetadata(
+            id = "ver_2",
+            fileId = "file-1",
+            versionNumber = 2,
+            versionLabel = "2.0",
+            r2ObjectKey = "study-files/file-1/versions/ver_2/document.pdf",
+            fileSizeBytes = 5000L,
+            checksumSha256 = null
+        )
+        val versionWrongKey = versionMissingSha.copy(
+            r2ObjectKey = "study-files/wrong-file/versions/ver_2/document.pdf",
+            checksumSha256 = validSha
+        )
+        val validVersion = versionMissingSha.copy(checksumSha256 = validSha)
+        assertFalse(versionMissingSha.hasUploadedPdfBinary)
+        assertFalse(versionWrongKey.hasUploadedPdfBinary)
+        assertTrue(validVersion.hasUploadedPdfBinary)
+    }
+
+    @Test
+    fun `matchesVerifiedPdfBinaryProof rejects mismatched server key size or checksum`() {
+        val sha = "b".repeat(64)
+        val version = StudyFileVersionMetadata(
+            id = "ver_2",
+            fileId = "file-1",
+            versionNumber = 2,
+            versionLabel = "2.0",
+            r2ObjectKey = "study-files/file-1/versions/ver_2/document.pdf",
+            fileSizeBytes = 10_000L,
+            checksumSha256 = sha
+        )
+        val matchingProof = VerifiedPdfBinaryProof(
+            fileId = "file-1",
+            versionId = "ver_2",
+            r2ObjectKey = "study-files/file-1/versions/ver_2/document.pdf",
+            fileSizeBytes = 10_000L,
+            checksumSha256 = sha.uppercase()
+        )
+        assertTrue(
+            FirestoreAdminCatalogMapper.matchesVerifiedPdfBinaryProof(
+                version = version,
+                verifiedProof = matchingProof,
+                expectedFileId = "file-1"
+            )
+        )
+        assertFalse(
+            FirestoreAdminCatalogMapper.matchesVerifiedPdfBinaryProof(
+                version = version,
+                verifiedProof = matchingProof.copy(fileSizeBytes = 9_999L),
+                expectedFileId = "file-1"
+            )
+        )
+        assertFalse(
+            FirestoreAdminCatalogMapper.matchesVerifiedPdfBinaryProof(
+                version = version,
+                verifiedProof = matchingProof.copy(checksumSha256 = "c".repeat(64)),
+                expectedFileId = "file-1"
             )
         )
     }
@@ -289,7 +410,20 @@ class FirestoreAdminCatalogMapperTest {
     }
 
     @Test
-    fun `validateStudyFilePublishTransition rejects archived or missing files on publish`() {
+    fun `validateStudyFilePublishTransition rejects missing archived or versionless parent files on publish`() {
+        val validSha = "d".repeat(64)
+        val validActiveVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "active-file",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            r2ObjectKey = "study-files/active-file/versions/v1/document.pdf",
+            fileSizeBytes = 4096L,
+            checksumSha256 = validSha,
+            isPublished = true,
+            isArchived = false
+        )
+
         try {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "missing-file",
@@ -307,7 +441,9 @@ class FirestoreAdminCatalogMapperTest {
                 fileId = "archived-file",
                 exists = true,
                 isArchived = true,
-                targetPublished = true
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersion = validActiveVersion.copy(fileId = "archived-file")
             )
             fail("Expected AdminException FILE_ARCHIVED_CANNOT_PUBLISH_VERSION")
         } catch (ex: AdminException) {
@@ -315,7 +451,85 @@ class FirestoreAdminCatalogMapperTest {
             assertEquals(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION, ex.validationError)
         }
 
-        // Unpublishing an archived file or publishing a non-archived file passes cleanly.
+        // Parent file with activeVersionId == null must be blocked on publish.
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = null,
+                activeVersion = null
+            )
+            fail("Expected AdminException STUDY_FILE_NO_ACTIVE_VERSION")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
+        }
+
+        // Parent file whose activeVersionId points to an unpublished version must be blocked.
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersion = validActiveVersion.copy(isPublished = false)
+            )
+            fail("Expected AdminException STUDY_FILE_NO_ACTIVE_VERSION")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
+        }
+
+        // Parent file whose active version lacks mandatory sha256 proof must be blocked.
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersion = validActiveVersion.copy(checksumSha256 = null)
+            )
+            fail("Expected AdminException VERSION_PDF_BINARY_MISSING")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.VERSION_PDF_BINARY_MISSING, ex.validationError)
+        }
+
+        // Parent file with activeVersionNumber == null must be blocked on publish.
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = null,
+                activeVersion = validActiveVersion
+            )
+            fail("Expected AdminException STUDY_FILE_NO_ACTIVE_VERSION for null activeVersionNumber")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
+        }
+
+        // Parent file whose activeVersionNumber differs from activeVersion.versionNumber must be blocked.
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 2,
+                activeVersion = validActiveVersion.copy(versionNumber = 1)
+            )
+            fail("Expected AdminException STUDY_FILE_NO_ACTIVE_VERSION for versionNumber mismatch")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
+        }
+
+        // Unpublishing an archived or versionless file succeeds; publishing with valid active version succeeds.
         FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
             fileId = "archived-file",
             exists = true,
@@ -326,7 +540,93 @@ class FirestoreAdminCatalogMapperTest {
             fileId = "active-file",
             exists = true,
             isArchived = false,
-            targetPublished = true
+            targetPublished = true,
+            activeVersionId = "v1",
+            activeVersionNumber = 1,
+            activeVersion = validActiveVersion
         )
+    }
+
+    @Test
+    fun `buildArchiveStateUpdatePayload unpublishes atomically on archive and never auto-publishes on restore`() {
+        val archivePayload = FirestoreAdminCatalogMapper.buildArchiveStateUpdatePayload(
+            isArchived = true,
+            actorUid = "owner-uid",
+            timestampValue = "SERVER_TS"
+        )
+        assertEquals(true, archivePayload[Fields.IS_ARCHIVED])
+        assertEquals(false, archivePayload[Fields.IS_PUBLISHED])
+        assertEquals("owner-uid", archivePayload[Fields.UPDATED_BY_UID])
+
+        val restorePayload = FirestoreAdminCatalogMapper.buildArchiveStateUpdatePayload(
+            isArchived = false,
+            actorUid = "owner-uid",
+            timestampValue = "SERVER_TS"
+        )
+        assertEquals(false, restorePayload[Fields.IS_ARCHIVED])
+        assertEquals(false, restorePayload[Fields.IS_PUBLISHED])
+        assertFalse(restorePayload.containsKey(Fields.ACTIVE_VERSION_ID))
+    }
+
+    @Test
+    fun `validateStudyFilePublishTransition rejects activeVersionNumber equal to zero`() {
+        val activeVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "active-file",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            r2ObjectKey = "study-files/active-file/versions/v1/document.pdf",
+            fileSizeBytes = 4096L,
+            checksumSha256 = "d".repeat(64),
+            isPublished = true,
+            isArchived = false
+        )
+
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 0,
+                activeVersion = activeVersion
+            )
+            fail("Expected AdminException STUDY_FILE_NO_ACTIVE_VERSION for activeVersionNumber = 0")
+        } catch (ex: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, ex.reason)
+            assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
+        }
+    }
+
+    @Test
+    fun `validateStudyFilePublishTransition rejects negative activeVersionNumber`() {
+        val activeVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "active-file",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            r2ObjectKey = "study-files/active-file/versions/v1/document.pdf",
+            fileSizeBytes = 4096L,
+            checksumSha256 = "d".repeat(64),
+            isPublished = true,
+            isArchived = false
+        )
+
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "active-file",
+                exists = true,
+                isArchived = false,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = -1,
+                activeVersion = activeVersion
+            )
+            fail("Expected AdminException STUDY_FILE_NO_ACTIVE_VERSION for negative activeVersionNumber")
+        } catch (ex: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, ex.reason)
+            assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
+        }
     }
 }

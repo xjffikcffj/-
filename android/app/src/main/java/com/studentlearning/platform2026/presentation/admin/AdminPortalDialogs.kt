@@ -297,7 +297,6 @@ private fun StudyFileEditorDialog(
     var orderText by remember(editing, dialogState.suggestedOrder) {
         mutableStateOf((editing?.order ?: dialogState.suggestedOrder).toString())
     }
-    var isPublished by remember(editing) { mutableStateOf(editing?.isPublished ?: false) }
 
     AlertDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
@@ -378,6 +377,11 @@ private fun StudyFileEditorDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (editing == null) {
+                    Text(
+                        text = stringResource(R.string.admin_file_create_draft_only_notice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -389,8 +393,9 @@ private fun StudyFileEditorDialog(
                             modifier = Modifier.weight(1f)
                         )
                         Switch(
-                            checked = isPublished,
-                            onCheckedChange = { isPublished = it }
+                            checked = false,
+                            enabled = false,
+                            onCheckedChange = {}
                         )
                     }
                 }
@@ -406,7 +411,7 @@ private fun StudyFileEditorDialog(
                         title,
                         description.ifBlank { null },
                         parsedOrder,
-                        isPublished
+                        false
                     )
                 }
             ) {

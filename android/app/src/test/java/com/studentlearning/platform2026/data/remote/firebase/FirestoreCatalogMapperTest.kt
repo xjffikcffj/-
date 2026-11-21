@@ -184,4 +184,47 @@ class FirestoreCatalogMapperTest {
             FirestoreCatalogMapper.mapFailureReason(IOException("Timeout"))
         )
     }
+
+    @Test
+    fun `mapStudyFiles excludes archived and unpublished study files from student catalog results`() {
+        val sectionRef = FirestoreReferenceTarget(
+            collectionId = "sections",
+            documentId = "sec-1",
+            path = "sections/sec-1"
+        )
+        val docs = listOf(
+            "live-file" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "ملزمة منشورة",
+                "order" to 1L,
+                "isPublished" to true,
+                "isArchived" to false,
+                "activeVersionId" to "v1",
+                "activeVersionNumber" to 1L,
+                "activeVersionLabel" to "1.0"
+            ),
+            "archived-even-if-published" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "ملزمة مؤرشفة",
+                "order" to 2L,
+                "isPublished" to true,
+                "isArchived" to true,
+                "activeVersionId" to "v1",
+                "activeVersionNumber" to 1L,
+                "activeVersionLabel" to "1.0"
+            ),
+            "unpublished-draft" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "مسودة",
+                "order" to 3L,
+                "isPublished" to false,
+                "isArchived" to false
+            )
+        )
+
+        val result = FirestoreCatalogMapper.mapStudyFiles(docs, expectedSectionId = "sec-1")
+
+        assertEquals(listOf("live-file"), result.map { it.id })
+        assertEquals("v1", result.single().activeVersionId)
+    }
 }

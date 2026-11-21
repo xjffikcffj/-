@@ -15,6 +15,7 @@ import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 
 interface AdminCatalogRemoteDataSource {
     suspend fun fetchAllBranches(): List<StudyBranch>
@@ -93,7 +94,8 @@ interface AdminCatalogRemoteDataSource {
     suspend fun publishStudyFileVersion(
         fileId: String,
         versionId: String,
-        actorUid: String
+        actorUid: String,
+        verifiedProof: VerifiedPdfBinaryProof
     )
 
     suspend fun reorderBranches(
@@ -377,6 +379,13 @@ class FirestoreAdminCatalogDataSource(
         actorUid: String
     ): StudyFileMetadata {
         val validActorUid = requireNonBlankActorUid(actorUid)
+        if (isPublished) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                message = "Cannot create a published study file without an active verified PDF version."
+            )
+        }
         val firestore = requireConfiguredFirestore()
         val sectionReference = firestore.collection(Collections.SECTIONS).document(sectionId)
         val payload = FirestoreAdminCatalogMapper.buildStudyFileCreatePayload(
@@ -456,6 +465,7 @@ class FirestoreAdminCatalogDataSource(
         val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
         val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
             isPublished = isPublished,
             actorUid = validActorUid,
@@ -463,11 +473,30 @@ class FirestoreAdminCatalogDataSource(
         )
         firestore.runTransaction { transaction ->
             val fileSnap = transaction.get(fileRef)
+            val activeVersionId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim()?.takeIf { it.isNotEmpty() }
+            val activeVersionNumber = (fileSnap.get(Fields.ACTIVE_VERSION_NUMBER) as? Number)?.toInt()?.takeIf { it >= 1 }
+            val mappedActiveVersion = if (isPublished && fileSnap.exists() && activeVersionId != null) {
+                val activeVersionSnap = transaction.get(versionsCollection.document(activeVersionId))
+                if (activeVersionSnap.exists()) {
+                    FirestoreAdminCatalogMapper.mapStudyFileVersionForAdmin(
+                        id = activeVersionSnap.id,
+                        data = activeVersionSnap.data ?: emptyMap(),
+                        expectedFileId = fileId
+                    )
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = fileId,
                 exists = fileSnap.exists(),
                 isArchived = fileSnap.getBoolean(Fields.IS_ARCHIVED) == true,
-                targetPublished = isPublished
+                targetPublished = isPublished,
+                activeVersionId = activeVersionId,
+                activeVersionNumber = activeVersionNumber,
+                activeVersion = mappedActiveVersion
             )
             transaction.update(fileRef, payload)
             null
@@ -477,15 +506,25 @@ class FirestoreAdminCatalogDataSource(
     override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
         val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
         val payload = FirestoreAdminCatalogMapper.buildArchiveStateUpdatePayload(
             isArchived = isArchived,
             actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
-        firestore.collection(Collections.STUDY_FILES)
-            .document(fileId)
-            .update(payload)
-            .awaitResult()
+        firestore.runTransaction { transaction ->
+            val snapshot = transaction.get(fileRef)
+            if (!snapshot.exists()) {
+                throw AdminException(
+                    reason = AdminFailureReason.NOT_FOUND,
+                    message = "Study file '$fileId' does not exist."
+                )
+            }
+            // Writes after reads: sets isArchived and forces isPublished = false atomically,
+            // preserving version documents, activeVersion pointers, and student local files.
+            transaction.update(fileRef, payload)
+            null
+        }.awaitResult()
     }
 
     override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> {
@@ -697,9 +736,26 @@ class FirestoreAdminCatalogDataSource(
     override suspend fun publishStudyFileVersion(
         fileId: String,
         versionId: String,
-        actorUid: String
+        actorUid: String,
+        verifiedProof: VerifiedPdfBinaryProof
     ) {
         val validActorUid = requireNonBlankActorUid(actorUid)
+        if (!FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = fileId,
+                versionId = versionId,
+                r2ObjectKey = verifiedProof.r2ObjectKey,
+                fileSizeBytes = verifiedProof.fileSizeBytes,
+                checksumSha256 = verifiedProof.checksumSha256
+            ) ||
+            verifiedProof.fileId.trim() != fileId.trim() ||
+            verifiedProof.versionId.trim() != versionId.trim()
+        ) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Cannot publish version '$versionId' without a valid server-verified PDF binary proof."
+            )
+        }
         val firestore = requireConfiguredFirestore()
         val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
         val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
@@ -766,18 +822,16 @@ class FirestoreAdminCatalogDataSource(
                 )
             }
 
-            val hasPdfProof = FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
-                fileId = fileId,
-                versionId = mappedTarget.id,
-                r2ObjectKey = mappedTarget.r2ObjectKey,
-                fileSizeBytes = mappedTarget.fileSizeBytes,
-                checksumSha256 = mappedTarget.checksumSha256
+            val matchesProof = FirestoreAdminCatalogMapper.matchesVerifiedPdfBinaryProof(
+                version = mappedTarget,
+                verifiedProof = verifiedProof,
+                expectedFileId = fileId
             )
-            if (!hasPdfProof) {
+            if (!matchesProof) {
                 throw AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
-                    message = "Cannot publish version '${mappedTarget.id}' without a verified Cloudflare R2 PDF binary."
+                    message = "Cannot publish version '${mappedTarget.id}' because Firestore metadata does not match a server-verified Cloudflare R2 PDF binary."
                 )
             }
 

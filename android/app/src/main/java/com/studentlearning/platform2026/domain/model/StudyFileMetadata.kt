@@ -1,5 +1,7 @@
 package com.studentlearning.platform2026.domain.model
 
+import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
+
 /**
  * Parent administrative metadata for an educational PDF file stored at `study_files/{fileId}`.
  *
@@ -31,6 +33,11 @@ data class StudyFileMetadata(
 ) {
     val hasActiveVersion: Boolean
         get() = !activeVersionId.isNullOrBlank()
+
+    val hasValidActiveVersionForPublish: Boolean
+        get() = !activeVersionId.isNullOrBlank() &&
+            activeVersionNumber != null &&
+            activeVersionNumber >= 1
 
     companion object {
         const val MIME_TYPE_PDF = "application/pdf"
@@ -65,11 +72,11 @@ data class StudyFileVersionMetadata(
     val isArchived: Boolean = false
 ) {
     val hasUploadedPdfBinary: Boolean
-        get() {
-            val key = r2ObjectKey?.trim().orEmpty()
-            return key.isNotEmpty() &&
-                (fileSizeBytes ?: 0L) > 0L &&
-                !key.contains("://") &&
-                !key.contains("..")
-        }
+        get() = AdminCatalogValidator.hasReliableUploadedPdfProof(
+            fileId = fileId,
+            versionId = id,
+            r2ObjectKey = r2ObjectKey,
+            fileSizeBytes = fileSizeBytes,
+            checksumSha256 = checksumSha256
+        )
 }

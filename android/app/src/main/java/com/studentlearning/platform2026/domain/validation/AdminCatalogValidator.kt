@@ -3,6 +3,7 @@ package com.studentlearning.platform2026.domain.validation
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import java.net.URLEncoder
 
 data class ValidatedCatalogEntry(
     val customId: String?,
@@ -47,6 +48,75 @@ object AdminCatalogValidator {
     private const val MAX_VERSION_LABEL_LENGTH = 64
     private const val MAX_VERSION_NOTES_LENGTH = 500
     private val DOCUMENT_ID_REGEX = Regex("^[a-zA-Z0-9_-]{2,64}$")
+    private val SHA256_HEX_REGEX = Regex("^[a-fA-F0-9]{64}$")
+
+    fun hasReliableUploadedPdfProof(
+        fileId: String,
+        versionId: String,
+        r2ObjectKey: String?,
+        fileSizeBytes: Long?,
+        checksumSha256: String? = null
+    ): Boolean {
+        val cleanFileId = fileId.trim()
+        val cleanVersionId = versionId.trim()
+        if (cleanFileId.isEmpty() || cleanVersionId.isEmpty()) return false
+        if (containsUnsafePathChars(cleanFileId) || containsUnsafePathChars(cleanVersionId)) {
+            return false
+        }
+
+        val cleanKey = r2ObjectKey?.trim().orEmpty()
+        if (cleanKey.isEmpty()) return false
+        if (cleanKey.contains("://") ||
+            cleanKey.contains("..") ||
+            cleanKey.contains("\\") ||
+            cleanKey.contains("?") ||
+            cleanKey.contains("#") ||
+            cleanKey.any { it.isWhitespace() } ||
+            cleanKey.contains("fake", ignoreCase = true) ||
+            cleanKey.contains("placeholder", ignoreCase = true)
+        ) {
+            return false
+        }
+
+        val encodedFileId = encodePathSegment(cleanFileId)
+        val encodedVersionId = encodePathSegment(cleanVersionId)
+        val encodedPrefix = "study-files/$encodedFileId/versions/$encodedVersionId/"
+        val rawPrefix = "study-files/$cleanFileId/versions/$cleanVersionId/"
+        val matchingPrefix = when {
+            cleanKey.startsWith(encodedPrefix) -> encodedPrefix
+            cleanKey.startsWith(rawPrefix) -> rawPrefix
+            else -> return false
+        }
+        val fileName = cleanKey.removePrefix(matchingPrefix)
+        if (fileName.isBlank() ||
+            fileName.contains("/") ||
+            !fileName.endsWith(".pdf") ||
+            fileName.removeSuffix(".pdf").isBlank()
+        ) {
+            return false
+        }
+
+        if (fileSizeBytes == null || fileSizeBytes <= 0L) return false
+
+        val cleanChecksum = checksumSha256?.trim().orEmpty()
+        if (!SHA256_HEX_REGEX.matches(cleanChecksum)) {
+            return false
+        }
+        return true
+    }
+
+    private fun containsUnsafePathChars(value: String): Boolean {
+        return value.contains("/") ||
+            value.contains("\\") ||
+            value.contains("..") ||
+            value.contains("?") ||
+            value.contains("#") ||
+            value.any { it.isWhitespace() }
+    }
+
+    private fun encodePathSegment(value: String): String {
+        return URLEncoder.encode(value.trim(), Charsets.UTF_8.name()).replace("+", "%20")
+    }
 
     fun validateSignIn(email: String, password: String): Pair<String, String> =
         AuthValidator.validateSignIn(email, password)

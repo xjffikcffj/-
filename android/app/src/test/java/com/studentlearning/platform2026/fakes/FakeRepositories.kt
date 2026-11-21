@@ -352,13 +352,21 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
         isPublished: Boolean
     ): AppResult<StudyFileMetadata> {
         writeAttemptCount++
+        if (isPublished) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
+                message = "Cannot create a published study file without an active verified PDF version."
+            )
+            return AppResult.Error(ex.message ?: "No active version", ex)
+        }
         val created = StudyFileMetadata(
             id = customId ?: "file_${studyFiles.size + 1}",
             sectionId = sectionId,
             title = title,
             description = description,
             order = order,
-            isPublished = isPublished
+            isPublished = false
         )
         studyFiles.add(created)
         return AppResult.Success(created)
@@ -387,19 +395,24 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
         writeAttemptCount++
         lastPublishToggle = fileId to isPublished
         val index = studyFiles.indexOfFirst { it.id == fileId }
-        if (index < 0) {
-            return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
+        val file = studyFiles.getOrNull(index)
+        val activeVersion = file?.activeVersionId?.let { activeId ->
+            versions.firstOrNull { it.fileId == fileId && it.id == activeId }
         }
-        val file = studyFiles[index]
-        if (isPublished && file.isArchived) {
-            val ex = AdminException(
-                reason = AdminFailureReason.VALIDATION_ERROR,
-                validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
-                message = "Cannot publish archived study file '$fileId'; unarchive it first."
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = fileId,
+                exists = file != null,
+                isArchived = file?.isArchived == true,
+                targetPublished = isPublished,
+                activeVersionId = file?.activeVersionId,
+                activeVersionNumber = file?.activeVersionNumber,
+                activeVersion = activeVersion
             )
-            return AppResult.Error(ex.message ?: "File is archived", ex)
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Cannot update study file publish state", ex)
         }
-        studyFiles[index] = file.copy(isPublished = isPublished)
+        studyFiles[index] = file!!.copy(isPublished = isPublished)
         return AppResult.Success(Unit)
     }
 
@@ -407,9 +420,16 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
         writeAttemptCount++
         lastArchiveToggle = fileId to isArchived
         val index = studyFiles.indexOfFirst { it.id == fileId }
-        if (index >= 0) {
-            studyFiles[index] = studyFiles[index].copy(isArchived = isArchived)
+        if (index < 0) {
+            return AppResult.Error(
+                message = "Study file '$fileId' does not exist.",
+                cause = AdminException(AdminFailureReason.NOT_FOUND)
+            )
         }
+        studyFiles[index] = studyFiles[index].copy(
+            isArchived = isArchived,
+            isPublished = false
+        )
         return AppResult.Success(Unit)
     }
 

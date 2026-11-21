@@ -23,7 +23,9 @@ import com.studentlearning.platform2026.domain.model.DownloadTaskState
 import com.studentlearning.platform2026.domain.model.OfflineDownloadRequest
 import com.studentlearning.platform2026.domain.model.PdfSourceDescriptor
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
+import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import com.sun.net.httpserver.HttpServer
@@ -1386,5 +1388,69 @@ class OfflineDownloadsRepositoryImplTest {
                 server.stop(0)
                 serverExecutor.shutdownNow()
             }
+        }
+
+    @Test
+    fun `archiving and restoring study file in catalog preserves existing local downloaded copy`() =
+        runTest {
+            val pdfBytes = "%PDF-1.4\n%archived-retention-test\n".toByteArray() + ByteArray(2048) { 0x41 }
+            val harness = createHarness(
+                scope = this,
+                streamFetcher = DownloadStreamFetcher { _, listener ->
+                    listener.onBytesRead(pdfBytes.size.toLong(), pdfBytes.size.toLong())
+                    DownloadStreamResult(
+                        inputStream = pdfBytes.inputStream(),
+                        expectedContentLength = pdfBytes.size.toLong()
+                    )
+                }
+            )
+            val studyFile = StudyFileMetadata(
+                id = "physics-ch1",
+                sectionId = "sec-1",
+                title = "الفصل الأول",
+                order = 1,
+                isPublished = true,
+                isArchived = false,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersionLabel = "1.0"
+            )
+            val startResult = harness.repository.startDownload(studyFile)
+            assertTrue(startResult is AppResult.Success)
+            advanceUntilIdle()
+
+            // Verify student downloaded v1 locally before admin archives the parent file.
+            val savedBeforeArchive = harness.repository.getVerifiedLocalVersion("physics-ch1", "v1")
+            assertNotNull(savedBeforeArchive)
+
+            val adminCatalog = FakeAdminCatalogRepository().apply {
+                studyFiles.add(studyFile)
+                versions.add(
+                    StudyFileVersionMetadata(
+                        id = "v1",
+                        fileId = "physics-ch1",
+                        versionNumber = 1,
+                        versionLabel = "1.0",
+                        r2ObjectKey = "study-files/physics-ch1/versions/v1/document.pdf",
+                        fileSizeBytes = pdfBytes.size.toLong(),
+                        checksumSha256 = "e".repeat(64),
+                        isPublished = true
+                    )
+                )
+            }
+
+            // Admin archives the published file -> atomically sets isPublished = false, then restores it.
+            assertTrue(adminCatalog.setStudyFileArchived("physics-ch1", isArchived = true) is AppResult.Success)
+            assertTrue(adminCatalog.studyFiles.single().isArchived)
+            assertFalse(adminCatalog.studyFiles.single().isPublished)
+            assertTrue(adminCatalog.setStudyFileArchived("physics-ch1", isArchived = false) is AppResult.Success)
+            assertFalse(adminCatalog.studyFiles.single().isPublished)
+
+            // Student's local downloaded version must remain untouched and readable offline.
+            val savedAfterArchive = harness.repository.getVerifiedLocalVersion("physics-ch1", "v1")
+            assertNotNull(savedAfterArchive)
+            assertEquals("v1", savedAfterArchive?.versionId)
+            assertEquals(1, harness.repository.getSavedVersionsForFile("physics-ch1").size)
+            assertTrue(File(savedAfterArchive!!.localFilePath).exists())
         }
 }

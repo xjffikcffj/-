@@ -50,11 +50,36 @@ class FirestoreCatalogDataSourceTest {
     }
 
     @Test
-    fun `blank branchId and blank subjectId return emptyList without querying Firestore`() = runTest {
+    fun `fetchPublishedStudyFiles throws FIREBASE_NOT_CONFIGURED when Firestore is unavailable`() = runTest {
+        try {
+            unconfiguredDataSource.fetchPublishedStudyFiles("sec-1")
+            fail("Expected CatalogException")
+        } catch (error: CatalogException) {
+            assertEquals(CatalogFailureReason.FIREBASE_NOT_CONFIGURED, error.reason)
+        }
+    }
+
+    @Test
+    fun `blank branchId subjectId and sectionId return emptyList without querying Firestore`() = runTest {
         val subjects = unconfiguredDataSource.fetchPublishedSubjects("   ")
         val sections = unconfiguredDataSource.fetchPublishedSections("   ")
+        val studyFiles = unconfiguredDataSource.fetchPublishedStudyFiles("   ")
 
         assertTrue(subjects.isEmpty())
         assertTrue(sections.isEmpty())
+        assertTrue(studyFiles.isEmpty())
+    }
+
+    @Test
+    fun `buildPublishedStudyFilesQuerySpec enforces both isPublished true and isArchived false at Firestore query level`() {
+        val spec = unconfiguredDataSource.buildPublishedStudyFilesQuerySpec(" sec-1 ")
+
+        assertEquals(FirestoreCatalogSchema.Collections.STUDY_FILES, spec.collection)
+        assertEquals(FirestoreCatalogSchema.Fields.SECTION_ID, spec.sectionIdField)
+        assertEquals("sec-1", spec.sectionId)
+        assertEquals(FirestoreCatalogSchema.Fields.IS_PUBLISHED, spec.isPublishedField)
+        assertEquals(true, spec.isPublishedValue)
+        assertEquals(FirestoreCatalogSchema.Fields.IS_ARCHIVED, spec.isArchivedField)
+        assertEquals(false, spec.isArchivedValue)
     }
 }
