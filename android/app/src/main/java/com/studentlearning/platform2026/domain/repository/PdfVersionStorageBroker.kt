@@ -43,8 +43,6 @@ data class VerifiedPdfBinaryProof(
 interface PdfVersionStorageBroker {
     fun getBrokerStatus(): PdfBrokerConfigurationStatus
 
-    fun buildVersionObjectKey(fileId: String, versionId: String): String
-
     suspend fun requestVersionUploadSlot(
         fileId: String,
         versionId: String,

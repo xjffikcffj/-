@@ -394,6 +394,7 @@
     <string name="admin_r2_upload_broker_configured_notice" formatted="false">وسيط Cloudflare R2 مفعّل عبر Backend D2: اختر ملف PDF (%PDF- بحد أقصى 100 ميجابايت) لرفعه مؤقتاً ثم التحقق من حجمه وبصمة SHA-256 قبل النشر.</string>
     <string name="admin_version_requires_pdf_notice">يتطلب النشر والتفعيل توفر ملف PDF مرفوعاً عبر وسيط R2 مع مسار وبصمة SHA-256 موثّقين، وألا يكون الملف أو الإصدار مؤرشفاً.</string>
     <string name="admin_version_create_draft_only_notice">بانتظار ربط وسيط رفع Cloudflare R2، ستُحفظ الإصدارات الجديدة كمسودات فقط ولن تُفعّل للطلاب حتى يُرفع ملف PDF الخاص بها.</string>
+    <string name="admin_version_create_draft_workflow_notice">يُنشأ الإصدار الجديد كمسودة غير منشورة أولاً؛ بعد الحفظ ارفع ملف PDF وتحقق منه من نافذة «إدارة الإصدارات» ثم انشره يدوياً.</string>
     <string name="admin_file_create_draft_only_notice">يُحفظ الملف الجديد كمسودة غير منشورة إلى أن يُضاف ويُنشر له إصدار PDF فعّال موثّق.</string>
 
     <string name="admin_confirm_publish_version_title">تأكيد تفعيل ونشر الإصدار</string>
@@ -439,5 +440,6 @@
     <string name="admin_validation_version_already_published">هذا الإصدار منشور ومقفل ضد التعديل؛ أنشئ إصداراً جديداً لتحديث الملف.</string>
     <string name="admin_validation_version_already_verified">تم التحقق من ملف PDF لهذا الإصدار مسبقاً ولا يمكن استبداله؛ يمكنك نشره أو إنشاء إصدار جديد.</string>
     <string name="admin_validation_r2_not_configured">تخزين Cloudflare R2 غير مهيأ على الخادم حالياً؛ تعذّر إتمام العملية.</string>
+    <string name="admin_validation_upload_r2_rejected">رفض تخزين Cloudflare R2 استلام ملف PDF المؤقت؛ يرجى طلب جلسة رفع جديدة والمحاولة مرة أخرى.</string>
     <string name="admin_validation_backend_request_rejected">رفض الخادم الطلب بسبب تعارض في الحالة أو بيانات غير صالحة؛ راجع المدخلات وأعد المحاولة.</string>
 </resources>

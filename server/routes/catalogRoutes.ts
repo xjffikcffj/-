@@ -1,13 +1,18 @@
 import { Router } from 'express';
 import type { RequestHandler } from 'express';
+import type { InMemoryRateLimiter } from '../middleware/rateLimit.js';
 import type { CatalogService } from '../services/catalogService.js';
 
 export function createCatalogRouter(
   catalogService: CatalogService,
   optionalAuth: RequestHandler,
+  rateLimiter?: InMemoryRateLimiter,
 ): Router {
   const router = Router();
   router.use(optionalAuth);
+  if (rateLimiter) {
+    router.use(rateLimiter.middleware('catalog', 'uid-or-ip'));
+  }
 
   router.get('/branches', async (_req, res, next) => {
     try {

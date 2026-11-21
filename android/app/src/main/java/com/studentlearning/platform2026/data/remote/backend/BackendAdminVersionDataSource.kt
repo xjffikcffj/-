@@ -205,12 +205,12 @@ internal class BackendAdminVersionDataSource(
                 cause = notConfigured
             )
         } catch (httpError: BackendHttpException) {
-            throw mapHttpErrorToAdminException(httpError)
+            throw mapR2PutErrorToAdminException(httpError)
         } catch (io: IOException) {
             throw AdminException(
                 reason = AdminFailureReason.NETWORK_UNAVAILABLE,
-                message = io.localizedMessage ?: "Network error uploading PDF to signed slot.",
-                cause = io
+                message = "Network error uploading PDF binary to temporary storage.",
+                cause = sanitizeUploadIoCause(io)
             )
         }
     }
@@ -352,7 +352,51 @@ internal class BackendAdminVersionDataSource(
         )
     }
 
+    private fun sanitizeUploadIoCause(io: IOException): IOException {
+        val safeType = io::class.java.simpleName.takeIf { it.isNotBlank() } ?: "IOException"
+        return IOException("Sanitized $safeType during R2 upload.").apply {
+            stackTrace = io.stackTrace
+        }
+    }
+
+    private fun mapR2PutErrorToAdminException(httpError: BackendHttpException): AdminException {
+        val code = httpError.errorCode
+        return when {
+            httpError.isR2UrlExpired ||
+                httpError.statusCode == 410 ||
+                code.equals("ExpiredToken", ignoreCase = true) ||
+                code.equals("TokenRefreshRequired", ignoreCase = true) -> AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_UPLOAD_SESSION_EXPIRED,
+                message = httpError.message,
+                cause = httpError
+            )
+            httpError.statusCode == 413 ||
+                code.equals("EntityTooLarge", ignoreCase = true) ||
+                code.equals("MaxSizeExceeded", ignoreCase = true) -> AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_UPLOAD_INVALID_PDF,
+                message = httpError.message,
+                cause = httpError
+            )
+            httpError.statusCode in 500..599 -> AdminException(
+                reason = AdminFailureReason.NETWORK_UNAVAILABLE,
+                message = httpError.message,
+                cause = httpError
+            )
+            else -> AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_UPLOAD_R2_REJECTED,
+                message = httpError.message,
+                cause = httpError
+            )
+        }
+    }
+
     private fun mapHttpErrorToAdminException(httpError: BackendHttpException): AdminException {
+        if (httpError.isR2StorageError) {
+            return mapR2PutErrorToAdminException(httpError)
+        }
         val code = httpError.errorCode
         return when {
             httpError.statusCode == 401 -> AdminException(

@@ -56,6 +56,7 @@ class MockR2StorageAdapter implements R2StoragePort {
   forceNullHeadLengthForKey?: string;
   forceNullStreamLengthForKey?: string;
   overrideStreamBytesForKey?: { key: string; bytes: Buffer };
+  readonly overrideChunkSizeForKey = new Map<string, number>();
   lastStreamClosedKey?: string;
 
   isConfigured(): boolean {
@@ -88,10 +89,16 @@ class MockR2StorageAdapter implements R2StoragePort {
       this.overrideStreamBytesForKey?.key === key
         ? this.overrideStreamBytesForKey.bytes
         : obj.bytes;
+    const configuredChunkSize = this.overrideChunkSizeForKey.get(key);
+    const chunkSize =
+      typeof configuredChunkSize === 'number' &&
+      Number.isInteger(configuredChunkSize) &&
+      configuredChunkSize > 0
+        ? configuredChunkSize
+        : 8;
     const adapter = this;
     async function* chunkedStream(): AsyncIterable<Uint8Array> {
       try {
-        const chunkSize = 8;
         for (let i = 0; i < streamBytes.length; i += chunkSize) {
           yield streamBytes.subarray(i, i + chunkSize);
         }
@@ -282,6 +289,7 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     mockR2.forceNullHeadLengthForKey = undefined;
     mockR2.forceNullStreamLengthForKey = undefined;
     mockR2.overrideStreamBytesForKey = undefined;
+    mockR2.overrideChunkSizeForKey.clear();
     mockR2.lastStreamClosedKey = undefined;
     verifier.calls.length = 0;
     currentNowMs = 1_750_000_000_000;
@@ -1688,5 +1696,346 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     assert.equal(res.listenerCount('drain'), 0);
     assert.equal(res.listenerCount('error'), 0);
     assert.equal(res.listenerCount('close'), 0);
+  });
+
+  // =========================================================================
+  // 14. Early Client Disconnect Before/During R2 Stream Open (F-D2-1)
+  // =========================================================================
+  it('aborts cleanly before touching R2 or reading chunks if client disconnects during hierarchy resolution or R2 open', async () => {
+    class EarlyDisconnectRes extends EventEmitter {
+      destroyed = false;
+      writableEnded = false;
+      headersSent = false;
+      closed = false;
+      statusCalls = 0;
+      endCalls = 0;
+      status() {
+        this.statusCalls++;
+        return this;
+      }
+      setHeader() {
+        return this;
+      }
+      write() {
+        this.headersSent = true;
+        return true;
+      }
+      end() {
+        this.endCalls++;
+        this.writableEnded = true;
+      }
+      destroy() {
+        this.destroyed = true;
+        this.closed = true;
+        this.emit('close');
+        return this;
+      }
+    }
+
+    // 14a) Client disconnects while Firestore hierarchy resolution is in flight -> getObjectStreamWithETag is never called.
+    let r2OpenCount = 0;
+    const res1 = new EarlyDisconnectRes();
+    const delivery1 = new DeliveryService(
+      {
+        resolvePublishedHierarchyForVersion: async () => {
+          res1.destroyed = true;
+          res1.closed = true;
+          res1.emit('close');
+          return {
+            fileId: 'file-1',
+            versionId: 'ver-1',
+            versionNumber: 1,
+            r2ObjectKey: 'study-files/file-1/versions/ver-1/key.pdf',
+            fileSizeBytes: 16,
+            checksumSha256: 'a'.repeat(64),
+          };
+        },
+      } as unknown as CatalogService,
+      {
+        isConfigured: () => true,
+        createPresignedPutUrl: async () => 'https://example.invalid',
+        getObjectStreamWithETag: async () => {
+          r2OpenCount++;
+          throw new Error('Should not open R2 stream after client disconnect');
+        },
+        copyObjectIfMatch: async () => ({ etag: 'e' }),
+        headObject: async () => ({
+          exists: true,
+          contentLength: 16,
+          etag: 'e',
+          contentType: 'application/pdf',
+        }),
+        deleteObject: async () => undefined,
+      },
+    );
+
+    await delivery1.deliverPublishedPdf({
+      fileId: 'file-1',
+      versionId: 'ver-1',
+      mode: 'stream',
+      res: res1 as unknown as ExpressResponse,
+    });
+    assert.equal(r2OpenCount, 0);
+    assert.equal(res1.statusCalls, 0);
+    assert.equal(res1.endCalls, 0);
+    assert.equal(res1.listenerCount('close'), 0);
+    assert.equal(res1.listenerCount('error'), 0);
+
+    // 14b) Client disconnects while getObjectStreamWithETag is in flight -> upstream closed immediately with zero reads.
+    let chunksPulled = 0;
+    let streamDestroyedCount = 0;
+    const slowOpenStream = new Readable({
+      read() {
+        chunksPulled++;
+        this.push(Buffer.from('%PDF-1.4\n1234567'));
+        this.push(null);
+      },
+      destroy(err, cb) {
+        streamDestroyedCount++;
+        cb(err);
+      },
+    });
+    const res2 = new EarlyDisconnectRes();
+    const delivery2 = new DeliveryService(
+      {
+        resolvePublishedHierarchyForVersion: async () => ({
+          fileId: 'file-1',
+          versionId: 'ver-1',
+          versionNumber: 1,
+          r2ObjectKey: 'study-files/file-1/versions/ver-1/key.pdf',
+          fileSizeBytes: 16,
+          checksumSha256: 'a'.repeat(64),
+        }),
+      } as unknown as CatalogService,
+      {
+        isConfigured: () => true,
+        createPresignedPutUrl: async () => 'https://example.invalid',
+        getObjectStreamWithETag: async () => {
+          res2.destroyed = true;
+          res2.closed = true;
+          res2.emit('close');
+          return {
+            stream: slowOpenStream,
+            etag: 'etag-1',
+            contentLength: 16,
+            contentType: 'application/pdf',
+          };
+        },
+        copyObjectIfMatch: async () => ({ etag: 'e' }),
+        headObject: async () => ({
+          exists: true,
+          contentLength: 16,
+          etag: 'e',
+          contentType: 'application/pdf',
+        }),
+        deleteObject: async () => undefined,
+      },
+    );
+
+    await delivery2.deliverPublishedPdf({
+      fileId: 'file-1',
+      versionId: 'ver-1',
+      mode: 'download',
+      res: res2 as unknown as ExpressResponse,
+    });
+    assert.equal(chunksPulled, 0);
+    assert.equal(streamDestroyedCount, 1);
+    assert.equal(res2.statusCalls, 0);
+    assert.equal(res2.endCalls, 0);
+    assert.equal(res2.listenerCount('close'), 0);
+    assert.equal(res2.listenerCount('error'), 0);
+  });
+
+  // =========================================================================
+  // 15. Oversized First/Later Chunks & 0-Byte Stream Reject with SIZE_MISMATCH Without res.end() (F-D2-2)
+  // =========================================================================
+  it('returns 409 SIZE_MISMATCH on oversized first chunk over HTTP and never calls res.end() on oversized or 0-byte streams', async () => {
+    const seeded = await seedHierarchy({ withPublishedVersion: true });
+    assert.ok(seeded);
+
+    // 15a) Real HTTP request where R2 header matches fileSizeBytes, and chunk #1 itself exceeds fileSizeBytes -> 409 SIZE_MISMATCH JSON (never 200 PDF or res.end() success).
+    const oversizedBytes = Buffer.concat([
+      seeded.pdf.bytes,
+      Buffer.from('EXTRA_OVERFLOW_BYTES'),
+    ]);
+    mockR2.overrideStreamBytesForKey = {
+      key: seeded.r2ObjectKey,
+      bytes: oversizedBytes,
+    };
+    mockR2.overrideChunkSizeForKey.set(seeded.r2ObjectKey, oversizedBytes.length);
+    const oversizedHttp = await apiJson(
+      '/api/study-files/file-1/versions/ver-1/stream',
+    );
+    assert.equal(oversizedHttp.status, 409);
+    assert.equal(
+      (oversizedHttp.json as { error: { code: string } }).error.code,
+      'SIZE_MISMATCH',
+    );
+    assert.ok(
+      oversizedHttp.headers
+        .get('content-type')
+        ?.toLowerCase()
+        .includes('application/json'),
+    );
+    assert.notEqual(
+      oversizedHttp.headers.get('content-type')?.toLowerCase(),
+      'application/pdf',
+    );
+    assert.equal(
+      typeof oversizedHttp.json === 'object' && oversizedHttp.json !== null,
+      true,
+    );
+    assert.equal(mockR2.lastStreamClosedKey, seeded.r2ObjectKey);
+    mockR2.overrideStreamBytesForKey = undefined;
+    mockR2.overrideChunkSizeForKey.delete(seeded.r2ObjectKey);
+
+    // 15b) Oversized stream starting strictly on chunk #1 (> fileSizeBytes immediately) -> throws ApiError(409, 'SIZE_MISMATCH') before setting 200 headers.
+    let firstChunkUpstreamDestroyed = false;
+    const oversizedFirstChunkStream = new Readable({
+      read() {
+        this.push(Buffer.concat([seeded.pdf.bytes, Buffer.from('TOO_BIG_CHUNK_1')]));
+        this.push(null);
+      },
+      destroy(err, cb) {
+        firstChunkUpstreamDestroyed = true;
+        cb(err);
+      },
+    });
+    class TrackedRes extends EventEmitter {
+      destroyed = false;
+      writableEnded = false;
+      headersSent = false;
+      statusCalls = 0;
+      endCalls = 0;
+      destroyErr: Error | undefined;
+      status() {
+        this.statusCalls++;
+        return this;
+      }
+      setHeader() {
+        return this;
+      }
+      write() {
+        this.headersSent = true;
+        return true;
+      }
+      end() {
+        this.endCalls++;
+        this.writableEnded = true;
+      }
+      destroy(err?: Error) {
+        this.destroyed = true;
+        this.destroyErr = err;
+        this.emit('close');
+        return this;
+      }
+    }
+    const baseCatalog = {
+      resolvePublishedHierarchyForVersion: async () => ({
+        fileId: 'file-1',
+        versionId: 'ver-1',
+        versionNumber: 1,
+        r2ObjectKey: seeded.r2ObjectKey,
+        fileSizeBytes: seeded.pdf.sizeBytes,
+        checksumSha256: seeded.pdf.sha256,
+      }),
+    } as unknown as CatalogService;
+    const makeStubR2 = (stream: Readable): R2StoragePort => ({
+      isConfigured: () => true,
+      createPresignedPutUrl: async () => 'https://example.invalid',
+      getObjectStreamWithETag: async () => ({
+        stream,
+        etag: 'etag-1',
+        contentLength: seeded.pdf.sizeBytes,
+        contentType: 'application/pdf',
+      }),
+      copyObjectIfMatch: async () => ({ etag: 'etag-1' }),
+      headObject: async () => ({
+        exists: true,
+        contentLength: seeded.pdf.sizeBytes,
+        etag: 'etag-1',
+        contentType: 'application/pdf',
+      }),
+      deleteObject: async () => undefined,
+    });
+
+    const firstChunkRes = new TrackedRes();
+    await assert.rejects(
+      () =>
+        new DeliveryService(
+          baseCatalog,
+          makeStubR2(oversizedFirstChunkStream),
+        ).deliverPublishedPdf({
+          fileId: 'file-1',
+          versionId: 'ver-1',
+          mode: 'stream',
+          res: firstChunkRes as unknown as ExpressResponse,
+        }),
+      (err: unknown) =>
+        err instanceof ApiError &&
+        err.statusCode === 409 &&
+        err.code === 'SIZE_MISMATCH',
+    );
+    assert.equal(firstChunkRes.statusCalls, 0);
+    assert.equal(firstChunkRes.endCalls, 0);
+    assert.equal(firstChunkUpstreamDestroyed, true);
+
+    // 15c) Oversized stream on chunk #2 (after chunk #1 sent headers) -> destroys res without calling res.end().
+    let pushedTwo = 0;
+    let secondChunkUpstreamDestroyed = false;
+    const oversizedSecondChunkStream = new Readable({
+      read() {
+        if (pushedTwo === 0) {
+          pushedTwo++;
+          this.push(seeded.pdf.bytes.subarray(0, 8));
+        } else if (pushedTwo === 1) {
+          pushedTwo++;
+          this.push(Buffer.alloc(seeded.pdf.sizeBytes, 0x41));
+        } else {
+          this.push(null);
+        }
+      },
+      destroy(err, cb) {
+        secondChunkUpstreamDestroyed = true;
+        cb(err);
+      },
+    });
+    const secondChunkRes = new TrackedRes();
+    await new DeliveryService(
+      baseCatalog,
+      makeStubR2(oversizedSecondChunkStream),
+    ).deliverPublishedPdf({
+      fileId: 'file-1',
+      versionId: 'ver-1',
+      mode: 'stream',
+      res: secondChunkRes as unknown as ExpressResponse,
+    });
+    assert.equal(secondChunkRes.headersSent, true);
+    assert.equal(secondChunkRes.endCalls, 0);
+    assert.equal(secondChunkRes.destroyed, true);
+    assert.equal(secondChunkUpstreamDestroyed, true);
+
+    // 15d) 0-byte empty stream while fileSizeBytes > 0 -> rejects with 409 SIZE_MISMATCH without setting 200 or calling res.end().
+    const emptyStream = new Readable({
+      read() {
+        this.push(null);
+      },
+    });
+    const emptyRes = new TrackedRes();
+    await assert.rejects(
+      () =>
+        new DeliveryService(baseCatalog, makeStubR2(emptyStream)).deliverPublishedPdf({
+          fileId: 'file-1',
+          versionId: 'ver-1',
+          mode: 'download',
+          res: emptyRes as unknown as ExpressResponse,
+        }),
+      (err: unknown) =>
+        err instanceof ApiError &&
+        err.statusCode === 409 &&
+        err.code === 'SIZE_MISMATCH',
+    );
+    assert.equal(emptyRes.statusCalls, 0);
+    assert.equal(emptyRes.endCalls, 0);
   });
 });

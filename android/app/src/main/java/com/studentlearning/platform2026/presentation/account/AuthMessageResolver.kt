@@ -39,6 +39,7 @@ fun resolveAuthErrorText(
             AdminValidationError.VERSION_UPLOAD_SESSION_EXPIRED -> R.string.admin_validation_upload_session_expired
             AdminValidationError.VERSION_UPLOAD_SESSION_CONFLICT -> R.string.admin_validation_upload_session_conflict
             AdminValidationError.VERSION_UPLOAD_ETAG_MISMATCH -> R.string.admin_validation_upload_etag_mismatch
+            AdminValidationError.VERSION_UPLOAD_R2_REJECTED -> R.string.admin_validation_upload_r2_rejected
             AdminValidationError.VERSION_ALREADY_PUBLISHED_IMMUTABLE -> R.string.admin_validation_version_already_published
             AdminValidationError.VERSION_ALREADY_VERIFIED_IMMUTABLE -> R.string.admin_validation_version_already_verified
             AdminValidationError.R2_STORAGE_NOT_CONFIGURED -> R.string.admin_validation_r2_not_configured

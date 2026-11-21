@@ -56,6 +56,25 @@ export type BinaryVerificationStatus =
   | 'VERIFIED'
   | 'FAILED';
 
+export type ArchiveStatus = 'UNARCHIVED' | 'ARCHIVED' | 'UNSPECIFIED';
+
+export interface AdminStudyFileDto {
+  id: string;
+  sectionId: string;
+  title: string;
+  description: string | null;
+  order: number;
+  isPublished: boolean;
+  isArchived: boolean | null;
+  archiveStatus: ArchiveStatus;
+  mimeType: string;
+  storageProvider: string;
+  activeVersionId: string | null;
+  activeVersionNumber: number | null;
+  activeVersionLabel: string | null;
+  activeVersionPublishedAtEpochMillis: number | null;
+}
+
 export interface AdminStudyFileVersionDto {
   id: string;
   fileId: string;
@@ -63,7 +82,8 @@ export interface AdminStudyFileVersionDto {
   versionLabel: string;
   versionNotes: string | null;
   isPublished: boolean;
-  isArchived: boolean;
+  isArchived: boolean | null;
+  archiveStatus: ArchiveStatus;
   binaryVerificationStatus: BinaryVerificationStatus;
   fileSizeBytes: number | null;
   checksumSha256: string | null;

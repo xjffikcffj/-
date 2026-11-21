@@ -70,9 +70,6 @@ class AdminCatalogRepositoryImplTest {
     ): PdfVersionStorageBroker = object : PdfVersionStorageBroker {
         override fun getBrokerStatus(): PdfBrokerConfigurationStatus = statusProvider()
 
-        override fun buildVersionObjectKey(fileId: String, versionId: String): String =
-            "study-files/$fileId/versions/$versionId/document.pdf"
-
         override suspend fun requestVersionUploadSlot(
             fileId: String,
             versionId: String,
@@ -92,7 +89,7 @@ class AdminCatalogRepositoryImplTest {
                 PdfVersionUploadSlot(
                     fileId = fileId,
                     versionId = versionId,
-                    r2ObjectKey = buildVersionObjectKey(fileId, versionId),
+                    r2ObjectKey = "uploads-staging/$fileId/$versionId/test.pdf",
                     signedUploadUrl = "https://example.invalid/upload/$fileId/$versionId"
                 )
             )
@@ -878,6 +875,82 @@ class AdminCatalogRepositoryImplTest {
                 AdminValidationError.VERSION_PDF_BINARY_MISSING,
                 ((mismatchResult as AppResult.Error).cause as AdminException).validationError
             )
+        }
+
+    @Test
+    fun `publishStudyFileVersion preserves original AdminException from verifyUploadedPdfBinary without masking`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-uid",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val remote = RecordingAdminRemoteDataSource()
+            var nextVerifyError: AppResult<VerifiedPdfBinaryProof> = AppResult.Error(
+                message = "Initial",
+                cause = AdminException(AdminFailureReason.UNAUTHENTICATED, message = "Expired token")
+            )
+            val broker = fakeVersionStorageBroker(
+                statusProvider = { PdfBrokerConfigurationStatus.CONFIGURED },
+                verifyProvider = { _, _ -> nextVerifyError }
+            )
+            val repository = AdminCatalogRepositoryImpl(
+                authRepository = authRepository,
+                remoteDataSource = remote,
+                dispatcherProvider = testDispatchers,
+                pdfVersionStorageBroker = broker
+            )
+
+            val preservedCases = listOf(
+                AdminException(AdminFailureReason.UNAUTHENTICATED, message = "Token revoked"),
+                AdminException(AdminFailureReason.INSUFFICIENT_ROLE, message = "Not admin"),
+                AdminException(AdminFailureReason.NETWORK_UNAVAILABLE, message = "Offline"),
+                AdminException(
+                    AdminFailureReason.VALIDATION_ERROR,
+                    AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION
+                ),
+                AdminException(
+                    AdminFailureReason.VALIDATION_ERROR,
+                    AdminValidationError.R2_STORAGE_NOT_CONFIGURED
+                ),
+                AdminException(
+                    AdminFailureReason.VALIDATION_ERROR,
+                    AdminValidationError.VERSION_UPLOAD_SESSION_EXPIRED
+                ),
+                AdminException(
+                    AdminFailureReason.VALIDATION_ERROR,
+                    AdminValidationError.VERSION_PDF_BINARY_MISSING
+                )
+            )
+
+            for (expectedEx in preservedCases) {
+                nextVerifyError = AppResult.Error(
+                    message = expectedEx.message ?: "Error",
+                    cause = expectedEx
+                )
+                val result = repository.publishStudyFileVersion("file-1", "v1")
+                assertTrue(result is AppResult.Error)
+                val actualEx = (result as AppResult.Error).cause as AdminException
+                assertEquals(expectedEx.reason, actualEx.reason)
+                assertEquals(expectedEx.validationError, actualEx.validationError)
+            }
+
+            // Non-AdminException fallback continues mapping to VERSION_PDF_BINARY_MISSING.
+            nextVerifyError = AppResult.Error(
+                message = "Raw IO issue",
+                cause = PdfLoadException(PdfFailureReason.FILE_NOT_FOUND)
+            )
+            val fallbackResult = repository.publishStudyFileVersion("file-1", "v1")
+            assertTrue(fallbackResult is AppResult.Error)
+            val fallbackEx = (fallbackResult as AppResult.Error).cause as AdminException
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, fallbackEx.reason)
+            assertEquals(AdminValidationError.VERSION_PDF_BINARY_MISSING, fallbackEx.validationError)
+            assertEquals(0, remote.writeCallCount)
         }
 
     private class RecordingAdminRemoteDataSource(

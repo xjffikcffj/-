@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { RequestHandler } from 'express';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import type { InMemoryRateLimiter } from '../middleware/rateLimit.js';
 import type { CatalogService } from '../services/catalogService.js';
 import type { UploadVerificationService } from '../services/uploadVerificationService.js';
 import {
@@ -13,11 +14,32 @@ export function createAdminRouter(params: {
   catalogService: CatalogService;
   uploadVerificationService: UploadVerificationService;
   requireAdminOrOwner: RequestHandler;
+  rateLimiter?: InMemoryRateLimiter;
 }): Router {
   const router = Router();
+  const limiter = params.rateLimiter;
+  const adminReadLimit = limiter
+    ? [limiter.middleware('admin-read', 'uid-or-ip')]
+    : [];
+  const adminWriteLimit = limiter
+    ? [limiter.middleware('admin-version-write', 'uid-or-ip')]
+    : [];
+  const uploadSlotLimit = limiter
+    ? [limiter.middleware('admin-upload-slot', 'uid-or-ip')]
+    : [];
+  const verifyLimit = limiter
+    ? [limiter.middleware('admin-verify', 'uid-or-ip')]
+    : [];
+  const publishLimit = limiter
+    ? [limiter.middleware('admin-publish', 'uid-or-ip')]
+    : [];
+
+  if (limiter) {
+    router.use(limiter.middleware('preauth-admin', 'ip-only'));
+  }
   router.use(params.requireAdminOrOwner);
 
-  router.get('/branches', async (_req, res, next) => {
+  router.get('/branches', ...adminReadLimit, async (_req, res, next) => {
     try {
       const items = await params.catalogService.listAllBranchesForAdmin();
       res.status(200).json({ items });
@@ -26,7 +48,7 @@ export function createAdminRouter(params: {
     }
   });
 
-  router.get('/branches/:branchId/subjects', async (req, res, next) => {
+  router.get('/branches/:branchId/subjects', ...adminReadLimit, async (req, res, next) => {
     try {
       const items = await params.catalogService.listAllSubjectsForAdmin(
         req.params.branchId,
@@ -37,7 +59,7 @@ export function createAdminRouter(params: {
     }
   });
 
-  router.get('/subjects/:subjectId/sections', async (req, res, next) => {
+  router.get('/subjects/:subjectId/sections', ...adminReadLimit, async (req, res, next) => {
     try {
       const items = await params.catalogService.listAllSectionsForAdmin(
         req.params.subjectId,
@@ -48,7 +70,7 @@ export function createAdminRouter(params: {
     }
   });
 
-  router.get('/sections/:sectionId/study-files', async (req, res, next) => {
+  router.get('/sections/:sectionId/study-files', ...adminReadLimit, async (req, res, next) => {
     try {
       const items = await params.catalogService.listStudyFilesForAdmin(
         req.params.sectionId,
@@ -59,7 +81,7 @@ export function createAdminRouter(params: {
     }
   });
 
-  router.get('/study-files/:fileId/versions', async (req, res, next) => {
+  router.get('/study-files/:fileId/versions', ...adminReadLimit, async (req, res, next) => {
     try {
       const items = await params.catalogService.listStudyFileVersionsForAdmin(
         req.params.fileId,
@@ -72,6 +94,7 @@ export function createAdminRouter(params: {
 
   router.post(
     '/study-files/:fileId/versions',
+    ...adminWriteLimit,
     async (req: AuthenticatedRequest, res, next) => {
       try {
         const body = assertPlainObject(req.body);
@@ -100,6 +123,7 @@ export function createAdminRouter(params: {
 
   router.patch(
     '/study-files/:fileId/versions/:versionId',
+    ...adminWriteLimit,
     async (req: AuthenticatedRequest, res, next) => {
       try {
         const body = assertPlainObject(req.body);
@@ -122,6 +146,7 @@ export function createAdminRouter(params: {
 
   router.post(
     '/study-files/:fileId/versions/:versionId/upload-slot',
+    ...uploadSlotLimit,
     async (req: AuthenticatedRequest, res, next) => {
       try {
         const body = assertPlainObject(req.body);
@@ -144,6 +169,7 @@ export function createAdminRouter(params: {
 
   router.post(
     '/study-files/:fileId/versions/:versionId/verify',
+    ...verifyLimit,
     async (req: AuthenticatedRequest, res, next) => {
       try {
         const body = assertPlainObject(req.body);
@@ -165,6 +191,7 @@ export function createAdminRouter(params: {
 
   router.post(
     '/study-files/:fileId/versions/:versionId/publish',
+    ...publishLimit,
     async (req: AuthenticatedRequest, res, next) => {
       try {
         const rawBody = req.body ?? {};

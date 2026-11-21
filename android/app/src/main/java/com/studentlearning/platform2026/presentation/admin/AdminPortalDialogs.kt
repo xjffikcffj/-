@@ -835,8 +835,6 @@ private fun StudyFileVersionEditorDialog(
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     val editing = dialogState.editing
-    val canPublishImmediately = r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED &&
-        !dialogState.file.isArchived
     var customVersionId by remember(editing) { mutableStateOf("") }
     var versionNumberText by remember(editing, dialogState.suggestedVersionNumber) {
         mutableStateOf((editing?.versionNumber ?: dialogState.suggestedVersionNumber).toString())
@@ -847,7 +845,6 @@ private fun StudyFileVersionEditorDialog(
         )
     }
     var versionNotes by remember(editing) { mutableStateOf(editing?.versionNotes.orEmpty()) }
-    var publishAsActive by remember(editing, canPublishImmediately) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
@@ -871,9 +868,14 @@ private fun StudyFileVersionEditorDialog(
                     color = MaterialTheme.colorScheme.primary
                 )
 
-                if (editing == null && !canPublishImmediately) {
+                if (editing == null) {
+                    val noticeRes = if (r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED) {
+                        R.string.admin_version_create_draft_workflow_notice
+                    } else {
+                        R.string.admin_version_create_draft_only_notice
+                    }
                     Text(
-                        text = stringResource(R.string.admin_version_create_draft_only_notice),
+                        text = stringResource(noticeRes),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -915,25 +917,6 @@ private fun StudyFileVersionEditorDialog(
                     label = { Text(stringResource(R.string.admin_field_version_notes)) },
                     modifier = Modifier.fillMaxWidth()
                 )
-
-                if (editing == null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = stringResource(R.string.admin_field_publish_version_immediately),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Switch(
-                            checked = publishAsActive && canPublishImmediately,
-                            enabled = canPublishImmediately,
-                            onCheckedChange = { publishAsActive = it }
-                        )
-                    }
-                }
             }
         },
         confirmButton = {
@@ -946,7 +929,7 @@ private fun StudyFileVersionEditorDialog(
                         parsedNumber,
                         versionLabel,
                         versionNotes.ifBlank { null },
-                        publishAsActive && canPublishImmediately
+                        false
                     )
                 }
             ) {

@@ -14,7 +14,6 @@ import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroke
 import com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot
 import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import kotlinx.coroutines.CancellationException
-import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -45,14 +44,6 @@ class BrokeredPdfVersionStorageDataSource(
         } else {
             PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
         }
-    }
-
-    override fun buildVersionObjectKey(fileId: String, versionId: String): String {
-        val safeFileId = sanitizePathComponent(fileId)
-        val safeVersionId = sanitizePathComponent(versionId)
-        require(safeFileId.isNotEmpty()) { "fileId must not be blank" }
-        require(safeVersionId.isNotEmpty()) { "versionId must not be blank" }
-        return "study-files/$safeFileId/versions/$safeVersionId/document.pdf"
     }
 
     override suspend fun requestVersionUploadSlot(
@@ -193,12 +184,6 @@ class BrokeredPdfVersionStorageDataSource(
     private fun requireConfiguredClientOrNull(): BackendVersionUploadClient? {
         if (getBrokerStatus() != PdfBrokerConfigurationStatus.CONFIGURED) return null
         return backendUploadClient
-    }
-
-    private fun sanitizePathComponent(value: String): String {
-        val trimmed = value.trim()
-        if (trimmed.isEmpty()) return ""
-        return URLEncoder.encode(trimmed, Charsets.UTF_8.name()).replace("+", "%20")
     }
 
     private companion object {

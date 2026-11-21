@@ -14,7 +14,9 @@ import java.net.URL
 internal class BackendHttpException(
     val statusCode: Int,
     val errorCode: String?,
-    override val message: String
+    override val message: String,
+    val isR2StorageError: Boolean = false,
+    val isR2UrlExpired: Boolean = false
 ) : Exception(message)
 
 internal class BackendNotConfiguredException(
@@ -138,8 +140,7 @@ internal class BackendHttpClient(
             val statusCode = activeConnection.responseCode
             if (statusCode !in 200..299) {
                 val rawError = readResponseBody(activeConnection, isError = true)
-                val parsedError = parseStructuredError(statusCode, rawError)
-                throw parsedError
+                throw parseR2UploadError(statusCode, rawError)
             }
         } finally {
             cancellationHook?.dispose()
@@ -212,8 +213,8 @@ internal class BackendHttpClient(
     private fun validateTargetTransportUrl(rawUrl: String) {
         val uri = try {
             URI(rawUrl)
-        } catch (err: Throwable) {
-            throw BackendNotConfiguredException("Invalid backend URL: ${err.message}")
+        } catch (_: Throwable) {
+            throw BackendNotConfiguredException("Invalid target URL format.")
         }
         val scheme = uri.scheme?.lowercase()
         val host = uri.host?.lowercase()
@@ -236,15 +237,16 @@ internal class BackendHttpClient(
     }
 
     private fun parseStructuredError(statusCode: Int, rawBody: String): BackendHttpException {
-        if (rawBody.isNotBlank()) {
+        val trimmed = rawBody.trim()
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
             try {
-                val json = BackendJson.parseObject(rawBody)
+                val json = BackendJson.parseObject(trimmed)
                 val errObj = json.objectOrNull("error")
                 val code = errObj?.stringOrNull("code")
                 val msg = errObj?.stringOrNull("message") ?: "HTTP $statusCode"
                 return BackendHttpException(statusCode = statusCode, errorCode = code, message = msg)
             } catch (_: Throwable) {
-                // Fall back to status-based error when non-JSON body is returned (e.g., proxy/R2 PUT error).
+                // Fall back to status-based error if JSON body is malformed.
             }
         }
         return BackendHttpException(
@@ -254,10 +256,67 @@ internal class BackendHttpClient(
         )
     }
 
+    private fun parseR2UploadError(statusCode: Int, rawBody: String): BackendHttpException {
+        val trimmed = rawBody.trim()
+        if (trimmed.startsWith("<")) {
+            val safeCode = R2_XML_CODE_REGEX.find(trimmed)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            val xmlMessage = R2_XML_MESSAGE_REGEX.find(trimmed)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                .orEmpty()
+            val isExpired = statusCode == 410 ||
+                safeCode.equals("ExpiredToken", ignoreCase = true) ||
+                safeCode.equals("TokenRefreshRequired", ignoreCase = true) ||
+                xmlMessage.contains("expired", ignoreCase = true)
+            val codeSuffix = safeCode?.let { " ($it)" }.orEmpty()
+            return BackendHttpException(
+                statusCode = statusCode,
+                errorCode = safeCode,
+                message = "Cloudflare R2 upload rejected with HTTP $statusCode$codeSuffix.",
+                isR2StorageError = true,
+                isR2UrlExpired = isExpired
+            )
+        }
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            try {
+                val json = BackendJson.parseObject(trimmed)
+                val errObj = json.objectOrNull("error")
+                val code = errObj?.stringOrNull("code")
+                val isExpired = statusCode == 410 ||
+                    code.equals("SESSION_EXPIRED", ignoreCase = true) ||
+                    code.equals("ExpiredToken", ignoreCase = true)
+                val codeSuffix = code?.let { " ($it)" }.orEmpty()
+                return BackendHttpException(
+                    statusCode = statusCode,
+                    errorCode = code,
+                    message = "Cloudflare R2 upload rejected with HTTP $statusCode$codeSuffix.",
+                    isR2StorageError = true,
+                    isR2UrlExpired = isExpired
+                )
+            } catch (_: Throwable) {
+                // Fall back to status-based R2 error without leaking raw payload.
+            }
+        }
+        return BackendHttpException(
+            statusCode = statusCode,
+            errorCode = null,
+            message = "Cloudflare R2 upload failed with HTTP $statusCode.",
+            isR2StorageError = true,
+            isR2UrlExpired = statusCode == 410
+        )
+    }
+
     private companion object {
         const val DEFAULT_CONNECT_TIMEOUT_MS = 15_000
         const val DEFAULT_READ_TIMEOUT_MS = 30_000
         const val UPLOAD_READ_TIMEOUT_MS = 120_000
         const val STREAM_BUFFER_BYTES = 16 * 1024
+        val R2_XML_CODE_REGEX = Regex("<Code>\\s*([A-Za-z0-9_.-]{1,64})\\s*</Code>", RegexOption.IGNORE_CASE)
+        val R2_XML_MESSAGE_REGEX = Regex("<Message>\\s*([^<]{1,200})\\s*</Message>", RegexOption.IGNORE_CASE)
     }
 }

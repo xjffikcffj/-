@@ -5,7 +5,9 @@ import {
   type Firestore,
 } from 'firebase-admin/firestore';
 import type {
+  AdminStudyFileDto,
   AdminStudyFileVersionDto,
+  ArchiveStatus,
   BinaryVerificationStatus,
   CatalogBranchDto,
   CatalogSectionDto,
@@ -80,13 +82,26 @@ function extractRefInfo(
     'parent' in value
   ) {
     const ref = value as DocumentReference;
-    return {
-      collectionId: ref.parent.id,
-      id: ref.id,
-      path: ref.path,
-    };
+    if (
+      ref.parent &&
+      typeof ref.parent.id === 'string' &&
+      typeof ref.id === 'string' &&
+      typeof ref.path === 'string'
+    ) {
+      return {
+        collectionId: ref.parent.id,
+        id: ref.id,
+        path: ref.path,
+      };
+    }
   }
   return null;
+}
+
+function resolveExplicitArchiveStatus(raw: unknown): ArchiveStatus {
+  if (raw === false) return 'UNARCHIVED';
+  if (raw === true) return 'ARCHIVED';
+  return 'UNSPECIFIED';
 }
 
 function mapVerificationStatus(raw: unknown): BinaryVerificationStatus {
@@ -342,6 +357,15 @@ export class CatalogService {
           .get();
         const verData = versionSnap.data();
         if (!versionSnap.exists || !verData) return null;
+        const verFileRef = extractRefInfo(verData.fileId);
+        if (
+          !verFileRef ||
+          verFileRef.collectionId !== 'study_files' ||
+          verFileRef.id !== fileDoc.id ||
+          verFileRef.path !== `study_files/${fileDoc.id}`
+        ) {
+          return null;
+        }
         if (verData.isPublished !== true || verData.isArchived !== false) return null;
         if (verData.versionNumber !== activeVersionNumber) return null;
         if (verData.binaryVerificationStatus !== 'VERIFIED') return null;
@@ -432,7 +456,8 @@ export class CatalogService {
     if (
       !verFileRef ||
       verFileRef.collectionId !== 'study_files' ||
-      verFileRef.id !== fileId
+      verFileRef.id !== fileId ||
+      verFileRef.path !== `study_files/${fileId}`
     ) {
       throw new ApiError(404, 'CATALOG_UNAVAILABLE', 'Version parent mismatch.');
     }
@@ -627,7 +652,7 @@ export class CatalogService {
       .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, 'ar'));
   }
 
-  async listStudyFilesForAdmin(rawSectionId: string) {
+  async listStudyFilesForAdmin(rawSectionId: string): Promise<AdminStudyFileDto[]> {
     const sectionId = validateDocId(rawSectionId, 'sectionId');
     const sectionRef = this.firestore.collection('sections').doc(sectionId);
     const snapshot = await this.firestore
@@ -636,7 +661,7 @@ export class CatalogService {
       .get();
 
     return snapshot.docs
-      .map((doc) => {
+      .map((doc): AdminStudyFileDto | null => {
         const data = doc.data();
         const refInfo = extractRefInfo(data.sectionId);
         if (!refInfo || refInfo.collectionId !== 'sections' || refInfo.id !== sectionId) {
@@ -644,6 +669,7 @@ export class CatalogService {
         }
         const title = extractString(data, 'title', 'nameAr', 'name');
         if (!title) return null;
+        const archiveStatus = resolveExplicitArchiveStatus(data.isArchived);
         return {
           id: doc.id,
           sectionId,
@@ -651,7 +677,8 @@ export class CatalogService {
           description: extractString(data, 'description'),
           order: extractOrder(data),
           isPublished: data.isPublished === true,
-          isArchived: data.isArchived === true,
+          isArchived: typeof data.isArchived === 'boolean' ? data.isArchived : null,
+          archiveStatus,
           mimeType: extractString(data, 'mimeType') ?? 'application/pdf',
           storageProvider: extractString(data, 'storageProvider') ?? 'cloudflare_r2',
           activeVersionId: extractString(data, 'activeVersionId'),
@@ -665,9 +692,12 @@ export class CatalogService {
           ),
         };
       })
-      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .filter((item): item is AdminStudyFileDto => item !== null)
       .sort((a, b) => {
-        if (a.isArchived !== b.isArchived) return a.isArchived ? 1 : -1;
+        const rank = (status: ArchiveStatus) =>
+          status === 'UNARCHIVED' ? 0 : status === 'UNSPECIFIED' ? 1 : 2;
+        const rankDiff = rank(a.archiveStatus) - rank(b.archiveStatus);
+        if (rankDiff !== 0) return rankDiff;
         return a.order - b.order || a.title.localeCompare(b.title, 'ar');
       });
   }
@@ -687,7 +717,12 @@ export class CatalogService {
       .map((doc): AdminStudyFileVersionDto | null => {
         const data = doc.data();
         const refInfo = extractRefInfo(data.fileId);
-        if (!refInfo || refInfo.collectionId !== 'study_files' || refInfo.id !== fileId) {
+        if (
+          !refInfo ||
+          refInfo.collectionId !== 'study_files' ||
+          refInfo.id !== fileId ||
+          refInfo.path !== `study_files/${fileId}`
+        ) {
           return null;
         }
         const versionNumber =
@@ -696,6 +731,7 @@ export class CatalogService {
             : null;
         const versionLabel = extractString(data, 'versionLabel');
         if (!versionNumber || !versionLabel) return null;
+        const archiveStatus = resolveExplicitArchiveStatus(data.isArchived);
 
         return {
           id: doc.id,
@@ -704,7 +740,8 @@ export class CatalogService {
           versionLabel,
           versionNotes: extractString(data, 'versionNotes'),
           isPublished: data.isPublished === true,
-          isArchived: data.isArchived === true,
+          isArchived: typeof data.isArchived === 'boolean' ? data.isArchived : null,
+          archiveStatus,
           binaryVerificationStatus: mapVerificationStatus(
             data.binaryVerificationStatus,
           ),
@@ -768,6 +805,13 @@ export class CatalogService {
           409,
           'FILE_ARCHIVED',
           `Cannot add a version to archived study file '${fileId}'.`,
+        );
+      }
+      if (fileData.isArchived !== false) {
+        throw new ApiError(
+          409,
+          'ARCHIVE_STATE_UNSPECIFIED',
+          `Cannot add a version to study file '${fileId}' because its isArchived state is unspecified or invalid; review is required before creating versions.`,
         );
       }
 
@@ -845,6 +889,7 @@ export class CatalogService {
       versionNotes,
       isPublished: false,
       isArchived: false,
+      archiveStatus: 'UNARCHIVED',
       binaryVerificationStatus: 'PENDING_UPLOAD',
       fileSizeBytes: null,
       checksumSha256: null,
@@ -895,7 +940,12 @@ export class CatalogService {
         throw new ApiError(404, 'NOT_FOUND', `Version '${versionId}' was not found.`);
       }
       const verFileRef = extractRefInfo(versionData.fileId);
-      if (!verFileRef || verFileRef.id !== fileId) {
+      if (
+        !verFileRef ||
+        verFileRef.collectionId !== 'study_files' ||
+        verFileRef.id !== fileId ||
+        verFileRef.path !== `study_files/${fileId}`
+      ) {
         throw new ApiError(404, 'NOT_FOUND', 'Version does not belong to file.');
       }
 

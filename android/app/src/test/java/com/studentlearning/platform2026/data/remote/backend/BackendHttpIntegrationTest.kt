@@ -41,6 +41,7 @@ import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -59,6 +60,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.security.MessageDigest
 import java.util.concurrent.Executors
@@ -114,6 +116,9 @@ class BackendHttpIntegrationTest {
     private var scriptedAdminError: Pair<Int, String>? = null
 
     @Volatile
+    private var scriptedR2PutError: Pair<Int, String>? = null
+
+    @Volatile
     private var includeDraftV2InVersionsList: Boolean = false
 
     @Volatile
@@ -122,6 +127,7 @@ class BackendHttpIntegrationTest {
     @Before
     fun setUpServer() {
         scriptedAdminError = null
+        scriptedR2PutError = null
         includeDraftV2InVersionsList = false
         lastPublishedVersionId = null
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -334,6 +340,142 @@ class BackendHttpIntegrationTest {
             fail("Expected NETWORK_UNAVAILABLE for 502 COPY_FAILED")
         } catch (expected: AdminException) {
             assertEquals(AdminFailureReason.NETWORK_UNAVAILABLE, expected.reason)
+        }
+    }
+
+    @Test
+    fun `R2 presigned PUT XML errors map cleanly without Firestore confusion or leaking signed URLs`() = runTest {
+        val backendAdmin = BackendAdminVersionDataSource(
+            httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
+            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+        )
+        val signedSlot = com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot(
+            fileId = "file-1",
+            versionId = "v1",
+            r2ObjectKey = "uploads-staging/file-1/v1/sess.pdf",
+            signedUploadUrl = "$baseUrl/r2-staging/file-1/v1/sess.pdf?X-Amz-Signature=SECRET_SIG_TOKEN_123",
+            uploadSessionId = "sess-xml-1",
+            requiredHeaders = mapOf("Content-Type" to "application/pdf")
+        )
+        val binarySource = PdfUploadBinarySource(
+            sizeBytes = pdfPayload.size.toLong(),
+            sha256Hex = pdfSha256,
+            displayName = "test.pdf",
+            openInputStream = { pdfPayload.inputStream() }
+        )
+
+        // 1) R2 HTTP 403 XML with expired presigned URL -> VERSION_UPLOAD_SESSION_EXPIRED (never PERMISSION_DENIED)
+        scriptedR2PutError = 403 to """<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>"""
+        try {
+            backendAdmin.uploadPdfToSlot(signedSlot, binarySource)
+            fail("Expected VERSION_UPLOAD_SESSION_EXPIRED for expired R2 presigned PUT")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, expected.reason)
+            assertEquals(AdminValidationError.VERSION_UPLOAD_SESSION_EXPIRED, expected.validationError)
+            assertFalse(expected.message.orEmpty().contains("SECRET_SIG_TOKEN_123"))
+            assertFalse(expected.message.orEmpty().contains("<Error>"))
+        }
+
+        // 2) R2 HTTP 403 XML with SignatureDoesNotMatch -> VERSION_UPLOAD_R2_REJECTED (never PERMISSION_DENIED)
+        scriptedR2PutError = 403 to """<?xml version="1.0" encoding="UTF-8"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match SECRET_SIG_TOKEN_123</Message></Error>"""
+        try {
+            backendAdmin.uploadPdfToSlot(signedSlot, binarySource)
+            fail("Expected VERSION_UPLOAD_R2_REJECTED for rejected R2 presigned PUT")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, expected.reason)
+            assertEquals(AdminValidationError.VERSION_UPLOAD_R2_REJECTED, expected.validationError)
+            assertFalse(expected.message.orEmpty().contains("SECRET_SIG_TOKEN_123"))
+            assertFalse(expected.message.orEmpty().contains("<?xml"))
+        }
+
+        // 3) R2 HTTP 503 XML -> NETWORK_UNAVAILABLE
+        scriptedR2PutError = 503 to """<Error><Code>SlowDown</Code><Message>Reduce rate</Message></Error>"""
+        try {
+            backendAdmin.uploadPdfToSlot(signedSlot, binarySource)
+            fail("Expected NETWORK_UNAVAILABLE for R2 503 XML")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.NETWORK_UNAVAILABLE, expected.reason)
+        }
+
+        // 4) Backend JSON HTTP 403 PRIVILEGED_FIELD_FORBIDDEN remains distinct (PERMISSION_DENIED)
+        scriptedAdminError = 403 to "PRIVILEGED_FIELD_FORBIDDEN"
+        try {
+            backendAdmin.publishStudyFileVersion("file-1", "v1")
+            fail("Expected PERMISSION_DENIED for Backend 403 PRIVILEGED_FIELD_FORBIDDEN")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.PERMISSION_DENIED, expected.reason)
+            assertNull(expected.validationError)
+        }
+    }
+
+    @Test
+    fun `R2 uploadPdfToSlot IOException sanitizes signed URL secrets and preserves CancellationException`() = runTest {
+        val backendAdmin = BackendAdminVersionDataSource(
+            httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
+            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+        )
+        val signedUrlWithToken = "https://example.invalid/upload?X-Amz-Signature=SECRET_SIG_TOKEN_123"
+        val signedSlot = com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot(
+            fileId = "file-1",
+            versionId = "v1",
+            r2ObjectKey = "uploads-staging/file-1/v1/sess.pdf",
+            signedUploadUrl = signedUrlWithToken,
+            uploadSessionId = "sess-io-1",
+            requiredHeaders = mapOf("Content-Type" to "application/pdf")
+        )
+
+        // 1) IOException (including nested cause) carrying signed URL & signature must map to
+        //    NETWORK_UNAVAILABLE without leaking secrets in message, any cause, or stackTraceToString.
+        val ioFailingSource = PdfUploadBinarySource(
+            sizeBytes = pdfPayload.size.toLong(),
+            sha256Hex = pdfSha256,
+            displayName = "test.pdf",
+            openInputStream = {
+                val rootCause = java.net.SocketTimeoutException("Timed out connecting to $signedUrlWithToken")
+                throw IOException("Connection reset while uploading to $signedUrlWithToken", rootCause)
+            }
+        )
+        try {
+            backendAdmin.uploadPdfToSlot(signedSlot, ioFailingSource)
+            fail("Expected AdminException(NETWORK_UNAVAILABLE) on IOException")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.NETWORK_UNAVAILABLE, expected.reason)
+            assertNull(expected.validationError)
+            assertFalse(expected.message.orEmpty().contains("SECRET_SIG_TOKEN_123"))
+            assertFalse(expected.message.orEmpty().contains(signedUrlWithToken))
+            assertFalse(expected.message.orEmpty().contains("X-Amz-Signature"))
+
+            var currentCause: Throwable? = expected.cause
+            while (currentCause != null) {
+                val causeMsg = currentCause.message.orEmpty()
+                assertFalse(causeMsg.contains("SECRET_SIG_TOKEN_123"))
+                assertFalse(causeMsg.contains(signedUrlWithToken))
+                assertFalse(causeMsg.contains("https://example.invalid/upload"))
+                assertFalse(causeMsg.contains("X-Amz-Signature"))
+                currentCause = currentCause.cause
+            }
+
+            val fullTrace = expected.stackTraceToString()
+            assertFalse(fullTrace.contains("SECRET_SIG_TOKEN_123"))
+            assertFalse(fullTrace.contains(signedUrlWithToken))
+            assertFalse(fullTrace.contains("X-Amz-Signature"))
+            assertTrue(expected.cause?.message.orEmpty().contains("IOException"))
+        }
+
+        // 2) CancellationException must propagate directly without being converted into NETWORK_UNAVAILABLE.
+        val cancellingSource = PdfUploadBinarySource(
+            sizeBytes = pdfPayload.size.toLong(),
+            sha256Hex = pdfSha256,
+            displayName = "test.pdf",
+            openInputStream = {
+                throw CancellationException("Upload cancelled for $signedUrlWithToken")
+            }
+        )
+        try {
+            backendAdmin.uploadPdfToSlot(signedSlot, cancellingSource)
+            fail("Expected CancellationException to propagate untouched")
+        } catch (cancelled: CancellationException) {
+            assertTrue(cancelled.message.orEmpty().contains("Upload cancelled"))
         }
     }
 
@@ -585,6 +727,12 @@ class BackendHttpIntegrationTest {
 
             method == "PUT" && path.startsWith("/r2-staging/") -> {
                 uploadedStagingBytes = exchange.requestBody.use { it.readBytes() }
+                val scriptedR2 = scriptedR2PutError
+                if (scriptedR2 != null) {
+                    scriptedR2PutError = null
+                    sendXml(exchange, scriptedR2.first, scriptedR2.second)
+                    return
+                }
                 exchange.responseHeaders.set("ETag", "\"etag-staging-1\"")
                 exchange.sendResponseHeaders(200, -1)
                 exchange.close()
@@ -700,6 +848,14 @@ class BackendHttpIntegrationTest {
     private fun sendJson(exchange: HttpExchange, status: Int, jsonBody: String) {
         val bytes = jsonBody.toByteArray(Charsets.UTF_8)
         exchange.responseHeaders.set("Content-Type", "application/json; charset=utf-8")
+        exchange.sendResponseHeaders(status, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
+        exchange.close()
+    }
+
+    private fun sendXml(exchange: HttpExchange, status: Int, xmlBody: String) {
+        val bytes = xmlBody.toByteArray(Charsets.UTF_8)
+        exchange.responseHeaders.set("Content-Type", "application/xml; charset=utf-8")
         exchange.sendResponseHeaders(status, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
         exchange.close()

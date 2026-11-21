@@ -25,18 +25,80 @@ export interface UploadVerificationDeps {
   config: ServerConfig;
   nowMs?: () => number;
   uuidGenerator?: () => string;
+  warn?: (message: string) => void;
 }
 
-function getRefDocId(value: unknown): string | null {
-  if (
-    value &&
-    typeof value === 'object' &&
-    'id' in value &&
-    typeof (value as { id?: unknown }).id === 'string'
-  ) {
-    return (value as { id: string }).id;
+function hasMatchingParentFileRef(
+  value: unknown,
+  expectedFileId: string,
+): boolean {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
-  return null;
+  const candidate = value as {
+    id?: unknown;
+    path?: unknown;
+    parent?: { id?: unknown } | null;
+  };
+  if (candidate.id !== expectedFileId) {
+    return false;
+  }
+  if (
+    candidate.parent &&
+    typeof candidate.parent.id === 'string' &&
+    candidate.parent.id !== 'study_files'
+  ) {
+    return false;
+  }
+  if (
+    typeof candidate.path === 'string' &&
+    candidate.path !== `study_files/${expectedFileId}`
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function assertExplicitlyUnarchivedFile(
+  fileData: Record<string, unknown>,
+  fileId: string,
+  actionDescription: string,
+): void {
+  if (fileData.isArchived === true) {
+    throw new ApiError(
+      409,
+      'FILE_ARCHIVED',
+      `Cannot ${actionDescription} while study file '${fileId}' is archived.`,
+    );
+  }
+  if (fileData.isArchived !== false) {
+    throw new ApiError(
+      409,
+      'ARCHIVE_STATE_UNSPECIFIED',
+      `Cannot ${actionDescription} for study file '${fileId}' because its isArchived state is unspecified or invalid; review is required before proceeding.`,
+    );
+  }
+}
+
+function assertExplicitlyUnarchivedVersion(
+  versionData: Record<string, unknown>,
+  versionId: string,
+  actionDescription: string,
+): void {
+  if (versionData.isArchived === true) {
+    throw new ApiError(
+      409,
+      'VERSION_ARCHIVED',
+      `Cannot ${actionDescription} while version '${versionId}' is archived.`,
+    );
+  }
+  if (versionData.isArchived !== false) {
+    throw new ApiError(
+      409,
+      'ARCHIVE_STATE_UNSPECIFIED',
+      `Cannot ${actionDescription} for version '${versionId}' because its isArchived state is unspecified or invalid; review is required before proceeding.`,
+    );
+  }
 }
 
 function timestampToMs(value: unknown): number {
@@ -72,12 +134,37 @@ export function buildFinalImmutableKey(params: {
   return `study-files/${params.fileId}/versions/${params.versionId}/${shaPrefix16}_${params.sessionId}_${params.attemptId}.pdf`;
 }
 
+const STAGING_KEY_PREFIX = 'uploads-staging/';
+const FINAL_KEY_PREFIX = 'study-files/';
+
+function formatSafeCleanupError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return `${err.name}:${err.code}`;
+  }
+  if (err instanceof Error) {
+    const rawName = err.name || 'Error';
+    const rawCode =
+      'code' in err && typeof (err as { code?: unknown }).code === 'string'
+        ? `:${String((err as { code?: unknown }).code)}`
+        : '';
+    // Strip URLs, query parameters (e.g. X-Amz-Signature), and Bearer tokens before logging.
+    const sanitizedMsg = err.message
+      .replace(/https?:\/\/\S+/gi, '[redacted-url]')
+      .replace(/X-Amz-[A-Za-z0-9-]+=[^&\s]+/gi, 'X-Amz-[redacted]')
+      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+      .slice(0, 160);
+    return `${rawName}${rawCode} (${sanitizedMsg})`;
+  }
+  return 'Unknown cleanup error';
+}
+
 export class UploadVerificationService {
   private readonly firestore: Firestore;
   private readonly r2Storage: R2StoragePort;
   private readonly config: ServerConfig;
   private readonly nowMs: () => number;
   private readonly uuidGenerator: () => string;
+  private readonly warn: (message: string) => void;
 
   constructor(deps: UploadVerificationDeps) {
     this.firestore = deps.firestore;
@@ -85,6 +172,36 @@ export class UploadVerificationService {
     this.config = deps.config;
     this.nowMs = deps.nowMs ?? (() => Date.now());
     this.uuidGenerator = deps.uuidGenerator ?? (() => randomUUID());
+    this.warn = deps.warn ?? ((message: string) => console.warn(message));
+  }
+
+  private async safeDeleteStagingObject(params: {
+    stagingKey: string;
+    fileId: string;
+    versionId: string;
+    sessionId: string;
+    phase: string;
+  }): Promise<void> {
+    const key = params.stagingKey.trim();
+    // Strict isolation guard: staging cleanup may NEVER target final study-files/ keys.
+    if (
+      !key.startsWith(STAGING_KEY_PREFIX) ||
+      key.startsWith(FINAL_KEY_PREFIX) ||
+      key !== buildStagingKey(params.fileId, params.versionId, params.sessionId)
+    ) {
+      this.warn(
+        `[r2-staging-cleanup] Refusing unsafe staging delete outside isolated prefix: phase=${params.phase} fileId=${params.fileId} versionId=${params.versionId} sessionId=${params.sessionId}`,
+      );
+      return;
+    }
+
+    try {
+      await this.r2Storage.deleteObject(key);
+    } catch (err) {
+      this.warn(
+        `[r2-staging-cleanup] Non-fatal staging delete failure (24h uploads-staging/ R2 lifecycle will collect): phase=${params.phase} fileId=${params.fileId} versionId=${params.versionId} sessionId=${params.sessionId} key=${key} cause=${formatSafeCleanupError(err)}`,
+      );
+    }
   }
 
   async createUploadSlot(params: {
@@ -123,6 +240,9 @@ export class UploadVerificationService {
     const sessionsCol = this.firestore.collection('upload_sessions');
     const newSessionRef = sessionsCol.doc(sessionId);
 
+    const supersededSessions: Array<{ sessionId: string; stagingKey: string }> =
+      [];
+
     await this.firestore.runTransaction(async (tx) => {
       const [fileSnap, versionSnap, existingSessionsSnap] = await Promise.all([
         tx.get(fileRef),
@@ -140,13 +260,7 @@ export class UploadVerificationService {
       if (!fileSnap.exists || !fileData) {
         throw new ApiError(404, 'NOT_FOUND', `Study file '${fileId}' does not exist.`);
       }
-      if (fileData.isArchived === true) {
-        throw new ApiError(
-          409,
-          'FILE_ARCHIVED',
-          `Cannot request upload slot while study file '${fileId}' is archived.`,
-        );
-      }
+      assertExplicitlyUnarchivedFile(fileData, fileId, 'request upload slot');
 
       if (!versionSnap.exists || !versionData) {
         throw new ApiError(
@@ -155,20 +269,14 @@ export class UploadVerificationService {
           `Study file version '${versionId}' does not exist.`,
         );
       }
-      if (getRefDocId(versionData.fileId) !== fileId) {
+      if (!hasMatchingParentFileRef(versionData.fileId, fileId)) {
         throw new ApiError(
           404,
           'NOT_FOUND',
           `Version '${versionId}' does not belong to file '${fileId}'.`,
         );
       }
-      if (versionData.isArchived === true) {
-        throw new ApiError(
-          409,
-          'VERSION_ARCHIVED',
-          `Cannot upload PDF to archived version '${versionId}'.`,
-        );
-      }
+      assertExplicitlyUnarchivedVersion(versionData, versionId, 'request upload slot');
       if (versionData.isPublished === true) {
         throw new ApiError(
           409,
@@ -203,6 +311,15 @@ export class UploadVerificationService {
             updatedByUid: params.actorUid,
             updatedAt: nowTs,
           });
+          if (
+            typeof sData.stagingKey === 'string' &&
+            sData.stagingKey.trim().length > 0
+          ) {
+            supersededSessions.push({
+              sessionId: existingDoc.id,
+              stagingKey: sData.stagingKey.trim(),
+            });
+          }
         }
       }
 
@@ -235,6 +352,16 @@ export class UploadVerificationService {
         updatedAt: nowTs,
       });
     });
+
+    for (const oldSession of supersededSessions) {
+      await this.safeDeleteStagingObject({
+        stagingKey: oldSession.stagingKey,
+        fileId,
+        versionId,
+        sessionId: oldSession.sessionId,
+        phase: 'createUploadSlot:superseded',
+      });
+    }
 
     const uploadUrl = await this.r2Storage.createPresignedPutUrl({
       key: stagingKey,
@@ -295,6 +422,10 @@ export class UploadVerificationService {
           response: VerifyUploadResponseDto;
         }
       | {
+          kind: 'expired';
+          stagingKey: string;
+        }
+      | {
           kind: 'acquired';
           stagingKey: string;
           expectedSizeBytes: number;
@@ -323,7 +454,9 @@ export class UploadVerificationService {
             `Version '${versionId}' does not exist.`,
           );
         }
-        if (getRefDocId(versionData.fileId) !== fileId) {
+        if (
+          !hasMatchingParentFileRef(versionData.fileId, fileId)
+        ) {
           throw new ApiError(
             404,
             'NOT_FOUND',
@@ -347,20 +480,12 @@ export class UploadVerificationService {
             'Upload session does not match the target file/version.',
           );
         }
-        if (fileData.isArchived === true) {
-          throw new ApiError(
-            409,
-            'FILE_ARCHIVED',
-            `Study file '${fileId}' is archived.`,
-          );
-        }
-        if (versionData.isArchived === true) {
-          throw new ApiError(
-            409,
-            'VERSION_ARCHIVED',
-            `Version '${versionId}' is archived.`,
-          );
-        }
+        assertExplicitlyUnarchivedFile(fileData, fileId, 'verify uploaded PDF');
+        assertExplicitlyUnarchivedVersion(
+          versionData,
+          versionId,
+          'verify uploaded PDF',
+        );
 
         // Idempotent retry check for already consumed & verified session
         if (
@@ -433,11 +558,18 @@ export class UploadVerificationService {
 
         const sessionExpiresAtMs = timestampToMs(sessionData.expiresAt);
         if (sessionData.status === 'PENDING' && sessionExpiresAtMs <= lockEpoch) {
-          throw new ApiError(
-            410,
-            'SESSION_EXPIRED',
-            'Upload session TTL expired before verification began.',
-          );
+          tx.update(sessionRef, {
+            status: 'EXPIRED',
+            updatedByUid: params.actorUid,
+            updatedAt: lockNowTs,
+          });
+          return {
+            kind: 'expired',
+            stagingKey:
+              typeof sessionData.stagingKey === 'string'
+                ? sessionData.stagingKey.trim()
+                : buildStagingKey(fileId, versionId, sessionId),
+          };
         }
 
         if (sessionData.status === 'VERIFYING') {
@@ -510,6 +642,21 @@ export class UploadVerificationService {
       return outcome.response;
     }
 
+    if (outcome.kind === 'expired') {
+      await this.safeDeleteStagingObject({
+        stagingKey: outcome.stagingKey,
+        fileId,
+        versionId,
+        sessionId,
+        phase: 'verifyUploadedPdf:expired',
+      });
+      throw new ApiError(
+        410,
+        'SESSION_EXPIRED',
+        'Upload session TTL expired before verification began.',
+      );
+    }
+
     const { stagingKey, expectedSizeBytes, expectedSha256 } = outcome;
     const attemptFinalKey = buildFinalImmutableKey({
       fileId,
@@ -575,18 +722,25 @@ export class UploadVerificationService {
             'Study file is missing or archived during verification commit.',
           );
         }
-        if (
-          !freshVersionSnap.exists ||
-          !freshVersion ||
-          freshVersion.isArchived === true ||
-          freshVersion.isPublished === true
-        ) {
+        if (freshFile.isArchived !== false) {
+          throw new ApiError(
+            409,
+            'ARCHIVE_STATE_UNSPECIFIED',
+            `Study file '${fileId}' has unspecified or invalid isArchived state during verification commit; review is required.`,
+          );
+        }
+        if (!freshVersionSnap.exists || !freshVersion || freshVersion.isPublished === true) {
           throw new ApiError(
             409,
             'CONFLICT_STALE_LOCK',
             'Target version state changed during verification.',
           );
         }
+        assertExplicitlyUnarchivedVersion(
+          freshVersion,
+          versionId,
+          'commit verified PDF',
+        );
         if (
           !freshSessionSnap.exists ||
           !freshSession ||
@@ -629,12 +783,14 @@ export class UploadVerificationService {
         });
       });
 
-      // Phase E: Non-failing staging cleanup
-      try {
-        await this.r2Storage.deleteObject(stagingKey);
-      } catch {
-        // Non-fatal: R2 lifecycle policy cleans uploads-staging/
-      }
+      // Phase E: Non-failing staging cleanup with safe warning log on failure
+      await this.safeDeleteStagingObject({
+        stagingKey,
+        fileId,
+        versionId,
+        sessionId,
+        phase: 'verifyUploadedPdf:consumed',
+      });
 
       return {
         status: 'VERIFIED',
@@ -651,6 +807,7 @@ export class UploadVerificationService {
       // Phase F: Guarded failure transition & non-destructive final object cleanup
       const isLockConflict =
         err instanceof ApiError && err.code === 'CONFLICT_STALE_LOCK';
+      let markedSessionFailed = false;
 
       if (!isLockConflict) {
         try {
@@ -670,11 +827,23 @@ export class UploadVerificationService {
                 updatedByUid: params.actorUid,
                 updatedAt: failTs,
               });
+              markedSessionFailed = true;
             }
           });
         } catch {
           // Never mask primary error
         }
+      }
+
+      if (!isLockConflict && markedSessionFailed) {
+        // Safe because this worker held the active lock and committed terminal FAILED state.
+        await this.safeDeleteStagingObject({
+          stagingKey,
+          fileId,
+          versionId,
+          sessionId,
+          phase: 'verifyUploadedPdf:failed',
+        });
       }
 
       if (finalObjectCreated) {
@@ -691,6 +860,7 @@ export class UploadVerificationService {
             if (
               freshSession.finalObjectKey !== attemptFinalKey &&
               freshVersion.r2ObjectKey !== attemptFinalKey &&
+              freshVersion.verifiedAttemptId !== attemptId &&
               freshVersion.isPublished !== true
             ) {
               safeToDelete = true;
@@ -703,8 +873,10 @@ export class UploadVerificationService {
         if (safeToDelete) {
           try {
             await this.r2Storage.deleteObject(attemptFinalKey);
-          } catch {
-            // Best-effort orphan cleanup only
+          } catch (cleanupErr) {
+            this.warn(
+              `[r2-staging-cleanup] Non-fatal unbound final orphan cleanup failure: fileId=${fileId} versionId=${versionId} key=${attemptFinalKey} cause=${formatSafeCleanupError(cleanupErr)}`,
+            );
           }
         }
       }
@@ -743,20 +915,7 @@ export class UploadVerificationService {
     if (!preFileSnap.exists || !preFileData) {
       throw new ApiError(404, 'NOT_FOUND', `Study file '${fileId}' does not exist.`);
     }
-    if (preFileData.isArchived === true) {
-      throw new ApiError(
-        409,
-        'FILE_ARCHIVED',
-        `Cannot publish archived study file '${fileId}'.`,
-      );
-    }
-    if (preFileData.isArchived !== false) {
-      throw new ApiError(
-        409,
-        'PROOF_MISMATCH',
-        `Study file '${fileId}' is missing explicit non-archived flag.`,
-      );
-    }
+    assertExplicitlyUnarchivedFile(preFileData, fileId, 'publish version');
     if (!preVersionSnap.exists || !preVersionData) {
       throw new ApiError(
         404,
@@ -764,20 +923,14 @@ export class UploadVerificationService {
         `Version '${versionId}' does not exist.`,
       );
     }
-    if (preVersionData.isArchived === true) {
+    if (!hasMatchingParentFileRef(preVersionData.fileId, fileId)) {
       throw new ApiError(
-        409,
-        'VERSION_ARCHIVED',
-        `Cannot publish archived version '${versionId}'.`,
+        404,
+        'NOT_FOUND',
+        `Version '${versionId}' does not belong to file '${fileId}'.`,
       );
     }
-    if (preVersionData.isArchived !== false) {
-      throw new ApiError(
-        409,
-        'PROOF_MISMATCH',
-        `Version '${versionId}' is missing explicit non-archived flag.`,
-      );
-    }
+    assertExplicitlyUnarchivedVersion(preVersionData, versionId, 'publish version');
     if (preVersionData.binaryVerificationStatus !== 'VERIFIED') {
       throw new ApiError(
         409,
@@ -838,20 +991,7 @@ export class UploadVerificationService {
       if (!fileSnap.exists || !fileData) {
         throw new ApiError(404, 'NOT_FOUND', `Study file '${fileId}' does not exist.`);
       }
-      if (fileData.isArchived === true) {
-        throw new ApiError(
-          409,
-          'FILE_ARCHIVED',
-          `Cannot publish archived study file '${fileId}'.`,
-        );
-      }
-      if (fileData.isArchived !== false) {
-        throw new ApiError(
-          409,
-          'PROOF_MISMATCH',
-          `Study file '${fileId}' is missing explicit non-archived flag.`,
-        );
-      }
+      assertExplicitlyUnarchivedFile(fileData, fileId, 'publish version');
 
       const targetSnap = allVersionsSnap.docs.find((d) => d.id === versionId);
       const targetData = targetSnap?.data();
@@ -862,27 +1002,14 @@ export class UploadVerificationService {
           `Version '${versionId}' does not exist.`,
         );
       }
-      if (getRefDocId(targetData.fileId) !== fileId) {
+      if (!hasMatchingParentFileRef(targetData.fileId, fileId)) {
         throw new ApiError(
           404,
           'NOT_FOUND',
           'Version parent reference mismatch.',
         );
       }
-      if (targetData.isArchived === true) {
-        throw new ApiError(
-          409,
-          'VERSION_ARCHIVED',
-          `Cannot publish archived version '${versionId}'.`,
-        );
-      }
-      if (targetData.isArchived !== false) {
-        throw new ApiError(
-          409,
-          'PROOF_MISMATCH',
-          `Version '${versionId}' is missing explicit non-archived flag.`,
-        );
-      }
+      assertExplicitlyUnarchivedVersion(targetData, versionId, 'publish version');
 
       const sessionData = sessionSnap.data();
       if (!sessionSnap.exists || !sessionData) {

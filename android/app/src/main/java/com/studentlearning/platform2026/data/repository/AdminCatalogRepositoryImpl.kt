@@ -331,11 +331,9 @@ class AdminCatalogRepositoryImpl(
             versionId = validVersionId
         )
         val verifiedProof = (verification as? AppResult.Success)?.data
-            ?: throw AdminException(
-                reason = AdminFailureReason.VALIDATION_ERROR,
-                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
-                message = "Cloudflare R2 binary verification failed; cannot publish version without server-verified PDF proof.",
-                cause = (verification as? AppResult.Error)?.cause
+            ?: throw unwrapBrokerError(
+                result = verification,
+                fallbackMessage = "Cloudflare R2 binary verification failed; cannot publish version without server-verified PDF proof."
             )
         if (verifiedProof.fileId.trim() != validFileId ||
             verifiedProof.versionId.trim() != validVersionId ||

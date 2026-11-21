@@ -9,6 +9,10 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { isR2Configured, type ServerConfig } from './config/env.js';
 import type { IdTokenVerifier } from './firebase/adminApp.js';
 import { createAuthMiddleware } from './middleware/auth.js';
+import {
+  InMemoryRateLimiter,
+  type RateLimitOverrides,
+} from './middleware/rateLimit.js';
 import { createAdminRouter } from './routes/adminRoutes.js';
 import { createCatalogRouter } from './routes/catalogRoutes.js';
 import { createDeliveryRouter } from './routes/deliveryRoutes.js';
@@ -25,11 +29,14 @@ export interface BackendAppDependencies {
   r2Storage: R2StoragePort;
   nowMs?: () => number;
   uuidGenerator?: () => string;
+  enableRateLimiting?: boolean;
+  rateLimits?: RateLimitOverrides;
 }
 
 export function createBackendApp(deps: BackendAppDependencies): Express {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', deps.config.trustProxy);
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -70,6 +77,11 @@ export function createBackendApp(deps: BackendAppDependencies): Express {
     uuidGenerator: deps.uuidGenerator,
   });
   const deliveryService = new DeliveryService(catalogService, deps.r2Storage);
+  const rateLimiter = new InMemoryRateLimiter({
+    enabled: deps.enableRateLimiting ?? true,
+    overrides: deps.rateLimits,
+    nowMs: deps.nowMs,
+  });
 
   app.get('/api/health', (_req, res) => {
     res.status(200).json({
@@ -78,13 +90,17 @@ export function createBackendApp(deps: BackendAppDependencies): Express {
     });
   });
 
-  app.use('/api/catalog', createCatalogRouter(catalogService, optionalAuth));
+  app.use(
+    '/api/catalog',
+    createCatalogRouter(catalogService, optionalAuth, rateLimiter),
+  );
   app.use(
     '/api/study-files',
     createDeliveryRouter({
       deliveryService,
       optionalAuth,
       requireNonGuest,
+      rateLimiter,
     }),
   );
   app.use(
@@ -93,6 +109,7 @@ export function createBackendApp(deps: BackendAppDependencies): Express {
       catalogService,
       uploadVerificationService,
       requireAdminOrOwner,
+      rateLimiter,
     }),
   );
 

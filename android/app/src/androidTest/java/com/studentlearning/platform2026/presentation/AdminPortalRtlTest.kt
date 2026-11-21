@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
@@ -14,10 +15,13 @@ import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
+import com.studentlearning.platform2026.presentation.admin.AdminEditorDialogHost
+import com.studentlearning.platform2026.presentation.admin.AdminEditorDialogState
 import com.studentlearning.platform2026.presentation.admin.AdminManagementSection
 import com.studentlearning.platform2026.presentation.admin.AdminPortalScreenContent
 import com.studentlearning.platform2026.presentation.admin.AdminPortalUiState
 import com.studentlearning.platform2026.presentation.theme.HaqibatiTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -452,6 +456,54 @@ class AdminPortalRtlTest {
 
         composeTestRule.onNodeWithText("رفع والتحقق من PDF").assertIsDisplayed().assertIsEnabled()
         composeTestRule.onNodeWithText("نشر وتفعيل هذا الإصدار").assertIsDisplayed().assertIsNotEnabled()
+    }
+
+    @Test
+    fun createVersionDialog_hidesImmediatePublishSwitchAndShowsDraftWorkflowNotice() {
+        val file = StudyFileMetadata(
+            id = "file-1",
+            sectionId = "sec-1",
+            title = "ملزمة الكيمياء",
+            order = 1,
+            isPublished = false,
+            isArchived = false
+        )
+        var capturedPublishAsActive: Boolean? = null
+        var saveCalls = 0
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                AdminEditorDialogHost(
+                    dialogState = AdminEditorDialogState.StudyFileVersionEditor(
+                        file = file,
+                        editing = null,
+                        suggestedVersionNumber = 2
+                    ),
+                    isSubmitting = false,
+                    r2BrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED,
+                    onDismiss = {},
+                    onSaveBranch = { _, _, _, _ -> },
+                    onSaveSubject = { _, _, _, _, _ -> },
+                    onSaveSection = { _, _, _, _, _ -> },
+                    onSaveStudyFile = { _, _, _, _, _, _ -> },
+                    onSaveStudyFileVersion = { _, _, _, _, _, publishAsActive ->
+                        saveCalls++
+                        capturedPublishAsActive = publishAsActive
+                    }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "تفعيل ونشر هذا الإصدار فوراً كأحدث إصدار للطلاب"
+        ).assertDoesNotExist()
+        composeTestRule.onNodeWithText(
+            "يُنشأ الإصدار الجديد كمسودة غير منشورة أولاً؛ بعد الحفظ ارفع ملف PDF وتحقق منه من نافذة «إدارة الإصدارات» ثم انشره يدوياً."
+        ).assertIsDisplayed()
+
+        composeTestRule.onNodeWithText("حفظ").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(1, saveCalls)
+        assertEquals(false, capturedPublishAsActive)
     }
 
     @androidx.compose.runtime.Composable

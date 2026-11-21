@@ -1,7 +1,10 @@
 import process from 'node:process';
 
+export type TrustProxySetting = false | number | 'loopback';
+
 export interface ServerConfig {
   port: number;
+  trustProxy: TrustProxySetting;
   firebaseProjectId: string;
   firebaseServiceAccountJson?: string;
   firestoreEmulatorHost?: string;
@@ -31,6 +34,22 @@ function parsePositiveIntEnv(
   return parsed;
 }
 
+function parseTrustProxyEnv(raw: string | undefined): TrustProxySetting {
+  const trimmed = raw?.trim().toLowerCase() ?? '';
+  if (!trimmed || trimmed === 'false' || trimmed === '0') {
+    return false;
+  }
+  if (trimmed === 'loopback') {
+    return 'loopback';
+  }
+  // Reject blanket 'true'/'all' so clients cannot spoof X-Forwarded-For across arbitrary hops.
+  const hops = Number(trimmed);
+  if (Number.isInteger(hops) && hops >= 1 && hops <= 10) {
+    return hops;
+  }
+  return false;
+}
+
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const allowedOrigins = (env.ALLOWED_ORIGINS ?? '')
     .split(',')
@@ -39,6 +58,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
 
   return {
     port: parsePositiveIntEnv(env.PORT, 3000, 1, 65535),
+    trustProxy: parseTrustProxyEnv(env.TRUST_PROXY),
     firebaseProjectId:
       env.FIREBASE_PROJECT_ID?.trim() || 'student-learning-platform-2026',
     firebaseServiceAccountJson:
