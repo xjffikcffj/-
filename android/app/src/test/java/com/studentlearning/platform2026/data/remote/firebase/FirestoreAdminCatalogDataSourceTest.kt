@@ -1,5 +1,6 @@
 package com.studentlearning.platform2026.data.remote.firebase
 
+import com.google.firebase.firestore.FirebaseFirestore
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Collections
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Fields
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Subcollections
@@ -16,6 +17,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FirestoreAdminCatalogDataSourceTest {
+
+    private val nullFirestoreProvider = object : FirestoreProvider {
+        override fun getFirestoreOrNull(): FirebaseFirestore? = null
+    }
 
     @Test
     fun `setStudyFileArchived rejects missing doc and UNSPECIFIED archive states inside transaction with 0 writes`() =
@@ -45,7 +50,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     )
                 )
             }
-            val dataSource = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+            val dataSource = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
 
             val missingEx = assertAdminThrows {
                 dataSource.setStudyFileArchived("file-nonexistent", true, "admin-1")
@@ -79,7 +84,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     )
                 )
             }
-            val dataSource = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+            val dataSource = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
 
             dataSource.setStudyFileArchived("file-live", isArchived = true, actorUid = "admin-1")
             assertEquals(1, client.updateCalls.size)
@@ -98,7 +103,7 @@ class FirestoreAdminCatalogDataSourceTest {
             val filePath = "${Collections.STUDY_FILES}/file-1"
             val versionPath = "$filePath/${Subcollections.VERSIONS}/v1"
             val client = FakeAdminCatalogFirestoreClient()
-            val dataSource = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+            val dataSource = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
 
             // 1. Parent UNSPECIFIED -> publish rejected with 0 writes.
             client.putDoc(
@@ -177,7 +182,7 @@ class FirestoreAdminCatalogDataSourceTest {
         runTest {
             val filePath = "${Collections.STUDY_FILES}/file-v"
             val client = FakeAdminCatalogFirestoreClient()
-            val dataSource = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+            val dataSource = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
 
             // Missing parent -> NOT_FOUND, 0 writes.
             val missingEx = assertAdminThrows {
@@ -249,7 +254,7 @@ class FirestoreAdminCatalogDataSourceTest {
         val client = FakeAdminCatalogFirestoreClient().apply {
             throwCancellation = true
         }
-        val dataSource = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+        val dataSource = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
 
         var caughtCancellation = false
         try {
@@ -286,7 +291,7 @@ class FirestoreAdminCatalogDataSourceTest {
             // 1. Missing parent file -> NOT_FOUND, 0 writes.
             run {
                 val client = FakeAdminCatalogFirestoreClient()
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -306,7 +311,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     )
                     putDoc("$versionsPath/v1", verifiedVersionData(filePath, isArchived = false, checksum = sha1))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -320,7 +325,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to true))
                     putDoc("$versionsPath/v1", verifiedVersionData(filePath, isArchived = false, checksum = sha1))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -333,7 +338,7 @@ class FirestoreAdminCatalogDataSourceTest {
                 val client = FakeAdminCatalogFirestoreClient().apply {
                     putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to false))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -348,7 +353,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to false))
                     putDoc("$versionsPath/v1", verifiedVersionData(otherFilePath, isArchived = false, checksum = sha1))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -362,7 +367,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to false))
                     putDoc("$versionsPath/v1", verifiedVersionData(filePath, isArchived = null, checksum = sha1))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -376,7 +381,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to false))
                     putDoc("$versionsPath/v1", verifiedVersionData(filePath, isArchived = true, checksum = sha1))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val ex = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
@@ -390,7 +395,7 @@ class FirestoreAdminCatalogDataSourceTest {
                     putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to false))
                     putDoc("$versionsPath/v1", verifiedVersionData(filePath, isArchived = false, checksum = sha1))
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 val sizeMismatchEx = assertAdminThrows {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1.copy(fileSizeBytes = 9999L))
                 }
@@ -429,7 +434,7 @@ class FirestoreAdminCatalogDataSourceTest {
                         )
                     )
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 ds.publishStudyFileVersion(fileId, "v2", "admin-1", proofV2)
                 assertEquals(true, client.docs["$versionsPath/v2"]?.get(Fields.IS_PUBLISHED))
                 assertEquals("v2", client.docs[filePath]?.get(Fields.ACTIVE_VERSION_ID))
@@ -476,7 +481,7 @@ class FirestoreAdminCatalogDataSourceTest {
                         )
                     )
                 }
-                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ds = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
                 ds.publishStudyFileVersion(fileId, "v2", "admin-2", proofV2)
 
                 assertEquals(false, client.docs["$versionsPath/v1"]?.get(Fields.IS_PUBLISHED))
@@ -497,7 +502,7 @@ class FirestoreAdminCatalogDataSourceTest {
             val wrongSectionRef = FirestoreReferenceTarget(Collections.SECTIONS, "sec-other", "${Collections.SECTIONS}/sec-other")
             val filePath = "${Collections.STUDY_FILES}/file-meta"
             val client = FakeAdminCatalogFirestoreClient()
-            val dataSource = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+            val dataSource = FirestoreAdminCatalogDataSource(nullFirestoreProvider, client)
 
             // 1. Missing doc -> NOT_FOUND, 0 writes.
             val missingEx = assertAdminThrows {

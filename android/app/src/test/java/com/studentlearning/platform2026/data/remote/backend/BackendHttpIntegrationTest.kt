@@ -39,9 +39,9 @@ import com.studentlearning.platform2026.domain.repository.PdfBrokerConfiguration
 import com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource
 import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
+import com.studentlearning.platform2026.util.LoopbackHttpExchange
+import com.studentlearning.platform2026.util.LoopbackHttpServer
 import com.studentlearning.platform2026.util.MainDispatcherRule
-import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -81,9 +81,13 @@ class BackendHttpIntegrationTest {
         override val default: CoroutineDispatcher = mainDispatcherRule.testDispatcher
     }
 
-    private lateinit var server: HttpServer
+    private lateinit var server: LoopbackHttpServer
     private lateinit var baseUrl: String
     private var serverExecutor = Executors.newCachedThreadPool()
+
+    private fun tokenProvider(token: () -> String?): AuthTokenProvider = object : AuthTokenProvider {
+        override suspend fun getIdTokenOrNull(forceRefresh: Boolean): String? = token()
+    }
 
     private val pdfPayload = ("%PDF-1.7\n%Stage8 integration payload\n" +
         "1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n").toByteArray(Charsets.UTF_8)
@@ -135,7 +139,7 @@ class BackendHttpIntegrationTest {
         includeDraftV2InVersionsList = false
         lastPublishedVersionId = null
         includeNonUnarchivedPublicFiles = false
-        server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server = LoopbackHttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.executor = serverExecutor
         val port = server.address.port
         baseUrl = "http://127.0.0.1:$port"
@@ -156,7 +160,7 @@ class BackendHttpIntegrationTest {
     fun `catalog client reads live Arabic hierarchy and pins size and sha256 metadata over HTTP`() = runTest {
         val dataSource = BackendCatalogDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "student-jwt" }
+            authTokenProvider = tokenProvider { "student-jwt" }
         )
 
         val branches = dataSource.fetchPublishedBranches()
@@ -210,7 +214,7 @@ class BackendHttpIntegrationTest {
         val httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true)
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = httpClient,
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
         val hybridRemote = HybridAdminCatalogDataSource(
             firestoreDataSource = NoOpCatalogMetadataRemoteDataSource(),
@@ -280,7 +284,7 @@ class BackendHttpIntegrationTest {
 
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
 
         val versions = backendAdmin.fetchStudyFileVersions("file-1")
@@ -299,7 +303,7 @@ class BackendHttpIntegrationTest {
     fun `F-AND-1 backend HTTP error codes map accurately to AdminValidationError and AdminFailureReason`() = runTest {
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
 
         val verifyCases = listOf(
@@ -359,7 +363,7 @@ class BackendHttpIntegrationTest {
     fun `R2 presigned PUT XML errors map cleanly without Firestore confusion or leaking signed URLs`() = runTest {
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
         val signedSlot = com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot(
             fileId = "file-1",
@@ -424,7 +428,7 @@ class BackendHttpIntegrationTest {
     fun `R2 uploadPdfToSlot IOException sanitizes signed URL secrets and preserves CancellationException`() = runTest {
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
         val signedUrlWithToken = "https://example.invalid/upload?X-Amz-Signature=SECRET_SIG_TOKEN_123"
         val signedSlot = com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot(
@@ -520,7 +524,7 @@ class BackendHttpIntegrationTest {
         }
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
         val hybridRemote = HybridAdminCatalogDataSource(
             firestoreDataSource = firestoreFake,
@@ -581,7 +585,7 @@ class BackendHttpIntegrationTest {
     fun `F-2FR BackendAdminVersionDataSource preserves tri-state archiveStatus and maps ARCHIVE_STATE_UNSPECIFIED`() = runTest {
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+            authTokenProvider = tokenProvider { "admin-jwt" }
         )
 
         val versions = backendAdmin.fetchStudyFileVersions("file-tristate")
@@ -640,12 +644,12 @@ class BackendHttpIntegrationTest {
         var token: String? = null
         val sourceDataSource = BrokeredPdfFileSourceDataSource(
             brokerEndpointBaseUrl = baseUrl,
-            authTokenProvider = AuthTokenProvider { _ -> token },
+            authTokenProvider = tokenProvider { token },
             allowInsecureHttpForTesting = true
         )
         val catalogDataSource = BackendCatalogDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
-            authTokenProvider = AuthTokenProvider { _ -> token }
+            authTokenProvider = tokenProvider { token }
         )
 
         // 1) Guest can stream without token.
@@ -744,7 +748,7 @@ class BackendHttpIntegrationTest {
         }
     }
 
-    private fun handleRequest(exchange: HttpExchange) {
+    private fun handleRequest(exchange: LoopbackHttpExchange) {
         val path = exchange.requestURI.path
         val method = exchange.requestMethod.uppercase()
         val authHeader = exchange.requestHeaders.getFirst("Authorization")
@@ -967,7 +971,7 @@ class BackendHttpIntegrationTest {
         }
     }
 
-    private fun sendJson(exchange: HttpExchange, status: Int, jsonBody: String) {
+    private fun sendJson(exchange: LoopbackHttpExchange, status: Int, jsonBody: String) {
         val bytes = jsonBody.toByteArray(Charsets.UTF_8)
         exchange.responseHeaders.set("Content-Type", "application/json; charset=utf-8")
         exchange.sendResponseHeaders(status, bytes.size.toLong())
@@ -975,7 +979,7 @@ class BackendHttpIntegrationTest {
         exchange.close()
     }
 
-    private fun sendXml(exchange: HttpExchange, status: Int, xmlBody: String) {
+    private fun sendXml(exchange: LoopbackHttpExchange, status: Int, xmlBody: String) {
         val bytes = xmlBody.toByteArray(Charsets.UTF_8)
         exchange.responseHeaders.set("Content-Type", "application/xml; charset=utf-8")
         exchange.sendResponseHeaders(status, bytes.size.toLong())
@@ -983,7 +987,7 @@ class BackendHttpIntegrationTest {
         exchange.close()
     }
 
-    private fun sendPdf(exchange: HttpExchange, bytes: ByteArray, sha256Header: String) {
+    private fun sendPdf(exchange: LoopbackHttpExchange, bytes: ByteArray, sha256Header: String) {
         exchange.responseHeaders.set("Content-Type", "application/pdf")
         exchange.responseHeaders.set("X-Content-Sha256", sha256Header)
         exchange.sendResponseHeaders(200, bytes.size.toLong())

@@ -28,8 +28,8 @@ import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
+import com.studentlearning.platform2026.util.LoopbackHttpServer
 import com.studentlearning.platform2026.util.MainDispatcherRule
-import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -328,7 +328,7 @@ class OfflineDownloadsRepositoryImplTest {
                 .digest(pdfPayload)
                 .joinToString("") { "%02x".format(it) }
 
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            val server = LoopbackHttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
             server.createContext("/book.pdf") { exchange ->
                 exchange.responseHeaders.add("X-Content-Sha256", expectedSha)
                 exchange.sendResponseHeaders(200, pdfPayload.size.toLong())
@@ -739,7 +739,7 @@ class OfflineDownloadsRepositoryImplTest {
             val wrongSha = "0".repeat(64)
 
             var headerMode = "malformed"
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            val server = LoopbackHttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
             server.createContext("/doc.pdf") { exchange ->
                 when (headerMode) {
                     "malformed" -> exchange.responseHeaders.add("X-Content-Sha256", "not-a-valid-sha256!")
@@ -845,7 +845,7 @@ class OfflineDownloadsRepositoryImplTest {
 
     @Test
     fun `rejects 3xx redirect without following unvalidated redirect target`() = runTest {
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val server = LoopbackHttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/redirect.pdf") { exchange ->
             exchange.responseHeaders.add("Location", "http://127.0.0.1:${server.address.port}/final.pdf")
             exchange.sendResponseHeaders(302, -1)
@@ -896,7 +896,10 @@ class OfflineDownloadsRepositoryImplTest {
                 sourceDataSource = object : PdfFileSourceDataSource {
                     override fun getBrokerStatus() = PdfBrokerConfigurationStatus.CONFIGURED
                     override suspend fun resolvePdfSource(fileId: String, activeVersionId: String?) =
-                        PdfSourceDescriptor.AuthorizedRemoteUrl("https://example.invalid/doc.pdf", "k")
+                        PdfSourceDescriptor.AuthorizedRemoteUrl(
+                            url = "https://example.invalid/doc.pdf",
+                            cacheKey = "k"
+                        )
                 },
                 streamFetcher = object : DownloadStreamFetcher {
                     override suspend fun downloadToFile(
@@ -1290,7 +1293,7 @@ class OfflineDownloadsRepositoryImplTest {
             val secondChunk = ByteArray(64 * 1024) { 'B'.code.toByte() }
 
             val serverExecutor = Executors.newCachedThreadPool()
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            val server = LoopbackHttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
                 executor = serverExecutor
                 createContext("/stalled.pdf") { exchange ->
                     exchange.responseHeaders.add("Content-Type", "application/pdf")
@@ -1397,12 +1400,23 @@ class OfflineDownloadsRepositoryImplTest {
             val pdfBytes = "%PDF-1.4\n%archived-retention-test\n".toByteArray() + ByteArray(2048) { 0x41 }
             val harness = createHarness(
                 scope = this,
-                streamFetcher = DownloadStreamFetcher { _, listener ->
-                    listener.onBytesRead(pdfBytes.size.toLong(), pdfBytes.size.toLong())
-                    DownloadStreamResult(
-                        inputStream = pdfBytes.inputStream(),
-                        expectedContentLength = pdfBytes.size.toLong()
-                    )
+                streamFetcher = object : DownloadStreamFetcher {
+                    override suspend fun downloadToFile(
+                        source: PdfSourceDescriptor.AuthorizedRemoteUrl,
+                        destinationFile: File,
+                        onContentLengthKnown: suspend (Long) -> Unit,
+                        onProgress: suspend (Long, Long?) -> Unit
+                    ): DownloadStreamResult {
+                        val size = pdfBytes.size.toLong()
+                        onContentLengthKnown(size)
+                        destinationFile.writeBytes(pdfBytes)
+                        onProgress(size, size)
+                        return DownloadStreamResult(
+                            bytesWritten = size,
+                            contentLengthHeaderBytes = size,
+                            serverSha256Header = null
+                        )
+                    }
                 }
             )
             val studyFile = StudyFileMetadata(

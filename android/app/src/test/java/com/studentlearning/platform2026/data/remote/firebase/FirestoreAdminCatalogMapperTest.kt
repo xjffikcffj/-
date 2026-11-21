@@ -6,6 +6,7 @@ import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.ArchiveStatus
+import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import org.junit.Assert.assertEquals

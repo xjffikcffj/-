@@ -860,8 +860,8 @@ class AdminCatalogRepositoryImplTest {
                 override suspend fun requestVersionUploadSlot(
                     fileId: String,
                     versionId: String,
-                    expectedFileSizeBytes: Long,
-                    expectedChecksumSha256: String
+                    fileSizeBytes: Long,
+                    checksumSha256: String
                 ) = AppResult.Success(
                     com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot(
                         fileId = fileId,
@@ -879,6 +879,15 @@ class AdminCatalogRepositoryImplTest {
                     putCalled = true
                     return AppResult.Success(Unit)
                 }
+
+                override suspend fun verifyUploadedPdfBinary(
+                    fileId: String,
+                    versionId: String
+                ) = verifyUploadedPdfBinary(
+                    fileId = fileId,
+                    versionId = versionId,
+                    uploadSessionId = null
+                )
 
                 override suspend fun verifyUploadedPdfBinary(
                     fileId: String,

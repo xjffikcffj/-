@@ -69,9 +69,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
@@ -900,31 +900,28 @@ private fun PdfPageItem(
 ) {
     val pageNumberOneBased = pageIndexZeroBased + 1
 
-    val aspectRatio by produceState(
-        initialValue = 0.707f,
-        key1 = session.fileId,
-        key2 = pageIndexZeroBased
-    ) {
-        value = session.getPageAspectRatio(pageIndexZeroBased)
+    var aspectRatio by remember(session.fileId, pageIndexZeroBased) {
+        mutableFloatStateOf(0.707f)
+    }
+    LaunchedEffect(session.fileId, pageIndexZeroBased) {
+        aspectRatio = session.getPageAspectRatio(pageIndexZeroBased)
     }
 
     var lastValidBitmap by remember(session.fileId, pageIndexZeroBased) {
         mutableStateOf<Bitmap?>(null)
     }
 
-    val renderedBitmap by produceState<Bitmap?>(
-        initialValue = lastValidBitmap,
-        key1 = session.fileId,
-        key2 = pageIndexZeroBased,
-        key3 = targetWidthPx
-    ) {
+    var renderedBitmap by remember(session.fileId, pageIndexZeroBased, targetWidthPx) {
+        mutableStateOf(lastValidBitmap)
+    }
+    LaunchedEffect(session.fileId, pageIndexZeroBased, targetWidthPx) {
         val rendered = bitmapRenderer?.renderPage(
             pageIndexZeroBased = pageIndexZeroBased,
             targetWidthPx = targetWidthPx
         )
         if (rendered != null && !rendered.isRecycled) {
             lastValidBitmap = rendered
-            value = rendered
+            renderedBitmap = rendered
         }
     }
 

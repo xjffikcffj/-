@@ -47,7 +47,9 @@ class PdfSourceAndFetcherTest {
     fun `configured https broker generates authorized stream and download descriptors`() =
         runBlocking {
             var currentToken: String? = null
-            val tokenProvider = AuthTokenProvider { _ -> currentToken }
+            val tokenProvider = object : AuthTokenProvider {
+                override suspend fun getIdTokenOrNull(forceRefresh: Boolean): String? = currentToken
+            }
             val source = BrokeredPdfFileSourceDataSource(
                 brokerEndpointBaseUrl = "https://media.example.invalid/",
                 authTokenProvider = tokenProvider

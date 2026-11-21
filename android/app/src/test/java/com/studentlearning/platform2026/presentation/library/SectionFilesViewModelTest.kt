@@ -87,7 +87,7 @@ class SectionFilesViewModelTest {
                 if (shouldFail) {
                     AppResult.Error(
                         message = "Unavailable",
-                        cause = CatalogException(CatalogFailureReason.NETWORK_OR_UNAVAILABLE)
+                        cause = CatalogException(CatalogFailureReason.NETWORK_UNAVAILABLE)
                     )
                 } else {
                     AppResult.Success(files)
@@ -99,7 +99,7 @@ class SectionFilesViewModelTest {
         advanceUntilIdle()
 
         assertEquals(
-            CatalogFailureReason.NETWORK_OR_UNAVAILABLE,
+            CatalogFailureReason.NETWORK_UNAVAILABLE,
             (viewModel.uiState.value as SectionFilesUiState.Error).reason
         )
 
@@ -348,7 +348,10 @@ class SectionFilesViewModelTest {
                 sourceDataSource = object : PdfFileSourceDataSource {
                     override fun getBrokerStatus() = PdfBrokerConfigurationStatus.CONFIGURED
                     override suspend fun resolvePdfSource(fileId: String, activeVersionId: String?) =
-                        PdfSourceDescriptor.AuthorizedRemoteUrl("https://example.invalid/doc.pdf", "k")
+                        PdfSourceDescriptor.AuthorizedRemoteUrl(
+                            url = "https://example.invalid/doc.pdf",
+                            cacheKey = "k"
+                        )
                 },
                 streamFetcher = object : DownloadStreamFetcher {
                     override suspend fun downloadToFile(
