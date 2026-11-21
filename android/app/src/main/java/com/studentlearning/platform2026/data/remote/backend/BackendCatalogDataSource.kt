@@ -2,6 +2,7 @@ package com.studentlearning.platform2026.data.remote.backend
 
 import com.studentlearning.platform2026.data.remote.firebase.AuthTokenProvider
 import com.studentlearning.platform2026.data.remote.firebase.CatalogRemoteDataSource
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogException
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.StudyBranch
@@ -87,6 +88,10 @@ internal class BackendCatalogDataSource(
         return root.objectListOrEmpty("items").mapNotNull { item ->
             val id = item.stringOrNull("id") ?: return@mapNotNull null
             val title = item.stringOrNull("title") ?: return@mapNotNull null
+            val archiveStatus = when (item.stringOrNull("archiveStatus")?.trim()?.uppercase()) {
+                "UNARCHIVED" -> ArchiveStatus.UNARCHIVED
+                else -> return@mapNotNull null
+            }
             val activeVersionId = item.stringOrNull("activeVersionId") ?: return@mapNotNull null
             val activeVersionNumber = item.intOrNull("activeVersionNumber")?.takeIf { it >= 1 }
                 ?: return@mapNotNull null
@@ -101,7 +106,7 @@ internal class BackendCatalogDataSource(
                 description = item.stringOrNull("description"),
                 order = item.intOrNull("order") ?: Int.MAX_VALUE,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = archiveStatus,
                 mimeType = item.stringOrNull("mimeType") ?: StudyFileMetadata.MIME_TYPE_PDF,
                 storageProvider = StudyFileMetadata.STORAGE_PROVIDER_CLOUDFLARE_R2,
                 activeVersionId = activeVersionId,

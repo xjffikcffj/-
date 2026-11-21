@@ -3,9 +3,38 @@ package com.studentlearning.platform2026.domain.model
 import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
 
 /**
+ * Explicit tri-state archive status matching Backend D2 fail-closed semantics:
+ * - [UNARCHIVED]: explicitly `isArchived == false`
+ * - [ARCHIVED]: explicitly `isArchived == true`
+ * - [UNSPECIFIED]: missing, null, invalid type, or unrecognized value (never coerced to [UNARCHIVED])
+ */
+enum class ArchiveStatus {
+    UNARCHIVED,
+    ARCHIVED,
+    UNSPECIFIED;
+
+    companion object {
+        fun fromIsArchivedValue(rawValue: Any?): ArchiveStatus = when (rawValue) {
+            false -> UNARCHIVED
+            true -> ARCHIVED
+            else -> UNSPECIFIED
+        }
+
+        fun fromBackend(rawArchiveStatus: Any?, rawIsArchived: Any?): ArchiveStatus {
+            val normalizedStatus = (rawArchiveStatus as? String)?.trim()
+            return when {
+                normalizedStatus == "UNARCHIVED" && rawIsArchived == false -> UNARCHIVED
+                normalizedStatus == "ARCHIVED" && rawIsArchived == true -> ARCHIVED
+                else -> UNSPECIFIED
+            }
+        }
+    }
+}
+
+/**
  * Parent administrative metadata for an educational PDF file stored at `study_files/{fileId}`.
  *
- * File identity ([id], [sectionId], [title], [description], [order], [isPublished], [isArchived])
+ * File identity ([id], [sectionId], [title], [description], [order], [isPublished], [archiveStatus])
  * is kept separate from version-specific and binary storage fields. Independent versions live under
  * `study_files/{fileId}/versions/{versionId}` ([StudyFileVersionMetadata]), while this parent
  * document holds pointer fields ([activeVersionId], [activeVersionNumber], [activeVersionLabel],
@@ -21,7 +50,7 @@ data class StudyFileMetadata(
     val description: String? = null,
     val order: Int,
     val isPublished: Boolean,
-    val isArchived: Boolean = false,
+    val archiveStatus: ArchiveStatus = ArchiveStatus.UNSPECIFIED,
     val mimeType: String = MIME_TYPE_PDF,
     val storageProvider: String = STORAGE_PROVIDER_CLOUDFLARE_R2,
     val activeVersionId: String? = null,
@@ -33,6 +62,18 @@ data class StudyFileMetadata(
     val activeVersionFileSizeBytes: Long? = null,
     val activeVersionChecksumSha256: String? = null
 ) {
+    val isArchived: Boolean
+        get() = archiveStatus == ArchiveStatus.ARCHIVED
+
+    val isExplicitlyUnarchived: Boolean
+        get() = archiveStatus == ArchiveStatus.UNARCHIVED
+
+    val isExplicitlyArchived: Boolean
+        get() = archiveStatus == ArchiveStatus.ARCHIVED
+
+    val isArchiveStatusUnspecified: Boolean
+        get() = archiveStatus == ArchiveStatus.UNSPECIFIED
+
     val hasActiveVersion: Boolean
         get() = !activeVersionId.isNullOrBlank()
 
@@ -71,11 +112,23 @@ data class StudyFileVersionMetadata(
     val fileReferencePath: String = "study_files/$fileId",
     val updatedByUid: String? = null,
     val updatedAtEpochMillis: Long? = null,
-    val isArchived: Boolean = false,
+    val archiveStatus: ArchiveStatus = ArchiveStatus.UNSPECIFIED,
     val binaryVerificationStatus: String? = null,
     val verifiedUploadSessionId: String? = null,
     val verifiedAttemptId: String? = null
 ) {
+    val isArchived: Boolean
+        get() = archiveStatus == ArchiveStatus.ARCHIVED
+
+    val isExplicitlyUnarchived: Boolean
+        get() = archiveStatus == ArchiveStatus.UNARCHIVED
+
+    val isExplicitlyArchived: Boolean
+        get() = archiveStatus == ArchiveStatus.ARCHIVED
+
+    val isArchiveStatusUnspecified: Boolean
+        get() = archiveStatus == ArchiveStatus.UNSPECIFIED
+
     val hasUploadedPdfBinary: Boolean
         get() {
             if (binaryVerificationStatus == "VERIFIED") {

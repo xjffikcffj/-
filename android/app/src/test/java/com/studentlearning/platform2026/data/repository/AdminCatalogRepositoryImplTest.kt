@@ -10,6 +10,7 @@ import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.data.pdf.BrokeredPdfVersionStorageDataSource
 import com.studentlearning.platform2026.domain.model.PdfFailureReason
 import com.studentlearning.platform2026.domain.model.PdfLoadException
@@ -24,6 +25,7 @@ import com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot
 import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -519,10 +521,10 @@ class AdminCatalogRepositoryImplTest {
             fileSizeBytes = 12_345L,
             checksumSha256 = "a".repeat(64),
             isPublished = true,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
         val remote = RecordingAdminRemoteDataSource(
-            initialFileArchived = true,
+            initialFileArchiveStatus = ArchiveStatus.ARCHIVED,
             initialActiveVersionId = "v1",
             initialActiveVersionNumber = 1,
             initialActiveVersion = preservedActiveVersion
@@ -707,7 +709,7 @@ class AdminCatalogRepositoryImplTest {
                 areClaimsConfirmedCurrent = true
             )
         )
-        val remote = RecordingAdminRemoteDataSource(initialFileArchived = false).apply {
+        val remote = RecordingAdminRemoteDataSource(initialFileArchiveStatus = ArchiveStatus.UNARCHIVED).apply {
             lastFilePublished = true
         }
         val repository = AdminCatalogRepositoryImpl(
@@ -719,14 +721,60 @@ class AdminCatalogRepositoryImplTest {
 
         val archiveResult = repository.setStudyFileArchived("file-1", isArchived = true)
         assertTrue(archiveResult is AppResult.Success)
-        assertTrue(remote.isFileArchived)
+        assertEquals(ArchiveStatus.ARCHIVED, remote.fileArchiveStatus)
         assertEquals(false, remote.lastFilePublished)
 
         val restoreResult = repository.setStudyFileArchived("file-1", isArchived = false)
         assertTrue(restoreResult is AppResult.Success)
-        assertFalse(remote.isFileArchived)
+        assertEquals(ArchiveStatus.UNARCHIVED, remote.fileArchiveStatus)
         assertEquals(false, remote.lastFilePublished)
     }
+
+    @Test
+    fun `setStudyFileArchived rejects UNSPECIFIED document without calling remote archive mutation and preserves CancellationException`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-uid",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val remote = RecordingAdminRemoteDataSource(
+                initialFileArchiveStatus = ArchiveStatus.UNSPECIFIED
+            )
+            val repository = AdminCatalogRepositoryImpl(
+                authRepository = authRepository,
+                remoteDataSource = remote,
+                dispatcherProvider = testDispatchers,
+                pdfVersionStorageBroker = fakeVersionStorageBroker()
+            )
+
+            val blockedArchive = repository.setStudyFileArchived("file-1", isArchived = true)
+            assertTrue(blockedArchive is AppResult.Error)
+            val archiveEx = (blockedArchive as AppResult.Error).cause as AdminException
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, archiveEx.validationError)
+            assertEquals(0, remote.writeCallCount)
+
+            val blockedRestore = repository.setStudyFileArchived("file-1", isArchived = false)
+            assertTrue(blockedRestore is AppResult.Error)
+            val restoreEx = (blockedRestore as AppResult.Error).cause as AdminException
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, restoreEx.validationError)
+            assertEquals(0, remote.writeCallCount)
+
+            remote.cancelArchiveCall = true
+            remote.fileArchiveStatus = ArchiveStatus.UNARCHIVED
+            var caughtCancellation: Throwable? = null
+            try {
+                repository.setStudyFileArchived("file-1", isArchived = true)
+            } catch (ex: Throwable) {
+                caughtCancellation = ex
+            }
+            assertTrue(caughtCancellation is CancellationException)
+        }
 
     @Test
     fun `setStudyFilePublished via remote validates active version number and PDF proof while allowing unpublish`() =
@@ -750,7 +798,7 @@ class AdminCatalogRepositoryImplTest {
                 fileSizeBytes = 4096L,
                 checksumSha256 = "d".repeat(64),
                 isPublished = true,
-                isArchived = false
+                archiveStatus = ArchiveStatus.UNARCHIVED
             )
             val remote = RecordingAdminRemoteDataSource(
                 initialActiveVersionId = "v1",
@@ -957,19 +1005,20 @@ class AdminCatalogRepositoryImplTest {
         private val failWriteWithPermissionDenied: Boolean = false,
         private val failReadWithPermissionDenied: Boolean = false,
         private val initialFileExists: Boolean = true,
-        initialFileArchived: Boolean = false,
+        initialFileArchiveStatus: ArchiveStatus = ArchiveStatus.UNARCHIVED,
         initialActiveVersionId: String? = null,
         initialActiveVersionNumber: Int? = null,
         initialActiveVersion: StudyFileVersionMetadata? = null
     ) : AdminCatalogRemoteDataSource {
         var writeCallCount = 0
+        var cancelArchiveCall = false
         var lastActorUid: String? = null
         var lastUpdatedFileId: String? = null
         var lastUpdatedFileSectionId: String? = null
         var lastReorderedPair: List<Pair<String, Int>>? = null
         var lastCreatedVersionLabel: String? = null
         var lastPublishedVersion: Pair<String, String>? = null
-        var isFileArchived: Boolean = initialFileArchived
+        var fileArchiveStatus: ArchiveStatus = initialFileArchiveStatus
         var lastFilePublished: Boolean? = null
         var activeVersionId: String? = initialActiveVersionId
         var activeVersionNumber: Int? = initialActiveVersionNumber
@@ -1061,6 +1110,20 @@ class AdminCatalogRepositoryImplTest {
 
         override suspend fun fetchStudyFilesForSection(sectionId: String): List<StudyFileMetadata> = emptyList()
 
+        override suspend fun fetchStudyFileMetadata(fileId: String): StudyFileMetadata? {
+            if (!initialFileExists) return null
+            return StudyFileMetadata(
+                id = fileId,
+                sectionId = "sec-1",
+                title = "ملزمة",
+                order = 1,
+                isPublished = lastFilePublished ?: false,
+                archiveStatus = fileArchiveStatus,
+                activeVersionId = activeVersionId,
+                activeVersionNumber = activeVersionNumber
+            )
+        }
+
         override suspend fun createStudyFileMetadata(
             customId: String?,
             sectionId: String,
@@ -1072,7 +1135,14 @@ class AdminCatalogRepositoryImplTest {
         ): StudyFileMetadata {
             writeCallCount++
             lastActorUid = actorUid
-            return StudyFileMetadata(customId ?: "f1", sectionId, title = title, order = order, isPublished = isPublished)
+            return StudyFileMetadata(
+                id = customId ?: "f1",
+                sectionId = sectionId,
+                title = title,
+                order = order,
+                isPublished = isPublished,
+                archiveStatus = ArchiveStatus.UNARCHIVED
+            )
         }
 
         override suspend fun updateStudyFileMetadata(
@@ -1095,7 +1165,7 @@ class AdminCatalogRepositoryImplTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = fileId,
                 exists = initialFileExists,
-                isArchived = isFileArchived,
+                archiveStatus = fileArchiveStatus,
                 targetPublished = isPublished,
                 activeVersionId = activeVersionId,
                 activeVersionNumber = activeVersionNumber,
@@ -1105,9 +1175,10 @@ class AdminCatalogRepositoryImplTest {
         }
 
         override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
+            if (cancelArchiveCall) throw CancellationException("Cancelled")
             writeCallCount++
             lastActorUid = actorUid
-            isFileArchived = isArchived
+            fileArchiveStatus = if (isArchived) ArchiveStatus.ARCHIVED else ArchiveStatus.UNARCHIVED
             lastFilePublished = false
         }
 
@@ -1132,7 +1203,8 @@ class AdminCatalogRepositoryImplTest {
                 versionNumber = versionNumber,
                 versionLabel = versionLabel,
                 versionNotes = versionNotes,
-                isPublished = publishAsActive
+                isPublished = publishAsActive,
+                archiveStatus = ArchiveStatus.UNARCHIVED
             )
         }
 
@@ -1169,7 +1241,7 @@ class AdminCatalogRepositoryImplTest {
                 fileSizeBytes = verifiedProof.fileSizeBytes,
                 checksumSha256 = verifiedProof.checksumSha256,
                 isPublished = true,
-                isArchived = false
+                archiveStatus = ArchiveStatus.UNARCHIVED
             )
         }
 

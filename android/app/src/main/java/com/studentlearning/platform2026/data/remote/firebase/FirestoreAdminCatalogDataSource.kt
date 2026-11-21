@@ -10,12 +10,14 @@ import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSch
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
+import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
 
 interface AdminCatalogRemoteDataSource {
     suspend fun fetchAllBranches(): List<StudyBranch>
@@ -129,9 +131,92 @@ interface AdminCatalogRemoteDataSource {
     )
 }
 
-class FirestoreAdminCatalogDataSource(
+internal data class CatalogDocSnapshot(
+    val id: String,
+    val exists: Boolean,
+    val data: Map<String, Any?>,
+    val path: String
+)
+
+internal interface AdminCatalogTransactionScope {
+    fun get(docPath: String): CatalogDocSnapshot
+    fun set(docPath: String, payload: Map<String, Any?>)
+    fun update(docPath: String, payload: Map<String, Any?>)
+}
+
+internal interface AdminCatalogFirestoreClient {
+    fun serverTimestamp(): Any
+    fun documentRef(docPath: String): Any
+    fun newDocumentId(collectionPath: String): String
+    suspend fun listCollectionDocPaths(collectionPath: String): List<String>
+    suspend fun <T> runTransaction(block: (AdminCatalogTransactionScope) -> T): T
+}
+
+private class FirebaseAdminCatalogFirestoreClient(
     private val firestoreProvider: FirestoreProvider
+) : AdminCatalogFirestoreClient {
+
+    override fun serverTimestamp(): Any = FieldValue.serverTimestamp()
+
+    override fun documentRef(docPath: String): Any =
+        requireConfiguredFirestore().document(docPath)
+
+    override fun newDocumentId(collectionPath: String): String =
+        requireConfiguredFirestore().collection(collectionPath).document().id
+
+    override suspend fun listCollectionDocPaths(collectionPath: String): List<String> {
+        val firestore = requireConfiguredFirestore()
+        return firestore.collection(collectionPath)
+            .get()
+            .awaitResult()
+            .documents
+            .map { it.reference.path }
+    }
+
+    override suspend fun <T> runTransaction(block: (AdminCatalogTransactionScope) -> T): T {
+        val firestore = requireConfiguredFirestore()
+        return firestore.runTransaction { transaction ->
+            val scope = object : AdminCatalogTransactionScope {
+                override fun get(docPath: String): CatalogDocSnapshot {
+                    val snap = transaction.get(firestore.document(docPath))
+                    return CatalogDocSnapshot(
+                        id = snap.id,
+                        exists = snap.exists(),
+                        data = snap.data ?: emptyMap(),
+                        path = snap.reference.path
+                    )
+                }
+
+                override fun set(docPath: String, payload: Map<String, Any?>) {
+                    transaction.set(firestore.document(docPath), payload)
+                }
+
+                override fun update(docPath: String, payload: Map<String, Any?>) {
+                    transaction.update(firestore.document(docPath), payload)
+                }
+            }
+            block(scope)
+        }.awaitResult()
+    }
+
+    private fun requireConfiguredFirestore(): FirebaseFirestore {
+        return firestoreProvider.getFirestoreOrNull()
+            ?: throw AdminException(
+                reason = AdminFailureReason.FIREBASE_NOT_CONFIGURED,
+                message = "Firebase is not configured locally yet."
+            )
+    }
+}
+
+class FirestoreAdminCatalogDataSource internal constructor(
+    private val firestoreProvider: FirestoreProvider,
+    private val firestoreClient: AdminCatalogFirestoreClient
 ) : AdminCatalogRemoteDataSource {
+
+    constructor(firestoreProvider: FirestoreProvider) : this(
+        firestoreProvider = firestoreProvider,
+        firestoreClient = FirebaseAdminCatalogFirestoreClient(firestoreProvider)
+    )
 
     override suspend fun fetchAllBranches(): List<StudyBranch> {
         val firestore = requireConfiguredFirestore()
@@ -437,7 +522,7 @@ class FirestoreAdminCatalogDataSource(
             description = description,
             order = order,
             isPublished = isPublished,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             mimeType = Defaults.MIME_TYPE_PDF,
             storageProvider = Defaults.STORAGE_PROVIDER_CLOUDFLARE_R2,
             activeVersionId = null,
@@ -457,61 +542,66 @@ class FirestoreAdminCatalogDataSource(
         actorUid: String
     ) {
         val validActorUid = requireNonBlankActorUid(actorUid)
-        val firestore = requireConfiguredFirestore()
-        val expectedSectionRef = firestore.collection(Collections.SECTIONS).document(sectionId)
-        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val cleanFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+        val cleanSectionId = AdminCatalogValidator.validateRequiredDocumentId(sectionId)
+        val expectedSectionPath = "${Collections.SECTIONS}/$cleanSectionId"
+        val filePath = "${Collections.STUDY_FILES}/$cleanFileId"
         val payload = FirestoreAdminCatalogMapper.buildStudyFileUpdatePayload(
             title = title,
             description = description,
             order = order,
             actorUid = validActorUid,
-            timestampValue = FieldValue.serverTimestamp()
+            timestampValue = firestoreClient.serverTimestamp()
         )
 
         // Verify atomically that the file exists and belongs to the expected section,
         // without altering activeVersionId or any version subcollection document.
-        firestore.runTransaction { transaction ->
-            val snapshot = transaction.get(fileRef)
-            if (!snapshot.exists()) {
+        firestoreClient.runTransaction { transaction ->
+            val snapshot = transaction.get(filePath)
+            if (!snapshot.exists) {
                 throw AdminException(
                     reason = AdminFailureReason.NOT_FOUND,
-                    message = "Study file '$fileId' does not exist."
+                    message = "Study file '$cleanFileId' does not exist."
                 )
             }
-            val currentSectionRef = snapshot.getDocumentReference(Fields.SECTION_ID)
-            if (currentSectionRef?.path != expectedSectionRef.path) {
+            val currentSectionRef = FirestoreCatalogMapper.extractReferenceTarget(snapshot.data[Fields.SECTION_ID])
+            if (currentSectionRef?.path != expectedSectionPath) {
                 throw AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
-                    message = "Study file '$fileId' does not belong to section '$sectionId'."
+                    message = "Study file '$cleanFileId' does not belong to section '$cleanSectionId'."
                 )
             }
-            transaction.update(fileRef, payload)
+            transaction.update(filePath, payload)
             null
-        }.awaitResult()
+        }
     }
 
     override suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String) {
         val validActorUid = requireNonBlankActorUid(actorUid)
-        val firestore = requireConfiguredFirestore()
-        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
-        val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
+        val cleanFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+        val filePath = "${Collections.STUDY_FILES}/$cleanFileId"
+        val versionsPath = "$filePath/${Subcollections.VERSIONS}"
         val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
             isPublished = isPublished,
             actorUid = validActorUid,
-            timestampValue = FieldValue.serverTimestamp()
+            timestampValue = firestoreClient.serverTimestamp()
         )
-        firestore.runTransaction { transaction ->
-            val fileSnap = transaction.get(fileRef)
-            val activeVersionId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim()?.takeIf { it.isNotEmpty() }
-            val activeVersionNumber = (fileSnap.get(Fields.ACTIVE_VERSION_NUMBER) as? Number)?.toInt()?.takeIf { it >= 1 }
-            val mappedActiveVersion = if (isPublished && fileSnap.exists() && activeVersionId != null) {
-                val activeVersionSnap = transaction.get(versionsCollection.document(activeVersionId))
-                if (activeVersionSnap.exists()) {
+        firestoreClient.runTransaction { transaction ->
+            val fileSnap = transaction.get(filePath)
+            val activeVersionId = (fileSnap.data[Fields.ACTIVE_VERSION_ID] as? String)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            val activeVersionNumber = (fileSnap.data[Fields.ACTIVE_VERSION_NUMBER] as? Number)
+                ?.toInt()
+                ?.takeIf { it >= 1 }
+            val mappedActiveVersion = if (isPublished && fileSnap.exists && activeVersionId != null) {
+                val activeVersionSnap = transaction.get("$versionsPath/$activeVersionId")
+                if (activeVersionSnap.exists) {
                     FirestoreAdminCatalogMapper.mapStudyFileVersionForAdmin(
                         id = activeVersionSnap.id,
-                        data = activeVersionSnap.data ?: emptyMap(),
-                        expectedFileId = fileId
+                        data = activeVersionSnap.data,
+                        expectedFileId = cleanFileId
                     )
                 } else {
                     null
@@ -519,42 +609,56 @@ class FirestoreAdminCatalogDataSource(
             } else {
                 null
             }
+            val fileArchiveStatus = if (fileSnap.exists) {
+                ArchiveStatus.fromIsArchivedValue(fileSnap.data[Fields.IS_ARCHIVED])
+            } else {
+                null
+            }
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
-                fileId = fileId,
-                exists = fileSnap.exists(),
-                isArchived = fileSnap.getBoolean(Fields.IS_ARCHIVED) == true,
+                fileId = cleanFileId,
+                exists = fileSnap.exists,
+                archiveStatus = fileArchiveStatus,
                 targetPublished = isPublished,
                 activeVersionId = activeVersionId,
                 activeVersionNumber = activeVersionNumber,
                 activeVersion = mappedActiveVersion
             )
-            transaction.update(fileRef, payload)
+            transaction.update(filePath, payload)
             null
-        }.awaitResult()
+        }
     }
 
     override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
         val validActorUid = requireNonBlankActorUid(actorUid)
-        val firestore = requireConfiguredFirestore()
-        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
+        val cleanFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+        val filePath = "${Collections.STUDY_FILES}/$cleanFileId"
         val payload = FirestoreAdminCatalogMapper.buildArchiveStateUpdatePayload(
             isArchived = isArchived,
             actorUid = validActorUid,
-            timestampValue = FieldValue.serverTimestamp()
+            timestampValue = firestoreClient.serverTimestamp()
         )
-        firestore.runTransaction { transaction ->
-            val snapshot = transaction.get(fileRef)
-            if (!snapshot.exists()) {
+        firestoreClient.runTransaction { transaction ->
+            val snapshot = transaction.get(filePath)
+            if (!snapshot.exists) {
                 throw AdminException(
                     reason = AdminFailureReason.NOT_FOUND,
-                    message = "Study file '$fileId' does not exist."
+                    message = "Study file '$cleanFileId' does not exist."
                 )
+            }
+            when (ArchiveStatus.fromIsArchivedValue(snapshot.data[Fields.IS_ARCHIVED])) {
+                ArchiveStatus.UNSPECIFIED -> throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                    message = "Study file '$cleanFileId' has unspecified archive status and cannot be archived or restored automatically."
+                )
+                ArchiveStatus.UNARCHIVED,
+                ArchiveStatus.ARCHIVED -> Unit
             }
             // Writes after reads: sets isArchived and forces isPublished = false atomically,
             // preserving version documents, activeVersion pointers, and student local files.
-            transaction.update(fileRef, payload)
+            transaction.update(filePath, payload)
             null
-        }.awaitResult()
+        }
     }
 
     override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> {
@@ -591,6 +695,7 @@ class FirestoreAdminCatalogDataSource(
         customVersionId: String?
     ): StudyFileVersionMetadata {
         val validActorUid = requireNonBlankActorUid(actorUid)
+        val cleanFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
         if (publishAsActive) {
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
@@ -599,25 +704,20 @@ class FirestoreAdminCatalogDataSource(
             )
         }
 
-        val firestore = requireConfiguredFirestore()
-        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
-        val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
-        val newVersionRef = if (customVersionId != null) {
-            versionsCollection.document(customVersionId)
-        } else {
-            versionsCollection.document()
-        }
+        val filePath = "${Collections.STUDY_FILES}/$cleanFileId"
+        val versionsPath = "$filePath/${Subcollections.VERSIONS}"
+        val targetVersionId = customVersionId?.trim()?.takeIf { it.isNotEmpty() }
+            ?: firestoreClient.newDocumentId(versionsPath)
+        val newVersionPath = "$versionsPath/$targetVersionId"
 
-        // Pre-fetched refs are ONLY a legacy fallback for docs written before registeredVersionNumbers;
-        // atomic uniqueness is enforced inside the transaction via fileRef[REGISTERED_VERSION_NUMBERS],
-        // because reading and writing fileRef serializes concurrent transactions for the same file.
-        val legacyVersionRefs = versionsCollection.get().awaitResult()
-            .documents
-            .map { it.reference }
+        // Pre-fetched paths are ONLY a legacy fallback for docs written before registeredVersionNumbers;
+        // atomic uniqueness is enforced inside the transaction via filePath[REGISTERED_VERSION_NUMBERS],
+        // because reading and writing filePath serializes concurrent transactions for the same file.
+        val legacyVersionPaths = firestoreClient.listCollectionDocPaths(versionsPath)
 
-        val timestamp = FieldValue.serverTimestamp()
+        val timestamp = firestoreClient.serverTimestamp()
         val createPayload = FirestoreAdminCatalogMapper.buildStudyFileVersionCreatePayload(
-            fileReference = fileRef,
+            fileReference = firestoreClient.documentRef(filePath),
             versionNumber = versionNumber,
             versionLabel = versionLabel,
             versionNotes = versionNotes,
@@ -626,56 +726,69 @@ class FirestoreAdminCatalogDataSource(
             timestampValue = timestamp
         )
 
-        firestore.runTransaction { transaction ->
-            val fileSnap = transaction.get(fileRef)
-            if (!fileSnap.exists()) {
+        firestoreClient.runTransaction { transaction ->
+            val fileSnap = transaction.get(filePath)
+            if (!fileSnap.exists) {
                 throw AdminException(
                     reason = AdminFailureReason.NOT_FOUND,
-                    message = "Study file '$fileId' does not exist."
+                    message = "Study file '$cleanFileId' does not exist."
                 )
             }
+            when (ArchiveStatus.fromIsArchivedValue(fileSnap.data[Fields.IS_ARCHIVED])) {
+                ArchiveStatus.ARCHIVED -> throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+                    message = "Cannot create version for archived study file '$cleanFileId'."
+                )
+                ArchiveStatus.UNSPECIFIED -> throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                    message = "Study file '$cleanFileId' has unspecified archive status."
+                )
+                ArchiveStatus.UNARCHIVED -> Unit
+            }
 
-            val candidateSnap = transaction.get(newVersionRef)
-            if (candidateSnap.exists()) {
+            val candidateSnap = transaction.get(newVersionPath)
+            if (candidateSnap.exists) {
                 throw AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.INVALID_DOCUMENT_ID,
-                    message = "A version with ID '${newVersionRef.id}' already exists."
+                    message = "A version with ID '$targetVersionId' already exists."
                 )
             }
 
-            val refsToRead = buildList {
-                addAll(legacyVersionRefs)
-                val activeId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim().orEmpty()
+            val pathsToRead = buildList {
+                addAll(legacyVersionPaths)
+                val activeId = (fileSnap.data[Fields.ACTIVE_VERSION_ID] as? String)?.trim().orEmpty()
                 if (activeId.isNotEmpty()) {
-                    add(versionsCollection.document(activeId))
+                    add("$versionsPath/$activeId")
                 }
-            }.distinctBy { it.path }
+            }.distinct()
 
-            val existingSnapshots = refsToRead
-                .filter { it.path != newVersionRef.path }
+            val existingSnapshots = pathsToRead
+                .filter { it != newVersionPath }
                 .map { transaction.get(it) }
 
             val registeredOnParent = FirestoreAdminCatalogMapper.extractRegisteredVersionNumbers(
-                fileSnap.data ?: emptyMap()
+                fileSnap.data
             )
             val numbersFromDocs = existingSnapshots
-                .filter { it.exists() }
-                .mapNotNull { (it.get(Fields.VERSION_NUMBER) as? Number)?.toInt()?.takeIf { n -> n >= 1 } }
+                .filter { it.exists }
+                .mapNotNull { (it.data[Fields.VERSION_NUMBER] as? Number)?.toInt()?.takeIf { n -> n >= 1 } }
             val knownNumbers = (registeredOnParent + numbersFromDocs).toSet()
 
             if (versionNumber in knownNumbers) {
                 throw AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.INVALID_VERSION_NUMBER,
-                    message = "Version number $versionNumber already exists for file '$fileId'."
+                    message = "Version number $versionNumber already exists for file '$cleanFileId'."
                 )
             }
 
-            // Writes after all reads: atomically reserve versionNumber on fileRef and create draft version.
-            transaction.set(newVersionRef, createPayload)
+            // Writes after all reads: atomically reserve versionNumber on filePath and create draft version.
+            transaction.set(newVersionPath, createPayload)
             transaction.update(
-                fileRef,
+                filePath,
                 mapOf(
                     Fields.REGISTERED_VERSION_NUMBERS to (knownNumbers + versionNumber).sorted(),
                     Fields.UPDATED_BY_UID to validActorUid,
@@ -683,11 +796,11 @@ class FirestoreAdminCatalogDataSource(
                 )
             )
             null
-        }.awaitResult()
+        }
 
         return StudyFileVersionMetadata(
-            id = newVersionRef.id,
-            fileId = fileId,
+            id = targetVersionId,
+            fileId = cleanFileId,
             versionNumber = versionNumber,
             versionLabel = versionLabel,
             versionNotes = versionNotes,
@@ -696,9 +809,9 @@ class FirestoreAdminCatalogDataSource(
             checksumSha256 = null,
             isPublished = false,
             createdByUid = validActorUid,
-            fileReferencePath = fileRef.path,
+            fileReferencePath = filePath,
             updatedByUid = validActorUid,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
     }
 
@@ -770,92 +883,104 @@ class FirestoreAdminCatalogDataSource(
         verifiedProof: VerifiedPdfBinaryProof
     ) {
         val validActorUid = requireNonBlankActorUid(actorUid)
+        val cleanFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+        val cleanVersionId = AdminCatalogValidator.validateRequiredDocumentId(versionId)
         if (!FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
-                fileId = fileId,
-                versionId = versionId,
+                fileId = cleanFileId,
+                versionId = cleanVersionId,
                 r2ObjectKey = verifiedProof.r2ObjectKey,
                 fileSizeBytes = verifiedProof.fileSizeBytes,
                 checksumSha256 = verifiedProof.checksumSha256
             ) ||
-            verifiedProof.fileId.trim() != fileId.trim() ||
-            verifiedProof.versionId.trim() != versionId.trim()
+            verifiedProof.fileId.trim() != cleanFileId ||
+            verifiedProof.versionId.trim() != cleanVersionId
         ) {
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
-                message = "Cannot publish version '$versionId' without a valid server-verified PDF binary proof."
+                message = "Cannot publish version '$cleanVersionId' without a valid server-verified PDF binary proof."
             )
         }
-        val firestore = requireConfiguredFirestore()
-        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
-        val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
-        val targetVersionRef = versionsCollection.document(versionId)
+        val filePath = "${Collections.STUDY_FILES}/$cleanFileId"
+        val versionsPath = "$filePath/${Subcollections.VERSIONS}"
+        val targetVersionPath = "$versionsPath/$cleanVersionId"
 
-        val existingVersionRefs = versionsCollection.get().awaitResult()
-            .documents
-            .map { it.reference }
+        val existingVersionPaths = firestoreClient.listCollectionDocPaths(versionsPath)
+        val timestamp = firestoreClient.serverTimestamp()
 
-        val timestamp = FieldValue.serverTimestamp()
-
-        firestore.runTransaction { transaction ->
-            val fileSnap = transaction.get(fileRef)
-            if (!fileSnap.exists()) {
+        firestoreClient.runTransaction { transaction ->
+            val fileSnap = transaction.get(filePath)
+            if (!fileSnap.exists) {
                 throw AdminException(
                     reason = AdminFailureReason.NOT_FOUND,
-                    message = "Study file '$fileId' does not exist."
+                    message = "Study file '$cleanFileId' does not exist."
                 )
             }
-            if (fileSnap.getBoolean(Fields.IS_ARCHIVED) == true) {
-                throw AdminException(
+            val fileArchiveStatus = ArchiveStatus.fromIsArchivedValue(fileSnap.data[Fields.IS_ARCHIVED])
+            when (fileArchiveStatus) {
+                ArchiveStatus.ARCHIVED -> throw AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
-                    message = "Cannot publish a version while parent file '$fileId' is archived."
+                    message = "Cannot publish a version while parent file '$cleanFileId' is archived."
                 )
+                ArchiveStatus.UNSPECIFIED -> throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                    message = "Cannot publish a version while parent file '$cleanFileId' has unspecified archive status."
+                )
+                ArchiveStatus.UNARCHIVED -> Unit
             }
 
-            val refsToRead = buildList {
-                add(targetVersionRef)
-                addAll(existingVersionRefs)
-                val currentActiveId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim().orEmpty()
+            val pathsToRead = buildList {
+                add(targetVersionPath)
+                addAll(existingVersionPaths)
+                val currentActiveId = (fileSnap.data[Fields.ACTIVE_VERSION_ID] as? String)
+                    ?.trim()
+                    .orEmpty()
                 if (currentActiveId.isNotEmpty()) {
-                    add(versionsCollection.document(currentActiveId))
+                    add("$versionsPath/$currentActiveId")
                 }
-            }.distinctBy { it.path }
+            }.distinct()
 
-            val snapshotsById = refsToRead.associate { ref ->
-                ref.id to transaction.get(ref)
+            val snapshotsByPath = pathsToRead.associateWith { path ->
+                transaction.get(path)
             }
 
-            val targetSnap = snapshotsById[versionId]
-            if (targetSnap == null || !targetSnap.exists()) {
+            val targetSnap = snapshotsByPath[targetVersionPath]
+            if (targetSnap == null || !targetSnap.exists) {
                 throw AdminException(
                     reason = AdminFailureReason.NOT_FOUND,
-                    message = "Study file version '$versionId' does not exist."
+                    message = "Study file version '$cleanVersionId' does not exist."
                 )
             }
 
             val mappedTarget = FirestoreAdminCatalogMapper.mapStudyFileVersionForAdmin(
                 id = targetSnap.id,
-                data = targetSnap.data ?: emptyMap(),
-                expectedFileId = fileId
+                data = targetSnap.data,
+                expectedFileId = cleanFileId
             ) ?: throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
-                message = "Version '$versionId' has invalid parent link or metadata."
+                message = "Version '$cleanVersionId' has invalid parent link or metadata."
             )
 
-            if (mappedTarget.isArchived) {
-                throw AdminException(
+            when {
+                mappedTarget.isExplicitlyArchived -> throw AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH,
-                    message = "Cannot publish archived version '$versionId'."
+                    message = "Cannot publish archived version '$cleanVersionId'."
+                )
+                !mappedTarget.isExplicitlyUnarchived -> throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                    message = "Cannot publish version '$cleanVersionId' with unspecified archive status."
                 )
             }
 
             val matchesProof = FirestoreAdminCatalogMapper.matchesVerifiedPdfBinaryProof(
                 version = mappedTarget,
                 verifiedProof = verifiedProof,
-                expectedFileId = fileId
+                expectedFileId = cleanFileId
             )
             if (!matchesProof) {
                 throw AdminException(
@@ -867,11 +992,11 @@ class FirestoreAdminCatalogDataSource(
 
             // All writes after reads: enforce at most ONE active published version without
             // deleting any historical version documents or overwriting their R2 object keys.
-            for ((docId, snap) in snapshotsById) {
-                if (docId == versionId || !snap.exists()) continue
-                if (snap.getBoolean(Fields.IS_PUBLISHED) == true) {
+            for ((path, snap) in snapshotsByPath) {
+                if (path == targetVersionPath || !snap.exists) continue
+                if (snap.data[Fields.IS_PUBLISHED] == true) {
                     transaction.update(
-                        snap.reference,
+                        path,
                         mapOf(
                             Fields.IS_PUBLISHED to false,
                             Fields.UPDATED_BY_UID to validActorUid,
@@ -882,7 +1007,7 @@ class FirestoreAdminCatalogDataSource(
             }
 
             transaction.update(
-                targetVersionRef,
+                targetVersionPath,
                 mapOf(
                     Fields.IS_PUBLISHED to true,
                     Fields.PUBLISHED_AT to timestamp,
@@ -899,9 +1024,9 @@ class FirestoreAdminCatalogDataSource(
                 actorUid = validActorUid,
                 timestampValue = timestamp
             )
-            transaction.update(fileRef, pointerPayload)
+            transaction.update(filePath, pointerPayload)
             null
-        }.awaitResult()
+        }
     }
 
     override suspend fun reorderBranches(

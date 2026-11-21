@@ -10,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -178,7 +179,7 @@ class AdminPortalRtlTest {
                                 title = "ملزمة بدون إصدار",
                                 order = 1,
                                 isPublished = false,
-                                isArchived = false,
+                                archiveStatus = ArchiveStatus.UNARCHIVED,
                                 activeVersionId = null
                             )
                         )
@@ -216,7 +217,7 @@ class AdminPortalRtlTest {
                                 title = "ملزمة مؤرشفة",
                                 order = 1,
                                 isPublished = false,
-                                isArchived = true,
+                                archiveStatus = ArchiveStatus.ARCHIVED,
                                 activeVersionId = "v1",
                                 activeVersionNumber = 1,
                                 activeVersionLabel = "1.0"
@@ -256,7 +257,7 @@ class AdminPortalRtlTest {
                                 title = "ملزمة الفيزياء الجاهزة",
                                 order = 1,
                                 isPublished = false,
-                                isArchived = false,
+                                archiveStatus = ArchiveStatus.UNARCHIVED,
                                 activeVersionId = "v1",
                                 activeVersionNumber = 1,
                                 activeVersionLabel = "1.0"
@@ -299,7 +300,7 @@ class AdminPortalRtlTest {
                                 title = "ملزمة برقم إصدار غير صالح",
                                 order = 1,
                                 isPublished = false,
-                                isArchived = false,
+                                archiveStatus = ArchiveStatus.UNARCHIVED,
                                 activeVersionId = "v1",
                                 activeVersionNumber = 0,
                                 activeVersionLabel = "1.0"
@@ -339,7 +340,7 @@ class AdminPortalRtlTest {
                                 title = "ملزمة منشورة تحتاج معالجة",
                                 order = 1,
                                 isPublished = true,
-                                isArchived = false,
+                                archiveStatus = ArchiveStatus.UNARCHIVED,
                                 activeVersionId = null,
                                 activeVersionNumber = null
                             )
@@ -424,14 +425,15 @@ class AdminPortalRtlTest {
             title = "ملزمة الكيمياء",
             order = 1,
             isPublished = false,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
         val draftUnverified = StudyFileVersionMetadata(
             id = "v1",
             fileId = "file-1",
             versionNumber = 1,
             versionLabel = "1.0",
-            isPublished = false
+            isPublished = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
         composeTestRule.setContent {
             HaqibatiTheme {
@@ -466,7 +468,7 @@ class AdminPortalRtlTest {
             title = "ملزمة الكيمياء",
             order = 1,
             isPublished = false,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
         var capturedPublishAsActive: Boolean? = null
         var saveCalls = 0
@@ -506,8 +508,295 @@ class AdminPortalRtlTest {
         assertEquals(false, capturedPublishAsActive)
     }
 
+    @Test
+    fun unspecifiedArchiveStudyFile_showsArabicWarningAndDisablesPublishAndArchiveWhileKeepingInspectActions() {
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "owner-1",
+                            email = "owner@example.com",
+                            role = AdminRole.OWNER,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        activeTab = AdminManagementSection.PDF_FILES,
+                        studyFiles = listOf(
+                            StudyFileMetadata(
+                                id = "file-unspec",
+                                sectionId = "sec-1",
+                                title = "ملزمة غير محددة الأرشفة",
+                                order = 1,
+                                isPublished = false,
+                                archiveStatus = ArchiveStatus.UNSPECIFIED,
+                                activeVersionId = "v1",
+                                activeVersionNumber = 1,
+                                activeVersionLabel = "1.0"
+                            )
+                        )
+                    )
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("حالة الأرشفة غير محددة").assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "حالة الأرشفة غير محددة — هذه الوثيقة تحتاج إلى مراجعة قبل النشر"
+        ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("نشر").assertIsDisplayed().assertIsNotEnabled()
+        composeTestRule.onNodeWithText("أرشفة").assertIsDisplayed().assertIsNotEnabled()
+        composeTestRule.onNodeWithText("تعديل").assertIsDisplayed().assertIsEnabled()
+        composeTestRule.onNodeWithText("إدارة الإصدارات").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun unspecifiedArchiveStudyFile_disabledPublishAndArchiveDoNotInvokeCallbacksOnClickWhileEditAndUnpublishDo() {
+        var publishCalls = 0
+        var archiveCalls = 0
+        var editCalls = 0
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "owner-1",
+                            email = "owner@example.com",
+                            role = AdminRole.OWNER,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        activeTab = AdminManagementSection.PDF_FILES,
+                        studyFiles = listOf(
+                            StudyFileMetadata(
+                                id = "file-unspec",
+                                sectionId = "sec-1",
+                                title = "ملزمة غير محددة الأرشفة",
+                                order = 1,
+                                isPublished = false,
+                                archiveStatus = ArchiveStatus.UNSPECIFIED,
+                                activeVersionId = "v1",
+                                activeVersionNumber = 1,
+                                activeVersionLabel = "1.0"
+                            )
+                        )
+                    ),
+                    onOpenEditStudyFile = { editCalls++ },
+                    onToggleStudyFilePublish = { publishCalls++ },
+                    onToggleStudyFileArchive = { archiveCalls++ }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("نشر").assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("أرشفة").assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("تعديل").assertIsEnabled().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(0, publishCalls)
+        assertEquals(0, archiveCalls)
+        assertEquals(1, editCalls)
+    }
+
+    @Test
+    fun publishedUnspecifiedArchiveStudyFile_allowsUnpublishCallbackOnly() {
+        var unpublishCalls = 0
+        var archiveCalls = 0
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "owner-1",
+                            email = "owner@example.com",
+                            role = AdminRole.OWNER,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        activeTab = AdminManagementSection.PDF_FILES,
+                        studyFiles = listOf(
+                            StudyFileMetadata(
+                                id = "file-unspec-live",
+                                sectionId = "sec-1",
+                                title = "ملزمة منشورة غير محددة الأرشفة",
+                                order = 1,
+                                isPublished = true,
+                                archiveStatus = ArchiveStatus.UNSPECIFIED,
+                                activeVersionId = "v1",
+                                activeVersionNumber = 1,
+                                activeVersionLabel = "1.0"
+                            )
+                        )
+                    ),
+                    onToggleStudyFilePublish = { unpublishCalls++ },
+                    onToggleStudyFileArchive = { archiveCalls++ }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "حالة الأرشفة غير محددة — هذه الوثيقة تحتاج إلى مراجعة قبل النشر"
+        ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("إلغاء النشر").assertIsDisplayed().assertIsEnabled().performClick()
+        composeTestRule.onNodeWithText("أرشفة").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(1, unpublishCalls)
+        assertEquals(0, archiveCalls)
+    }
+
+    @Test
+    fun fileVersionsDialog_case6_parentUnspecifiedWithUnarchivedVerifiedVersion_blocksCreateUploadPublishAndAllowsEdit() {
+        val unspecifiedParentFile = StudyFileMetadata(
+            id = "file-unspec",
+            sectionId = "sec-1",
+            title = "ملزمة غير محددة",
+            order = 1,
+            isPublished = false,
+            archiveStatus = ArchiveStatus.UNSPECIFIED
+        )
+        val unarchivedVerifiedVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-unspec",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            versionNotes = "ملاحظات معاينة",
+            r2ObjectKey = "study-files/file-unspec/versions/v1/doc.pdf",
+            fileSizeBytes = 2048L,
+            checksumSha256 = "a".repeat(64),
+            verifiedAttemptId = "attempt-123",
+            isPublished = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED
+        )
+        var createCalls = 0
+        var uploadCalls = 0
+        var publishCalls = 0
+        var editCalls = 0
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "admin-1",
+                            email = "admin@example.com",
+                            role = AdminRole.ADMIN,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        r2BrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED,
+                        versionsDialogFile = unspecifiedParentFile,
+                        fileVersions = listOf(unarchivedVerifiedVersion)
+                    ),
+                    onOpenCreateVersion = { createCalls++ },
+                    onOpenEditVersion = { editCalls++ },
+                    onRequestUploadVersionPdf = { uploadCalls++ },
+                    onRequestPublishVersion = { publishCalls++ }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("أرشفة الملف الأب غير محددة").assertIsDisplayed()
+        composeTestRule.onNodeWithText("مسودة غير منشورة").assertDoesNotExist()
+        composeTestRule.onNodeWithText(
+            "حالة أرشفة الملف الأب غير محددة — هذا الإصدار يحتاج إلى مراجعة ويُمنع رفع PDF جديد أو نشره حتى تُحسم حالة الأرشفة."
+        ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("إضافة إصدار جديد").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("رفع والتحقق من PDF").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("نشر وتفعيل هذا الإصدار").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("تعديل").assertIsDisplayed().assertIsEnabled().performClick()
+        composeTestRule.onNodeWithText("ملاحظات التحديث: ملاحظات معاينة").assertIsDisplayed()
+        composeTestRule.waitForIdle()
+        assertEquals(0, createCalls)
+        assertEquals(0, uploadCalls)
+        assertEquals(0, publishCalls)
+        assertEquals(1, editCalls)
+    }
+
+    @Test
+    fun fileVersionsDialog_case7_unarchivedParentWithUnspecifiedVersion_allowsAddVersionOnlyAndBlocksVersionUploadPublish() {
+        val unarchivedParentFile = StudyFileMetadata(
+            id = "file-ok",
+            sectionId = "sec-1",
+            title = "ملزمة سليمة",
+            order = 1,
+            isPublished = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED
+        )
+        val unspecifiedVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-ok",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            versionNotes = "ملاحظات معاينة",
+            r2ObjectKey = "study-files/file-ok/versions/v1/doc.pdf",
+            fileSizeBytes = 2048L,
+            checksumSha256 = "a".repeat(64),
+            verifiedAttemptId = "attempt-123",
+            isPublished = false,
+            archiveStatus = ArchiveStatus.UNSPECIFIED
+        )
+        var createCalls = 0
+        var uploadCalls = 0
+        var publishCalls = 0
+        var editCalls = 0
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "admin-1",
+                            email = "admin@example.com",
+                            role = AdminRole.ADMIN,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        r2BrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED,
+                        versionsDialogFile = unarchivedParentFile,
+                        fileVersions = listOf(unspecifiedVersion)
+                    ),
+                    onOpenCreateVersion = { createCalls++ },
+                    onOpenEditVersion = { editCalls++ },
+                    onRequestUploadVersionPdf = { uploadCalls++ },
+                    onRequestPublishVersion = { publishCalls++ }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("حالة الأرشفة غير محددة").assertIsDisplayed()
+        composeTestRule.onNodeWithText("مسودة غير منشورة").assertDoesNotExist()
+        composeTestRule.onNodeWithText(
+            "حالة أرشفة هذا الإصدار غير محددة — يُمنع رفع PDF جديد أو نشره حتى تُراجع الوثيقة."
+        ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("إضافة إصدار جديد").assertIsDisplayed().assertIsEnabled().performClick()
+        composeTestRule.onNodeWithText("رفع والتحقق من PDF").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("نشر وتفعيل هذا الإصدار").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeTestRule.onNodeWithText("تعديل").assertIsDisplayed().assertIsEnabled().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(1, createCalls)
+        assertEquals(0, uploadCalls)
+        assertEquals(0, publishCalls)
+        assertEquals(1, editCalls)
+    }
+
     @androidx.compose.runtime.Composable
-    private fun RenderAdminScreen(uiState: AdminPortalUiState) {
+    private fun RenderAdminScreen(
+        uiState: AdminPortalUiState,
+        onOpenEditStudyFile: (StudyFileMetadata) -> Unit = {},
+        onToggleStudyFilePublish: (StudyFileMetadata) -> Unit = {},
+        onToggleStudyFileArchive: (StudyFileMetadata) -> Unit = {},
+        onOpenCreateVersion: () -> Unit = {},
+        onOpenEditVersion: (StudyFileVersionMetadata) -> Unit = {},
+        onRequestUploadVersionPdf: (StudyFileVersionMetadata) -> Unit = {},
+        onRequestPublishVersion: (StudyFileVersionMetadata) -> Unit = {}
+    ) {
         AdminPortalScreenContent(
             uiState = uiState,
             onNavigateBack = {},
@@ -536,10 +825,14 @@ class AdminPortalRtlTest {
             onToggleSectionPublish = {},
             onMoveSection = { _, _ -> },
             onOpenCreateStudyFile = {},
-            onOpenEditStudyFile = {},
-            onToggleStudyFilePublish = {},
-            onToggleStudyFileArchive = {},
+            onOpenEditStudyFile = onOpenEditStudyFile,
+            onToggleStudyFilePublish = onToggleStudyFilePublish,
+            onToggleStudyFileArchive = onToggleStudyFileArchive,
             onMoveStudyFile = { _, _ -> },
+            onOpenCreateVersion = onOpenCreateVersion,
+            onOpenEditVersion = onOpenEditVersion,
+            onRequestUploadVersionPdf = onRequestUploadVersionPdf,
+            onRequestPublishVersion = onRequestPublishVersion,
             onDismissEditor = {},
             onSaveBranch = { _, _, _, _, _ -> },
             onSaveSubject = { _, _, _, _, _, _ -> },

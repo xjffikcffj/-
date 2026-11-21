@@ -312,15 +312,24 @@ class AdminPortalViewModel(
 
     fun openFileVersionsManager(file: StudyFileMetadata) {
         if (!_uiState.value.session.canPerformAdminActions) return
+        val state = _uiState.value
+        val authoritativeFile = if (state.studyFiles.isNotEmpty()) {
+            state.studyFiles.firstOrNull { it.id == file.id } ?: run {
+                reportFailureReason(AdminFailureReason.NOT_FOUND)
+                return
+            }
+        } else {
+            file
+        }
         _uiState.update {
             it.copy(
-                versionsDialogFile = file,
+                versionsDialogFile = authoritativeFile,
                 fileVersions = emptyList(),
                 isLoadingFileVersions = true,
                 fileVersionsError = null
             )
         }
-        loadFileVersions(file.id)
+        loadFileVersions(authoritativeFile.id)
     }
 
     fun dismissFileVersionsManager() {
@@ -414,6 +423,16 @@ class AdminPortalViewModel(
     fun openCreateVersionDialog() {
         if (!ensureCanPerformAdminWrite()) return
         val file = _uiState.value.versionsDialogFile ?: return
+        if (!file.isExplicitlyUnarchived) {
+            reportValidationFailure(
+                if (file.isArchiveStatusUnspecified) {
+                    AdminValidationError.ARCHIVE_STATE_UNSPECIFIED
+                } else {
+                    AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION
+                }
+            )
+            return
+        }
         val nextVersionNumber = (_uiState.value.fileVersions.maxOfOrNull { it.versionNumber } ?: 0) + 1
         _uiState.update {
             it.copy(
@@ -590,6 +609,28 @@ class AdminPortalViewModel(
         publishAsActive: Boolean
     ) {
         if (!ensureCanPerformAdminWrite()) return
+        if (editing == null) {
+            val parentFile = resolveAuthoritativeStudyFileOrReport(
+                fileId = fileId,
+                allowVersionsDialogFallbackWhenSectionEmpty = true,
+                missingReason = null,
+                missingValidationError = AdminValidationError.EMPTY_PARENT_REFERENCE
+            ) ?: return
+            when {
+                parentFile.isArchiveStatusUnspecified -> {
+                    reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                    return
+                }
+                parentFile.isExplicitlyArchived -> {
+                    reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+                    return
+                }
+                !parentFile.isExplicitlyUnarchived -> {
+                    reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                    return
+                }
+            }
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, feedback = null) }
             val result = if (editing == null) {
@@ -636,12 +677,51 @@ class AdminPortalViewModel(
 
     fun requestPublishStudyFileVersion(version: StudyFileVersionMetadata) {
         if (!ensureCanPerformAdminWrite()) return
-        val file = _uiState.value.versionsDialogFile ?: return
+        val state = _uiState.value
+        if (state.versionsDialogFile != null && state.versionsDialogFile.id != version.fileId) {
+            reportValidationFailure(AdminValidationError.EMPTY_PARENT_REFERENCE)
+            return
+        }
+        val file = resolveAuthoritativeStudyFileOrReport(
+            fileId = version.fileId,
+            allowVersionsDialogFallbackWhenSectionEmpty = true,
+            missingReason = null,
+            missingValidationError = AdminValidationError.EMPTY_PARENT_REFERENCE
+        ) ?: return
+        val authoritativeVersion = state.fileVersions.firstOrNull {
+            it.fileId == version.fileId && it.id == version.id
+        }
+        if (authoritativeVersion == null) {
+            reportFailureReason(AdminFailureReason.NOT_FOUND)
+            return
+        }
+        if (version.archiveStatus != authoritativeVersion.archiveStatus) {
+            reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            return
+        }
+        when {
+            file.isArchiveStatusUnspecified || authoritativeVersion.isArchiveStatusUnspecified -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return
+            }
+            file.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+                return
+            }
+            authoritativeVersion.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH)
+                return
+            }
+            !file.isExplicitlyUnarchived || !authoritativeVersion.isExplicitlyUnarchived -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return
+            }
+        }
         _uiState.update {
             it.copy(
                 confirmationAction = AdminConfirmationAction.PublishStudyFileVersion(
                     file = file,
-                    version = version
+                    version = authoritativeVersion
                 )
             )
         }
@@ -677,19 +757,57 @@ class AdminPortalViewModel(
 
     fun requestToggleStudyFilePublished(file: StudyFileMetadata) {
         if (!ensureCanPerformAdminWrite()) return
-        if (file.isPublished) {
-            _uiState.update { it.copy(confirmationAction = AdminConfirmationAction.UnpublishStudyFile(file)) }
-        } else {
-            executeSetStudyFilePublished(file.id, isPublished = true)
+        val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+            fileId = file.id,
+            allowVersionsDialogFallbackWhenSectionEmpty = false,
+            missingReason = AdminFailureReason.NOT_FOUND,
+            missingValidationError = null
+        ) ?: return
+        if (authoritativeFile.isPublished) {
+            _uiState.update {
+                it.copy(confirmationAction = AdminConfirmationAction.UnpublishStudyFile(authoritativeFile))
+            }
+            return
+        }
+        when {
+            file.isArchiveStatusUnspecified || authoritativeFile.isArchiveStatusUnspecified -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            }
+            file.archiveStatus != authoritativeFile.archiveStatus -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            }
+            authoritativeFile.isExplicitlyArchived || file.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+            }
+            !authoritativeFile.isExplicitlyUnarchived -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            }
+            else -> executeSetStudyFilePublished(authoritativeFile.id, isPublished = true)
         }
     }
 
     fun requestToggleStudyFileArchived(file: StudyFileMetadata) {
         if (!ensureCanPerformAdminWrite()) return
-        if (!file.isArchived) {
-            _uiState.update { it.copy(confirmationAction = AdminConfirmationAction.ArchiveStudyFile(file)) }
+        val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+            fileId = file.id,
+            allowVersionsDialogFallbackWhenSectionEmpty = false,
+            missingReason = AdminFailureReason.NOT_FOUND,
+            missingValidationError = null
+        ) ?: return
+        if (file.isArchiveStatusUnspecified ||
+            authoritativeFile.isArchiveStatusUnspecified ||
+            file.archiveStatus != authoritativeFile.archiveStatus ||
+            (!authoritativeFile.isExplicitlyUnarchived && !authoritativeFile.isExplicitlyArchived)
+        ) {
+            reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            return
+        }
+        if (!authoritativeFile.isExplicitlyArchived) {
+            _uiState.update {
+                it.copy(confirmationAction = AdminConfirmationAction.ArchiveStudyFile(authoritativeFile))
+            }
         } else {
-            executeSetStudyFileArchived(file.id, isArchived = false)
+            executeSetStudyFileArchived(authoritativeFile.id, isArchived = false)
         }
     }
 
@@ -712,12 +830,79 @@ class AdminPortalViewModel(
                 executeSetSubjectPublished(pending.subject.id, isPublished = false)
             is AdminConfirmationAction.UnpublishSection ->
                 executeSetSectionPublished(pending.section.id, isPublished = false)
-            is AdminConfirmationAction.UnpublishStudyFile ->
-                executeSetStudyFilePublished(pending.file.id, isPublished = false)
-            is AdminConfirmationAction.ArchiveStudyFile ->
-                executeSetStudyFileArchived(pending.file.id, isArchived = true)
-            is AdminConfirmationAction.PublishStudyFileVersion ->
-                executePublishStudyFileVersion(pending.file.id, pending.version.id)
+            is AdminConfirmationAction.UnpublishStudyFile -> {
+                val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+                    fileId = pending.file.id,
+                    allowVersionsDialogFallbackWhenSectionEmpty = false,
+                    missingReason = AdminFailureReason.NOT_FOUND,
+                    missingValidationError = null
+                ) ?: return
+                executeSetStudyFilePublished(authoritativeFile.id, isPublished = false)
+            }
+            is AdminConfirmationAction.ArchiveStudyFile -> {
+                val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+                    fileId = pending.file.id,
+                    allowVersionsDialogFallbackWhenSectionEmpty = false,
+                    missingReason = AdminFailureReason.NOT_FOUND,
+                    missingValidationError = null
+                ) ?: return
+                if (pending.file.isArchiveStatusUnspecified ||
+                    authoritativeFile.isArchiveStatusUnspecified ||
+                    pending.file.archiveStatus != authoritativeFile.archiveStatus ||
+                    (!authoritativeFile.isExplicitlyUnarchived && !authoritativeFile.isExplicitlyArchived)
+                ) {
+                    reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                    return
+                }
+                executeSetStudyFileArchived(authoritativeFile.id, isArchived = true)
+            }
+            is AdminConfirmationAction.PublishStudyFileVersion -> {
+                val state = _uiState.value
+                if (state.versionsDialogFile != null && state.versionsDialogFile.id != pending.file.id) {
+                    reportValidationFailure(AdminValidationError.EMPTY_PARENT_REFERENCE)
+                    return
+                }
+                val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+                    fileId = pending.file.id,
+                    allowVersionsDialogFallbackWhenSectionEmpty = true,
+                    missingReason = null,
+                    missingValidationError = AdminValidationError.EMPTY_PARENT_REFERENCE
+                ) ?: return
+                val authoritativeVersion = state.fileVersions.firstOrNull {
+                    it.fileId == pending.file.id && it.id == pending.version.id
+                }
+                if (authoritativeVersion == null) {
+                    reportFailureReason(AdminFailureReason.NOT_FOUND)
+                    return
+                }
+                if (pending.file.archiveStatus != authoritativeFile.archiveStatus ||
+                    pending.version.archiveStatus != authoritativeVersion.archiveStatus
+                ) {
+                    reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                    return
+                }
+                when {
+                    authoritativeFile.isArchiveStatusUnspecified ||
+                        authoritativeVersion.isArchiveStatusUnspecified -> {
+                        reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                        return
+                    }
+                    authoritativeFile.isExplicitlyArchived -> {
+                        reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+                        return
+                    }
+                    authoritativeVersion.isExplicitlyArchived -> {
+                        reportValidationFailure(AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH)
+                        return
+                    }
+                    !authoritativeFile.isExplicitlyUnarchived ||
+                        !authoritativeVersion.isExplicitlyUnarchived -> {
+                        reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                        return
+                    }
+                }
+                executePublishStudyFileVersion(authoritativeFile.id, authoritativeVersion.id)
+            }
         }
     }
 
@@ -732,6 +917,37 @@ class AdminPortalViewModel(
     ) {
         if (!ensureCanPerformAdminWrite()) return
         if (_uiState.value.isSubmitting || _uiState.value.uploadingVersionId != null) return
+        val parentFile = resolveAuthoritativeStudyFileOrReport(
+            fileId = fileId,
+            allowVersionsDialogFallbackWhenSectionEmpty = true,
+            missingReason = null,
+            missingValidationError = AdminValidationError.EMPTY_PARENT_REFERENCE
+        ) ?: return
+        val targetVersion = _uiState.value.fileVersions.firstOrNull {
+            it.fileId == fileId && it.id == versionId
+        }
+        when {
+            targetVersion == null -> {
+                reportValidationFailure(AdminValidationError.EMPTY_PARENT_REFERENCE)
+                return
+            }
+            parentFile.isArchiveStatusUnspecified || targetVersion.isArchiveStatusUnspecified -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return
+            }
+            parentFile.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+                return
+            }
+            targetVersion.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH)
+                return
+            }
+            !parentFile.isExplicitlyUnarchived || !targetVersion.isExplicitlyUnarchived -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return
+            }
+        }
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -779,6 +995,73 @@ class AdminPortalViewModel(
                 feedback = AdminFeedbackState(
                     isError = true,
                     failureReason = reason,
+                    validationError = validationError
+                )
+            )
+        }
+    }
+
+    private fun resolveAuthoritativeStudyFileOrReport(
+        fileId: String,
+        allowVersionsDialogFallbackWhenSectionEmpty: Boolean,
+        missingReason: AdminFailureReason?,
+        missingValidationError: AdminValidationError?
+    ): StudyFileMetadata? {
+        val state = _uiState.value
+        val fileInSection = state.studyFiles.firstOrNull { it.id == fileId }
+        val dialogFile = state.versionsDialogFile?.takeIf { it.id == fileId }
+        val resolved = if (state.studyFiles.isNotEmpty()) {
+            if (fileInSection == null) {
+                reportMissingTarget(missingReason, missingValidationError)
+                return null
+            }
+            if (dialogFile != null && dialogFile.archiveStatus != fileInSection.archiveStatus) {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return null
+            }
+            fileInSection
+        } else if (allowVersionsDialogFallbackWhenSectionEmpty && dialogFile != null) {
+            dialogFile
+        } else {
+            reportMissingTarget(missingReason, missingValidationError)
+            return null
+        }
+        return resolved
+    }
+
+    private fun reportMissingTarget(
+        missingReason: AdminFailureReason?,
+        missingValidationError: AdminValidationError?
+    ) {
+        if (missingValidationError != null) {
+            reportValidationFailure(missingValidationError)
+        } else {
+            reportFailureReason(missingReason ?: AdminFailureReason.NOT_FOUND)
+        }
+    }
+
+    private fun reportFailureReason(reason: AdminFailureReason) {
+        _uiState.update {
+            it.copy(
+                isSubmitting = false,
+                uploadingVersionId = null,
+                feedback = AdminFeedbackState(
+                    isError = true,
+                    failureReason = reason,
+                    validationError = null
+                )
+            )
+        }
+    }
+
+    private fun reportValidationFailure(validationError: AdminValidationError) {
+        _uiState.update {
+            it.copy(
+                isSubmitting = false,
+                uploadingVersionId = null,
+                feedback = AdminFeedbackState(
+                    isError = true,
+                    failureReason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = validationError
                 )
             )
@@ -948,9 +1231,31 @@ class AdminPortalViewModel(
     }
 
     private fun executeSetStudyFilePublished(fileId: String, isPublished: Boolean) {
+        val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+            fileId = fileId,
+            allowVersionsDialogFallbackWhenSectionEmpty = false,
+            missingReason = AdminFailureReason.NOT_FOUND,
+            missingValidationError = null
+        ) ?: return
+        if (isPublished) {
+            when {
+                authoritativeFile.isArchiveStatusUnspecified -> {
+                    reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                    return
+                }
+                authoritativeFile.isExplicitlyArchived -> {
+                    reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+                    return
+                }
+                !authoritativeFile.isExplicitlyUnarchived -> {
+                    reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                    return
+                }
+            }
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, feedback = null) }
-            when (val result = adminCatalogRepository.setStudyFilePublished(fileId, isPublished)) {
+            when (val result = adminCatalogRepository.setStudyFilePublished(authoritativeFile.id, isPublished)) {
                 is AppResult.Success -> {
                     _uiState.update {
                         it.copy(
@@ -967,9 +1272,21 @@ class AdminPortalViewModel(
     }
 
     private fun executeSetStudyFileArchived(fileId: String, isArchived: Boolean) {
+        val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+            fileId = fileId,
+            allowVersionsDialogFallbackWhenSectionEmpty = false,
+            missingReason = AdminFailureReason.NOT_FOUND,
+            missingValidationError = null
+        ) ?: return
+        if (authoritativeFile.isArchiveStatusUnspecified ||
+            (!authoritativeFile.isExplicitlyUnarchived && !authoritativeFile.isExplicitlyArchived)
+        ) {
+            reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            return
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, feedback = null) }
-            when (val result = adminCatalogRepository.setStudyFileArchived(fileId, isArchived)) {
+            when (val result = adminCatalogRepository.setStudyFileArchived(authoritativeFile.id, isArchived)) {
                 is AppResult.Success -> {
                     _uiState.update {
                         it.copy(
@@ -986,9 +1303,42 @@ class AdminPortalViewModel(
     }
 
     private fun executePublishStudyFileVersion(fileId: String, versionId: String) {
+        val authoritativeFile = resolveAuthoritativeStudyFileOrReport(
+            fileId = fileId,
+            allowVersionsDialogFallbackWhenSectionEmpty = true,
+            missingReason = null,
+            missingValidationError = AdminValidationError.EMPTY_PARENT_REFERENCE
+        ) ?: return
+        val authoritativeVersion = _uiState.value.fileVersions.firstOrNull {
+            it.fileId == authoritativeFile.id && it.id == versionId
+        }
+        if (authoritativeVersion == null) {
+            reportFailureReason(AdminFailureReason.NOT_FOUND)
+            return
+        }
+        when {
+            authoritativeFile.isArchiveStatusUnspecified ||
+                authoritativeVersion.isArchiveStatusUnspecified -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return
+            }
+            authoritativeFile.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+                return
+            }
+            authoritativeVersion.isExplicitlyArchived -> {
+                reportValidationFailure(AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH)
+                return
+            }
+            !authoritativeFile.isExplicitlyUnarchived ||
+                !authoritativeVersion.isExplicitlyUnarchived -> {
+                reportValidationFailure(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+                return
+            }
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, feedback = null) }
-            when (val result = adminCatalogRepository.publishStudyFileVersion(fileId, versionId)) {
+            when (val result = adminCatalogRepository.publishStudyFileVersion(authoritativeFile.id, authoritativeVersion.id)) {
                 is AppResult.Success -> {
                     _uiState.update {
                         it.copy(
@@ -999,7 +1349,7 @@ class AdminPortalViewModel(
                             )
                         )
                     }
-                    loadFileVersions(fileId)
+                    loadFileVersions(authoritativeFile.id)
                     loadStudyFiles()
                 }
                 is AppResult.Error -> handleSubmissionError(result.cause)

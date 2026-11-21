@@ -58,6 +58,31 @@ class MockR2StorageAdapter implements R2StoragePort {
   overrideStreamBytesForKey?: { key: string; bytes: Buffer };
   readonly overrideChunkSizeForKey = new Map<string, number>();
   lastStreamClosedKey?: string;
+  readonly callCounts = {
+    createPresignedPutUrl: 0,
+    getObjectStreamWithETag: 0,
+    copyObjectIfMatch: 0,
+    headObject: 0,
+    deleteObject: 0,
+  };
+
+  resetCallCounts() {
+    this.callCounts.createPresignedPutUrl = 0;
+    this.callCounts.getObjectStreamWithETag = 0;
+    this.callCounts.copyObjectIfMatch = 0;
+    this.callCounts.headObject = 0;
+    this.callCounts.deleteObject = 0;
+  }
+
+  totalOperationCount(): number {
+    return (
+      this.callCounts.createPresignedPutUrl +
+      this.callCounts.getObjectStreamWithETag +
+      this.callCounts.copyObjectIfMatch +
+      this.callCounts.headObject +
+      this.callCounts.deleteObject
+    );
+  }
 
   isConfigured(): boolean {
     return true;
@@ -74,10 +99,12 @@ class MockR2StorageAdapter implements R2StoragePort {
   }
 
   async createPresignedPutUrl(params: PresignedPutParams): Promise<string> {
+    this.callCounts.createPresignedPutUrl += 1;
     return `https://mock-r2.local/upload/${encodeURIComponent(params.key)}?expires=${params.expiresInSeconds}`;
   }
 
   async getObjectStreamWithETag(key: string): Promise<R2ObjectStreamResult> {
+    this.callCounts.getObjectStreamWithETag += 1;
     if (this.onGetStreamHook) {
       await this.onGetStreamHook(key);
     }
@@ -118,6 +145,7 @@ class MockR2StorageAdapter implements R2StoragePort {
   async copyObjectIfMatch(
     params: R2CopyIfMatchParams,
   ): Promise<{ etag: string | null }> {
+    this.callCounts.copyObjectIfMatch += 1;
     if (this.onCopyHook) {
       await this.onCopyHook(params);
     }
@@ -137,6 +165,7 @@ class MockR2StorageAdapter implements R2StoragePort {
   }
 
   async headObject(key: string): Promise<R2HeadResult> {
+    this.callCounts.headObject += 1;
     if (this.forceMissingHeadForKey === key) {
       return { exists: false, contentLength: null, etag: null, contentType: null };
     }
@@ -154,6 +183,7 @@ class MockR2StorageAdapter implements R2StoragePort {
   }
 
   async deleteObject(key: string): Promise<void> {
+    this.callCounts.deleteObject += 1;
     this.deletedKeys.push(key);
     this.objects.delete(key);
   }
@@ -291,6 +321,7 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     mockR2.overrideStreamBytesForKey = undefined;
     mockR2.overrideChunkSizeForKey.clear();
     mockR2.lastStreamClosedKey = undefined;
+    mockR2.resetCallCounts();
     verifier.calls.length = 0;
     currentNowMs = 1_750_000_000_000;
     uuidSeq = 1;
@@ -756,12 +787,15 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
       'PUBLISHED',
     );
 
-    // Verify public catalog now exposes file-1 + stream/download works
+    // Verify public catalog now exposes file-1 + explicit UNARCHIVED archiveStatus + stream/download works
     const catalogRes = await apiJson('/api/catalog/sections/sec-1/study-files');
     assert.equal(catalogRes.status, 200);
-    const files = (catalogRes.json as { items: Array<{ id: string }> }).items;
+    const files = (
+      catalogRes.json as { items: Array<{ id: string; archiveStatus?: string }> }
+    ).items;
     assert.equal(files.length, 1);
     assert.equal(files[0].id, 'file-1');
+    assert.equal(files[0].archiveStatus, 'UNARCHIVED');
   });
 
   // =========================================================================
@@ -1359,26 +1393,39 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     );
     assert.equal(legacyPublish.status, 409);
 
-    // Admin read endpoints MUST still list legacy files & versions for inspection/migration
+    // Admin read endpoints MUST still list legacy files & versions with explicit tri-state UNSPECIFIED metadata
     const adminFiles = await apiJson(
       '/api/admin/sections/sec-1/study-files',
       { token: 'token-admin' },
     );
     assert.equal(adminFiles.status, 200);
-    const adminIds = (
-      adminFiles.json as { items: Array<{ id: string }> }
-    ).items.map((x) => x.id);
-    assert.equal(adminIds.includes('legacy-file'), true);
+    const adminFileItems = (
+      adminFiles.json as {
+        items: Array<{ id: string; isArchived: boolean | null; archiveStatus: string }>;
+      }
+    ).items;
+    const adminLegacyFile = adminFileItems.find((x) => x.id === 'legacy-file');
+    assert.ok(adminLegacyFile);
+    assert.equal(adminLegacyFile.archiveStatus, 'UNSPECIFIED');
+    assert.equal(adminLegacyFile.isArchived, null);
+    const adminModernFile = adminFileItems.find((x) => x.id === 'file-1');
+    assert.ok(adminModernFile);
+    assert.equal(adminModernFile.archiveStatus, 'UNARCHIVED');
+    assert.equal(adminModernFile.isArchived, false);
 
     const adminVers = await apiJson(
       '/api/admin/study-files/legacy-file/versions',
       { token: 'token-admin' },
     );
     assert.equal(adminVers.status, 200);
-    assert.equal(
-      (adminVers.json as { items: Array<{ id: string }> }).items[0]?.id,
-      'legacy-ver',
-    );
+    const adminLegacyVer = (
+      adminVers.json as {
+        items: Array<{ id: string; isArchived: boolean | null; archiveStatus: string }>;
+      }
+    ).items[0];
+    assert.equal(adminLegacyVer?.id, 'legacy-ver');
+    assert.equal(adminLegacyVer?.archiveStatus, 'UNSPECIFIED');
+    assert.equal(adminLegacyVer?.isArchived, null);
 
     // Marking parent section isArchived: true MUST immediately block catalog, stream & download
     await adminFirestore.collection('sections').doc('sec-1').update({
@@ -2037,5 +2084,343 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     );
     assert.equal(emptyRes.statusCalls, 0);
     assert.equal(emptyRes.endCalls, 0);
+  });
+
+  // =========================================================================
+  // 16. Fix Pack 2F-R Regression: Tri-State Archive Enforcement & FileRef Checks
+  // =========================================================================
+  it('F-2FR rejects missing/null/string isArchived across create, upload-slot, verify, and publish with zero R2 calls, rejects invalid version fileId refs, and keeps explicit isArchived=false operational', async () => {
+    await seedHierarchy({ withPublishedVersion: false });
+    const sectionRef = adminFirestore.collection('sections').doc('sec-1');
+    const now = Timestamp.fromMillis(currentNowMs);
+    const pdf = makePdfBuffer('2FR Regression PDF');
+
+    // Also create a valid pending upload session template helper per file/ver
+    async function seedPendingSession(fileId: string, versionId: string, sessionId: string) {
+      const stagingKey = `uploads-staging/${fileId}/${versionId}/${sessionId}.pdf`;
+      mockR2.putRaw(stagingKey, pdf.bytes);
+      await adminFirestore.collection('upload_sessions').doc(sessionId).set({
+        sessionId,
+        fileId,
+        versionId,
+        stagingKey,
+        status: 'PENDING',
+        expectedSizeBytes: pdf.sizeBytes,
+        expectedSha256: pdf.sha256,
+        attemptCount: 0,
+        activeAttemptId: null,
+        lockToken: null,
+        finalObjectKey: null,
+        verifyingExpiresAt: null,
+        expiresAt: Timestamp.fromMillis(currentNowMs + 600_000),
+        createdByUid: 'admin-uid-1',
+        updatedByUid: 'admin-uid-1',
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const fileVariants: Array<{
+      id: string;
+      label: string;
+      isArchivedEntry: { present: boolean; value?: unknown };
+    }> = [
+      { id: 'f-missing', label: 'missing', isArchivedEntry: { present: false } },
+      { id: 'f-null', label: 'null', isArchivedEntry: { present: true, value: null } },
+      { id: 'f-string', label: 'string', isArchivedEntry: { present: true, value: 'false' } },
+    ];
+
+    for (let idx = 0; idx < fileVariants.length; idx++) {
+      const variant = fileVariants[idx];
+      const fileRef = adminFirestore.collection('study_files').doc(variant.id);
+      const docPayload: Record<string, unknown> = {
+        sectionId: sectionRef,
+        title: `ملف ${variant.label}`,
+        order: idx + 1,
+        isPublished: false,
+        mimeType: 'application/pdf',
+        storageProvider: 'cloudflare_r2',
+        registeredVersionNumbers: [1],
+        createdByUid: 'admin-uid-1',
+        updatedByUid: 'admin-uid-1',
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (variant.isArchivedEntry.present) {
+        docPayload.isArchived = variant.isArchivedEntry.value;
+      }
+      await fileRef.set(docPayload);
+
+      // Version doc is explicitly unarchived while parent file is unspecified
+      await fileRef.collection('versions').doc('ver-1').set({
+        fileId: fileRef,
+        versionNumber: 1,
+        versionLabel: '1.0',
+        r2ObjectKey: null,
+        fileSizeBytes: null,
+        checksumSha256: null,
+        binaryVerificationStatus: 'NONE',
+        isPublished: false,
+        isArchived: false,
+        createdByUid: 'admin-uid-1',
+        updatedByUid: 'admin-uid-1',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const sessionId = `cccccccc-0000-4000-8000-00000000000${idx + 1}`;
+      await seedPendingSession(variant.id, 'ver-1', sessionId);
+      mockR2.resetCallCounts();
+
+      // 1) POST create version rejected with 409 ARCHIVE_STATE_UNSPECIFIED
+      const createRes = await apiJson(`/api/admin/study-files/${variant.id}/versions`, {
+        method: 'POST',
+        token: 'token-admin',
+        body: { versionNumber: 2, versionLabel: '2.0' },
+      });
+      assert.equal(createRes.status, 409);
+      assert.equal(
+        (createRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      // 2) POST upload-slot rejected with 409 ARCHIVE_STATE_UNSPECIFIED
+      const slotRes = await apiJson(
+        `/api/admin/study-files/${variant.id}/versions/ver-1/upload-slot`,
+        {
+          method: 'POST',
+          token: 'token-admin',
+          body: { expectedSizeBytes: pdf.sizeBytes, expectedSha256: pdf.sha256 },
+        },
+      );
+      assert.equal(slotRes.status, 409);
+      assert.equal(
+        (slotRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      // 3) POST verify rejected with 409 ARCHIVE_STATE_UNSPECIFIED
+      const verifyRes = await apiJson(
+        `/api/admin/study-files/${variant.id}/versions/ver-1/verify`,
+        {
+          method: 'POST',
+          token: 'token-admin',
+          body: { uploadSessionId: sessionId },
+        },
+      );
+      assert.equal(verifyRes.status, 409);
+      assert.equal(
+        (verifyRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      // 4) POST publish rejected with 409 ARCHIVE_STATE_UNSPECIFIED
+      const publishRes = await apiJson(
+        `/api/admin/study-files/${variant.id}/versions/ver-1/publish`,
+        { method: 'POST', token: 'token-admin', body: {} },
+      );
+      assert.equal(publishRes.status, 409);
+      assert.equal(
+        (publishRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      // 5) Zero Cloudflare R2 calls occurred
+      assert.equal(mockR2.totalOperationCount(), 0);
+    }
+
+    // Also verify unspecified version isArchived (missing, null, string) when parent file IS isArchived: false
+    const versionVariants: Array<{
+      id: string;
+      isArchivedEntry: { present: boolean; value?: unknown };
+    }> = [
+      { id: 'ver-missing', isArchivedEntry: { present: false } },
+      { id: 'ver-null', isArchivedEntry: { present: true, value: null } },
+      { id: 'ver-string', isArchivedEntry: { present: true, value: 'false' } },
+    ];
+    const validFileRef = adminFirestore.collection('study_files').doc('file-1');
+    for (let idx = 0; idx < versionVariants.length; idx++) {
+      const vVar = versionVariants[idx];
+      const vPayload: Record<string, unknown> = {
+        fileId: validFileRef,
+        versionNumber: 10 + idx,
+        versionLabel: `${10 + idx}.0`,
+        r2ObjectKey: null,
+        fileSizeBytes: null,
+        checksumSha256: null,
+        binaryVerificationStatus: 'NONE',
+        isPublished: false,
+        createdByUid: 'admin-uid-1',
+        updatedByUid: 'admin-uid-1',
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (vVar.isArchivedEntry.present) {
+        vPayload.isArchived = vVar.isArchivedEntry.value;
+      }
+      await validFileRef.collection('versions').doc(vVar.id).set(vPayload);
+
+      const sessionId = `dddddddd-0000-4000-8000-00000000000${idx + 1}`;
+      await seedPendingSession('file-1', vVar.id, sessionId);
+      mockR2.resetCallCounts();
+
+      const slotRes = await apiJson(
+        `/api/admin/study-files/file-1/versions/${vVar.id}/upload-slot`,
+        {
+          method: 'POST',
+          token: 'token-admin',
+          body: { expectedSizeBytes: pdf.sizeBytes, expectedSha256: pdf.sha256 },
+        },
+      );
+      assert.equal(slotRes.status, 409);
+      assert.equal(
+        (slotRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      const verifyRes = await apiJson(
+        `/api/admin/study-files/file-1/versions/${vVar.id}/verify`,
+        {
+          method: 'POST',
+          token: 'token-admin',
+          body: { uploadSessionId: sessionId },
+        },
+      );
+      assert.equal(verifyRes.status, 409);
+      assert.equal(
+        (verifyRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      const publishRes = await apiJson(
+        `/api/admin/study-files/file-1/versions/${vVar.id}/publish`,
+        { method: 'POST', token: 'token-admin', body: {} },
+      );
+      assert.equal(publishRes.status, 409);
+      assert.equal(
+        (publishRes.json as { error: { code: string } }).error.code,
+        'ARCHIVE_STATE_UNSPECIFIED',
+      );
+
+      assert.equal(mockR2.totalOperationCount(), 0);
+    }
+
+    // 6) Public catalog & streaming reject versions with missing fileId or wrong parent fileId
+    const badMissingRefSessionId = 'eeeeeeee-0000-4000-8000-000000000001';
+    const badMissingRefAttemptId = 'eeeeeeee-0000-4000-8000-000000000002';
+    const badMissingRefKey = `study-files/file-missing-vref/versions/ver-bad-1/${pdf.sha256.slice(0, 16)}_${badMissingRefSessionId}_${badMissingRefAttemptId}.pdf`;
+    mockR2.putRaw(badMissingRefKey, pdf.bytes);
+    await adminFirestore.collection('study_files').doc('file-missing-vref').set({
+      sectionId: sectionRef,
+      title: 'ملف بمرجع مفقود',
+      order: 20,
+      isPublished: true,
+      isArchived: false,
+      activeVersionId: 'ver-bad-1',
+      activeVersionNumber: 1,
+      activeVersionLabel: '1.0',
+      activeVersionPublishedAt: now,
+    });
+    await adminFirestore
+      .collection('study_files')
+      .doc('file-missing-vref')
+      .collection('versions')
+      .doc('ver-bad-1')
+      .set({
+        // fileId intentionally missing
+        versionNumber: 1,
+        versionLabel: '1.0',
+        r2ObjectKey: badMissingRefKey,
+        fileSizeBytes: pdf.sizeBytes,
+        checksumSha256: pdf.sha256,
+        binaryVerificationStatus: 'VERIFIED',
+        isPublished: true,
+        isArchived: false,
+        publishedAt: now,
+      });
+
+    const otherFileRef = adminFirestore.collection('study_files').doc('other-file');
+    const badWrongRefKey = `study-files/file-wrong-vref/versions/ver-bad-2/${pdf.sha256.slice(0, 16)}_${badMissingRefSessionId}_${badMissingRefAttemptId}.pdf`;
+    mockR2.putRaw(badWrongRefKey, pdf.bytes);
+    await adminFirestore.collection('study_files').doc('file-wrong-vref').set({
+      sectionId: sectionRef,
+      title: 'ملف بمرجع خاطئ',
+      order: 21,
+      isPublished: true,
+      isArchived: false,
+      activeVersionId: 'ver-bad-2',
+      activeVersionNumber: 1,
+      activeVersionLabel: '1.0',
+      activeVersionPublishedAt: now,
+    });
+    await adminFirestore
+      .collection('study_files')
+      .doc('file-wrong-vref')
+      .collection('versions')
+      .doc('ver-bad-2')
+      .set({
+        fileId: otherFileRef,
+        versionNumber: 1,
+        versionLabel: '1.0',
+        r2ObjectKey: badWrongRefKey,
+        fileSizeBytes: pdf.sizeBytes,
+        checksumSha256: pdf.sha256,
+        binaryVerificationStatus: 'VERIFIED',
+        isPublished: true,
+        isArchived: false,
+        publishedAt: now,
+      });
+
+    // 7) Modern file-1 with valid refs & isArchived: false succeeds end-to-end
+    const createOk = await apiJson('/api/admin/study-files/file-1/versions', {
+      method: 'POST',
+      token: 'token-admin',
+      body: { versionNumber: 1, versionLabel: '1.0', customVersionId: 'ver-ok' },
+    });
+    assert.equal(createOk.status, 201);
+    const slotOk = await apiJson(
+      '/api/admin/study-files/file-1/versions/ver-ok/upload-slot',
+      {
+        method: 'POST',
+        token: 'token-admin',
+        body: { expectedSizeBytes: pdf.sizeBytes, expectedSha256: pdf.sha256 },
+      },
+    );
+    assert.equal(slotOk.status, 201);
+    const okSlotData = slotOk.json as { uploadSessionId: string; stagingKey: string };
+    mockR2.putRaw(okSlotData.stagingKey, pdf.bytes);
+    const verifyOk = await apiJson(
+      '/api/admin/study-files/file-1/versions/ver-ok/verify',
+      {
+        method: 'POST',
+        token: 'token-admin',
+        body: { uploadSessionId: okSlotData.uploadSessionId },
+      },
+    );
+    assert.equal(verifyOk.status, 200);
+    const publishOk = await apiJson(
+      '/api/admin/study-files/file-1/versions/ver-ok/publish',
+      { method: 'POST', token: 'token-admin', body: {} },
+    );
+    assert.equal(publishOk.status, 200);
+
+    const catalogAfter = await apiJson('/api/catalog/sections/sec-1/study-files');
+    assert.equal(catalogAfter.status, 200);
+    assert.deepEqual(
+      (catalogAfter.json as { items: Array<{ id: string }> }).items.map((x) => x.id),
+      ['file-1'],
+    );
+    assert.equal(
+      (await apiJson('/api/study-files/file-missing-vref/versions/ver-bad-1/stream')).status,
+      404,
+    );
+    assert.equal(
+      (await apiJson('/api/study-files/file-wrong-vref/versions/ver-bad-2/stream')).status,
+      404,
+    );
+    assert.equal(
+      (await apiJson('/api/study-files/file-1/versions/ver-ok/stream')).status,
+      200,
+    );
   });
 });

@@ -928,4 +928,129 @@ describe('Haqibati Firestore Security Rules (Stage 8 - D1)', () => {
       }
     });
   });
+
+  // =========================================================================
+  // 10. Study File Archive Tri-State Hardening (Fix Pack 2G — F-2G-2)
+  // =========================================================================
+  describe('10. Study File Archive Rules & Tri-State Hardening (F-2G-2)', () => {
+    it('blocks modifying isArchived when current resource isArchived is missing, null, or non-boolean', async () => {
+      await seedCatalogHierarchy({ subjectPublished: true, filePublished: false });
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore() as unknown as Firestore;
+        const now = Timestamp.fromMillis(1_700_000_000_000);
+        const baseDoc = {
+          sectionId: doc(db, 'sections', 'sec-1'),
+          description: 'وثيقة قديمة',
+          order: 1,
+          isPublished: true,
+          mimeType: 'application/pdf',
+          storageProvider: 'cloudflare_r2',
+          activeVersionId: 'ver-1',
+          activeVersionNumber: 1,
+          activeVersionLabel: '1.0',
+          activeVersionPublishedAt: now,
+          createdByUid: 'admin-1',
+          updatedByUid: 'admin-1',
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await setDoc(doc(db, 'study_files', 'file-missing-archived'), {
+          ...baseDoc,
+          title: 'ملف بدون حقل أرشفة',
+        });
+
+        await setDoc(doc(db, 'study_files', 'file-null-archived'), {
+          ...baseDoc,
+          title: 'ملف بحقل أرشفة فارغ',
+          isArchived: null,
+        });
+
+        await setDoc(doc(db, 'study_files', 'file-string-archived'), {
+          ...baseDoc,
+          title: 'ملف بنص أرشفة',
+          isArchived: 'false',
+        });
+      });
+
+      const unspecifiedIds = [
+        'file-missing-archived',
+        'file-null-archived',
+        'file-string-archived',
+      ];
+
+      for (const id of unspecifiedIds) {
+        // Cannot set isArchived = false on UNSPECIFIED document
+        await assertFails(
+          updateDoc(doc(ownerDb(), 'study_files', id), {
+            isArchived: false,
+            isPublished: false,
+            updatedByUid: 'owner-1',
+            updatedAt: serverTimestamp(),
+          }),
+        );
+
+        // Cannot set isArchived = true on UNSPECIFIED document
+        await assertFails(
+          updateDoc(doc(adminDb(), 'study_files', id), {
+            isArchived: true,
+            isPublished: false,
+            updatedByUid: 'admin-1',
+            updatedAt: serverTimestamp(),
+          }),
+        );
+
+        // Non-sensitive metadata edits and explicit unpublish remain allowed on legacy docs
+        await assertSucceeds(
+          updateDoc(doc(adminDb(), 'study_files', id), {
+            title: 'عنوان مراجع',
+            updatedByUid: 'admin-1',
+            updatedAt: serverTimestamp(),
+          }),
+        );
+        await assertSucceeds(
+          updateDoc(doc(adminDb(), 'study_files', id), {
+            isPublished: false,
+            updatedByUid: 'admin-1',
+            updatedAt: serverTimestamp(),
+          }),
+        );
+      }
+    });
+
+    it('allows explicit boolean archive/restore transitions while blocking restore combined with publish', async () => {
+      await seedCatalogHierarchy({ subjectPublished: true, filePublished: true });
+
+      // Published file with explicit isArchived: false CAN be archived atomically (isPublished -> false)
+      await assertSucceeds(
+        updateDoc(doc(adminDb(), 'study_files', 'file-1'), {
+          isArchived: true,
+          isPublished: false,
+          updatedByUid: 'admin-1',
+          updatedAt: serverTimestamp(),
+        }),
+      );
+
+      // Archived file (isArchived: true) CANNOT be restored simultaneously with isPublished: true
+      await assertFails(
+        updateDoc(doc(ownerDb(), 'study_files', 'file-1'), {
+          isArchived: false,
+          isPublished: true,
+          updatedByUid: 'owner-1',
+          updatedAt: serverTimestamp(),
+        }),
+      );
+
+      // Archived file (isArchived: true) CAN be restored while keeping isPublished: false
+      await assertSucceeds(
+        updateDoc(doc(adminDb(), 'study_files', 'file-1'), {
+          isArchived: false,
+          isPublished: false,
+          updatedByUid: 'admin-1',
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    });
+  });
 });

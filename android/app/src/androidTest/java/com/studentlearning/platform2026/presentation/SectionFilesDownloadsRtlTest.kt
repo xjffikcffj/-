@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
@@ -43,7 +44,7 @@ class SectionFilesDownloadsRtlTest {
         description = "ملاحظات شاملة",
         order = 1,
         isPublished = true,
-        isArchived = false,
+        archiveStatus = ArchiveStatus.UNARCHIVED,
         activeVersionId = versionId,
         activeVersionNumber = versionNumber,
         activeVersionLabel = versionLabel

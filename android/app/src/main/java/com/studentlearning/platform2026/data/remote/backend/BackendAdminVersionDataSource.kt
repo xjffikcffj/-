@@ -5,6 +5,7 @@ import com.studentlearning.platform2026.data.remote.firebase.AuthTokenProvider
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -331,6 +332,11 @@ internal class BackendAdminVersionDataSource(
         // never synthesize artificial storage paths when Backend D2 omits internal keys.
         val r2ObjectKey = item.stringOrNull("r2ObjectKey")
 
+        val archiveStatus = ArchiveStatus.fromBackend(
+            rawArchiveStatus = item["archiveStatus"],
+            rawIsArchived = item["isArchived"]
+        )
+
         return StudyFileVersionMetadata(
             id = id,
             fileId = fileId,
@@ -345,7 +351,7 @@ internal class BackendAdminVersionDataSource(
             createdAtEpochMillis = item.longOrNull("createdAtEpochMillis"),
             fileReferencePath = "study_files/$fileId",
             updatedAtEpochMillis = item.longOrNull("updatedAtEpochMillis"),
-            isArchived = item.booleanOrFalse("isArchived"),
+            archiveStatus = archiveStatus,
             binaryVerificationStatus = verificationStatus,
             verifiedUploadSessionId = verifiedUploadSessionId,
             verifiedAttemptId = verifiedAttemptId
@@ -445,6 +451,12 @@ internal class BackendAdminVersionDataSource(
             code == "VERSION_ARCHIVED" -> AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH,
+                message = httpError.message,
+                cause = httpError
+            )
+            code == "ARCHIVE_STATE_UNSPECIFIED" -> AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
                 message = httpError.message,
                 cause = httpError
             )
@@ -652,11 +664,18 @@ internal class HybridAdminCatalogDataSource(
                 validationError = AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
                 message = "Cannot publish study file '$fileId' without an active verified PDF version."
             )
-        if (parentFile.isArchived) {
+        if (parentFile.isExplicitlyArchived) {
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
                 message = "Cannot publish archived study file '$fileId'."
+            )
+        }
+        if (!parentFile.isExplicitlyUnarchived) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                message = "Study file '$fileId' has unspecified archive status."
             )
         }
         val activeVersionId = parentFile.activeVersionId?.trim()?.takeIf { it.isNotEmpty() }
@@ -678,11 +697,18 @@ internal class HybridAdminCatalogDataSource(
                 validationError = AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION,
                 message = "Active version '$activeVersionId' for study file '$fileId' was not found."
             )
-        if (activeVersion.isArchived) {
+        if (activeVersion.isExplicitlyArchived) {
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH,
                 message = "Cannot publish study file '$fileId' while active version '$activeVersionId' is archived."
+            )
+        }
+        if (!activeVersion.isExplicitlyUnarchived) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                message = "Active version '$activeVersionId' of study file '$fileId' has unspecified archive status."
             )
         }
         if (activeVersion.versionNumber != activeVersionNumber || !activeVersion.hasUploadedPdfBinary) {
@@ -698,8 +724,23 @@ internal class HybridAdminCatalogDataSource(
         )
     }
 
-    override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) =
+    override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
+        val parentFile = firestoreDataSource.fetchStudyFileMetadata(fileId)
+            ?: throw AdminException(
+                reason = AdminFailureReason.NOT_FOUND,
+                message = "Study file '$fileId' does not exist."
+            )
+        if (parentFile.isArchiveStatusUnspecified ||
+            (!parentFile.isExplicitlyUnarchived && !parentFile.isExplicitlyArchived)
+        ) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                message = "Study file '$fileId' has unspecified archive status and cannot be archived or restored automatically."
+            )
+        }
         firestoreDataSource.setStudyFileArchived(fileId, isArchived, actorUid)
+    }
 
     override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> =
         backendVersionDataSource.fetchStudyFileVersions(fileId)

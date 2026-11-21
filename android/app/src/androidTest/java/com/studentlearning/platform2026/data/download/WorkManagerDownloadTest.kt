@@ -24,6 +24,7 @@ import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
 import com.studentlearning.platform2026.domain.model.OfflineDownloadRequest
@@ -138,7 +139,7 @@ class WorkManagerDownloadTest {
         description = "وصف",
         order = 1,
         isPublished = true,
-        isArchived = false,
+        archiveStatus = ArchiveStatus.UNARCHIVED,
         activeVersionId = versionId,
         activeVersionNumber = 1,
         activeVersionLabel = versionId

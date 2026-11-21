@@ -393,6 +393,7 @@ export class CatalogService {
           title,
           description: extractString(data, 'description'),
           order: extractOrder(data),
+          archiveStatus: 'UNARCHIVED',
           mimeType: extractString(data, 'mimeType') ?? 'application/pdf',
           activeVersionId,
           activeVersionNumber,

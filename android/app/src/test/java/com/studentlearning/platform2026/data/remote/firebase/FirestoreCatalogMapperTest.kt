@@ -1,6 +1,7 @@
 package com.studentlearning.platform2026.data.remote.firebase
 
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -213,6 +214,45 @@ class FirestoreCatalogMapperTest {
                 "activeVersionNumber" to 1L,
                 "activeVersionLabel" to "1.0"
             ),
+            "missing-archive-even-if-published" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "ملزمة بلا حقل أرشفة",
+                "order" to 2L,
+                "isPublished" to true,
+                "activeVersionId" to "v1",
+                "activeVersionNumber" to 1L,
+                "activeVersionLabel" to "1.0"
+            ),
+            "null-archive-even-if-published" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "ملزمة بحقل فارغ",
+                "order" to 2L,
+                "isPublished" to true,
+                "isArchived" to null,
+                "activeVersionId" to "v1",
+                "activeVersionNumber" to 1L,
+                "activeVersionLabel" to "1.0"
+            ),
+            "string-false-even-if-published" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "ملزمة بنص غير منطقي",
+                "order" to 2L,
+                "isPublished" to true,
+                "isArchived" to "false",
+                "activeVersionId" to "v1",
+                "activeVersionNumber" to 1L,
+                "activeVersionLabel" to "1.0"
+            ),
+            "number-zero-even-if-published" to mapOf(
+                "sectionId" to sectionRef,
+                "title" to "ملزمة برقم غير منطقي",
+                "order" to 2L,
+                "isPublished" to true,
+                "isArchived" to 0,
+                "activeVersionId" to "v1",
+                "activeVersionNumber" to 1L,
+                "activeVersionLabel" to "1.0"
+            ),
             "unpublished-draft" to mapOf(
                 "sectionId" to sectionRef,
                 "title" to "مسودة",
@@ -226,5 +266,6 @@ class FirestoreCatalogMapperTest {
 
         assertEquals(listOf("live-file"), result.map { it.id })
         assertEquals("v1", result.single().activeVersionId)
+        assertEquals(ArchiveStatus.UNARCHIVED, result.single().archiveStatus)
     }
 }

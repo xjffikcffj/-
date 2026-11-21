@@ -34,12 +34,15 @@ export interface CatalogSectionDto {
   subjectReferencePath: string;
 }
 
+export type ArchiveStatus = 'UNARCHIVED' | 'ARCHIVED' | 'UNSPECIFIED';
+
 export interface PublicStudyFileDto {
   id: string;
   sectionId: string;
   title: string;
   description: string | null;
   order: number;
+  archiveStatus: ArchiveStatus;
   mimeType: string;
   activeVersionId: string;
   activeVersionNumber: number;
@@ -55,8 +58,6 @@ export type BinaryVerificationStatus =
   | 'PENDING_UPLOAD'
   | 'VERIFIED'
   | 'FAILED';
-
-export type ArchiveStatus = 'UNARCHIVED' | 'ARCHIVED' | 'UNSPECIFIED';
 
 export interface AdminStudyFileDto {
   id: string;

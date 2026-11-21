@@ -5,6 +5,7 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Collections
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Fields
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
@@ -129,8 +130,8 @@ object FirestoreCatalogMapper {
         if (id.isBlank() || expectedSectionId.isBlank()) return null
 
         val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
-        val isArchived = (data[Fields.IS_ARCHIVED] as? Boolean) ?: false
-        if (!isPublished || isArchived) return null
+        val archiveStatus = ArchiveStatus.fromIsArchivedValue(data[Fields.IS_ARCHIVED])
+        if (!isPublished || archiveStatus != ArchiveStatus.UNARCHIVED) return null
 
         val sectionRef = extractReferenceTarget(data[Fields.SECTION_ID]) ?: return null
         if (sectionRef.collectionId != Collections.SECTIONS || sectionRef.documentId != expectedSectionId) {
@@ -159,7 +160,7 @@ object FirestoreCatalogMapper {
             description = description,
             order = order,
             isPublished = true,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             mimeType = mimeType,
             storageProvider = storageProvider,
             activeVersionId = activeVersionId,

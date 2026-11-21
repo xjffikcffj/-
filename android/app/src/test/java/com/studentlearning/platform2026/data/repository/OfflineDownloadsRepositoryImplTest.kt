@@ -16,6 +16,7 @@ import com.studentlearning.platform2026.data.pdf.BrokeredPdfFileSourceDataSource
 import com.studentlearning.platform2026.data.pdf.PdfFileSourceDataSource
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.DownloadException
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
@@ -105,7 +106,7 @@ class OfflineDownloadsRepositoryImplTest {
         description = "نسخة دراسية",
         order = 1,
         isPublished = true,
-        isArchived = false,
+        archiveStatus = ArchiveStatus.UNARCHIVED,
         activeVersionId = versionId,
         activeVersionNumber = versionNumber,
         activeVersionLabel = versionLabel
@@ -1410,7 +1411,7 @@ class OfflineDownloadsRepositoryImplTest {
                 title = "الفصل الأول",
                 order = 1,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 activeVersionId = "v1",
                 activeVersionNumber = 1,
                 activeVersionLabel = "1.0"

@@ -6,6 +6,7 @@ import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.local.ReadingProgressDataSource
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
@@ -208,7 +209,7 @@ class ReadingProgressRepositoryImplTest {
                         title = "الكيمياء",
                         order = 1,
                         isPublished = true,
-                        isArchived = false,
+                        archiveStatus = ArchiveStatus.UNARCHIVED,
                         activeVersionId = "v2",
                         activeVersionNumber = 2,
                         activeVersionLabel = "2.0"

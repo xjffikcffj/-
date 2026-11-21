@@ -534,9 +534,24 @@ internal fun AdminFileVersionsDialog(
                     )
                 }
 
+                if (file.isArchiveStatusUnspecified) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = stringResource(R.string.admin_study_file_archive_unspecified_warning),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(spacing.sm)
+                        )
+                    }
+                }
+
                 Button(
                     onClick = onAddVersion,
-                    enabled = canMutate,
+                    enabled = canMutate && file.isExplicitlyUnarchived,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(
@@ -589,16 +604,21 @@ internal fun AdminFileVersionsDialog(
                         versions.forEach { version ->
                             val isActivePublished = version.isPublished &&
                                 version.id == file.activeVersionId
+                            val hasUnspecifiedParentArchive = file.isArchiveStatusUnspecified
+                            val hasUnspecifiedVersionArchive = version.isArchiveStatusUnspecified
+                            val hasUnspecifiedArchive = hasUnspecifiedParentArchive || hasUnspecifiedVersionArchive
                             val canPublishVersion = canMutate &&
-                                !file.isArchived &&
-                                !version.isArchived &&
+                                file.isExplicitlyUnarchived &&
+                                version.isExplicitlyUnarchived &&
                                 version.hasUploadedPdfBinary &&
                                 r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED
                             val statusLabelRes = when {
-                                version.isArchived -> R.string.admin_status_archived
+                                version.isExplicitlyArchived -> R.string.admin_status_archived
+                                hasUnspecifiedVersionArchive -> R.string.admin_status_archive_unspecified
                                 isActivePublished -> R.string.admin_version_status_active_published
                                 version.publishedAtEpochMillis != null ->
                                     R.string.admin_version_status_archived_history
+                                hasUnspecifiedParentArchive -> R.string.admin_status_parent_archive_unspecified
                                 else -> R.string.admin_version_status_draft
                             }
 
@@ -720,10 +740,30 @@ internal fun AdminFileVersionsDialog(
                                     val isUploadingThisVersion = uploadingVersionId == version.id
                                     val canUploadPdf = canMutate &&
                                         uploadingVersionId == null &&
-                                        !file.isArchived &&
-                                        !version.isArchived &&
+                                        file.isExplicitlyUnarchived &&
+                                        version.isExplicitlyUnarchived &&
                                         !isActivePublished &&
                                         r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED
+
+                                    if (hasUnspecifiedArchive) {
+                                        val unspecifiedNoticeRes = if (hasUnspecifiedVersionArchive) {
+                                            R.string.admin_version_archive_unspecified_warning
+                                        } else {
+                                            R.string.admin_version_parent_archive_unspecified_warning
+                                        }
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.errorContainer,
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                text = stringResource(unspecifiedNoticeRes),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                                modifier = Modifier.padding(spacing.xs)
+                                            )
+                                        }
+                                    }
 
                                     if (isUploadingThisVersion) {
                                         Row(
@@ -740,12 +780,12 @@ internal fun AdminFileVersionsDialog(
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                         }
-                                    } else if (!isActivePublished && !canPublishVersion) {
+                                    } else if (!hasUnspecifiedArchive && !isActivePublished && !canPublishVersion) {
                                         val hintRes = if (
                                             r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED &&
                                             !version.hasUploadedPdfBinary &&
-                                            !file.isArchived &&
-                                            !version.isArchived
+                                            file.isExplicitlyUnarchived &&
+                                            version.isExplicitlyUnarchived
                                         ) {
                                             R.string.admin_version_waiting_upload_notice
                                         } else {
@@ -775,7 +815,7 @@ internal fun AdminFileVersionsDialog(
                                             Text(text = stringResource(R.string.admin_action_edit))
                                         }
                                         if (!isActivePublished &&
-                                            !version.isArchived &&
+                                            !version.isExplicitlyArchived &&
                                             r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED
                                         ) {
                                             FilledTonalButton(

@@ -16,6 +16,7 @@ import com.studentlearning.platform2026.data.pdf.PdfFileSourceDataSource
 import com.studentlearning.platform2026.data.pdf.PreparedPdfFile
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.DownloadStatus
 import com.studentlearning.platform2026.domain.model.DownloadTaskState
 import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
@@ -339,7 +340,7 @@ class PdfDocumentRepositoryImplTest {
                     description = "",
                     order = 1,
                     isPublished = true,
-                    isArchived = false,
+                    archiveStatus = ArchiveStatus.UNARCHIVED,
                     activeVersionId = "v1",
                     activeVersionNumber = 1,
                     activeVersionLabel = "v1"
@@ -353,7 +354,7 @@ class PdfDocumentRepositoryImplTest {
                     description = "",
                     order = 1,
                     isPublished = true,
-                    isArchived = false,
+                    archiveStatus = ArchiveStatus.UNARCHIVED,
                     activeVersionId = "v2",
                     activeVersionNumber = 2,
                     activeVersionLabel = "v2"

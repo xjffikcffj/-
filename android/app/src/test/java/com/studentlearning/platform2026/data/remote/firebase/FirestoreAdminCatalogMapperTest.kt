@@ -5,6 +5,7 @@ import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSch
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import org.junit.Assert.assertEquals
@@ -421,14 +422,14 @@ class FirestoreAdminCatalogMapperTest {
             fileSizeBytes = 4096L,
             checksumSha256 = validSha,
             isPublished = true,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
 
         try {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "missing-file",
                 exists = false,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true
             )
             fail("Expected AdminException NOT_FOUND")
@@ -440,7 +441,7 @@ class FirestoreAdminCatalogMapperTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "archived-file",
                 exists = true,
-                isArchived = true,
+                archiveStatus = ArchiveStatus.ARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersion = validActiveVersion.copy(fileId = "archived-file")
@@ -456,7 +457,7 @@ class FirestoreAdminCatalogMapperTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = null,
                 activeVersion = null
@@ -471,7 +472,7 @@ class FirestoreAdminCatalogMapperTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersion = validActiveVersion.copy(isPublished = false)
@@ -486,7 +487,7 @@ class FirestoreAdminCatalogMapperTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersionNumber = 1,
@@ -502,7 +503,7 @@ class FirestoreAdminCatalogMapperTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersionNumber = null,
@@ -518,7 +519,7 @@ class FirestoreAdminCatalogMapperTest {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersionNumber = 2,
@@ -533,13 +534,13 @@ class FirestoreAdminCatalogMapperTest {
         FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
             fileId = "archived-file",
             exists = true,
-            isArchived = true,
+            archiveStatus = ArchiveStatus.ARCHIVED,
             targetPublished = false
         )
         FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
             fileId = "active-file",
             exists = true,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             targetPublished = true,
             activeVersionId = "v1",
             activeVersionNumber = 1,
@@ -579,14 +580,14 @@ class FirestoreAdminCatalogMapperTest {
             fileSizeBytes = 4096L,
             checksumSha256 = "d".repeat(64),
             isPublished = true,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
 
         try {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersionNumber = 0,
@@ -610,14 +611,14 @@ class FirestoreAdminCatalogMapperTest {
             fileSizeBytes = 4096L,
             checksumSha256 = "d".repeat(64),
             isPublished = true,
-            isArchived = false
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
 
         try {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = "active-file",
                 exists = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 targetPublished = true,
                 activeVersionId = "v1",
                 activeVersionNumber = -1,
@@ -628,5 +629,201 @@ class FirestoreAdminCatalogMapperTest {
             assertEquals(AdminFailureReason.VALIDATION_ERROR, ex.reason)
             assertEquals(AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION, ex.validationError)
         }
+    }
+
+    @Test
+    fun `mapStudyFilesForAdmin preserves tri-state archive status without coercing unspecified to UNARCHIVED`() {
+        val sectionRef = FirestoreReferenceTarget("sections", "sec1", "sections/sec1")
+        val docs = listOf(
+            "archived_true" to mapOf(
+                Fields.SECTION_ID to sectionRef,
+                Fields.TITLE to "مؤرشف",
+                Fields.ORDER to 1L,
+                Fields.IS_PUBLISHED to false,
+                Fields.IS_ARCHIVED to true
+            ),
+            "missing_field" to mapOf(
+                Fields.SECTION_ID to sectionRef,
+                Fields.TITLE to "مفقود",
+                Fields.ORDER to 2L,
+                Fields.IS_PUBLISHED to true
+            ),
+            "null_field" to mapOf(
+                Fields.SECTION_ID to sectionRef,
+                Fields.TITLE to "قيمة فارغة",
+                Fields.ORDER to 3L,
+                Fields.IS_PUBLISHED to false,
+                Fields.IS_ARCHIVED to null
+            ),
+            "string_false_field" to mapOf(
+                Fields.SECTION_ID to sectionRef,
+                Fields.TITLE to "نص خاطئ",
+                Fields.ORDER to 4L,
+                Fields.IS_PUBLISHED to false,
+                Fields.IS_ARCHIVED to "false"
+            ),
+            "unarchived_false" to mapOf(
+                Fields.SECTION_ID to sectionRef,
+                Fields.TITLE to "غير مؤرشف",
+                Fields.ORDER to 5L,
+                Fields.IS_PUBLISHED to true,
+                Fields.IS_ARCHIVED to false
+            )
+        )
+
+        val mapped = FirestoreAdminCatalogMapper.mapStudyFilesForAdmin(docs, expectedSectionId = "sec1")
+
+        // All docs remain visible in admin list, sorted UNARCHIVED -> UNSPECIFIED -> ARCHIVED.
+        assertEquals(
+            listOf("unarchived_false", "missing_field", "null_field", "string_false_field", "archived_true"),
+            mapped.map { it.id }
+        )
+        val byId = mapped.associateBy { it.id }
+
+        assertEquals(ArchiveStatus.UNARCHIVED, byId.getValue("unarchived_false").archiveStatus)
+        assertTrue(byId.getValue("unarchived_false").isExplicitlyUnarchived)
+        assertFalse(byId.getValue("unarchived_false").isArchiveStatusUnspecified)
+
+        assertEquals(ArchiveStatus.ARCHIVED, byId.getValue("archived_true").archiveStatus)
+        assertTrue(byId.getValue("archived_true").isArchived)
+        assertFalse(byId.getValue("archived_true").isExplicitlyUnarchived)
+
+        listOf("missing_field", "null_field", "string_false_field").forEach { id ->
+            val file = byId.getValue(id)
+            assertEquals(ArchiveStatus.UNSPECIFIED, file.archiveStatus)
+            assertTrue(file.isArchiveStatusUnspecified)
+            assertFalse(file.isExplicitlyUnarchived)
+            assertFalse(file.isExplicitlyArchived)
+        }
+    }
+
+    @Test
+    fun `mapStudyFileVersionsForAdmin preserves tri-state archive status across false true missing null and string`() {
+        val fileRef = FirestoreReferenceTarget("study_files", "file-1", "study_files/file-1")
+        val docs = listOf(
+            "v_false" to mapOf(
+                Fields.FILE_ID to fileRef,
+                Fields.VERSION_NUMBER to 1L,
+                Fields.VERSION_LABEL to "1.0",
+                Fields.IS_ARCHIVED to false
+            ),
+            "v_true" to mapOf(
+                Fields.FILE_ID to fileRef,
+                Fields.VERSION_NUMBER to 2L,
+                Fields.VERSION_LABEL to "2.0",
+                Fields.IS_ARCHIVED to true
+            ),
+            "v_missing" to mapOf(
+                Fields.FILE_ID to fileRef,
+                Fields.VERSION_NUMBER to 3L,
+                Fields.VERSION_LABEL to "3.0"
+            ),
+            "v_null" to mapOf(
+                Fields.FILE_ID to fileRef,
+                Fields.VERSION_NUMBER to 4L,
+                Fields.VERSION_LABEL to "4.0",
+                Fields.IS_ARCHIVED to null
+            ),
+            "v_string" to mapOf(
+                Fields.FILE_ID to fileRef,
+                Fields.VERSION_NUMBER to 5L,
+                Fields.VERSION_LABEL to "5.0",
+                Fields.IS_ARCHIVED to "false"
+            )
+        )
+
+        val mapped = FirestoreAdminCatalogMapper.mapStudyFileVersionsForAdmin(docs, expectedFileId = "file-1")
+        val byId = mapped.associateBy { it.id }
+
+        assertEquals(5, byId.size)
+        assertEquals(ArchiveStatus.UNARCHIVED, byId.getValue("v_false").archiveStatus)
+        assertTrue(byId.getValue("v_false").isExplicitlyUnarchived)
+
+        assertEquals(ArchiveStatus.ARCHIVED, byId.getValue("v_true").archiveStatus)
+        assertTrue(byId.getValue("v_true").isArchived)
+
+        listOf("v_missing", "v_null", "v_string").forEach { id ->
+            val version = byId.getValue(id)
+            assertEquals(ArchiveStatus.UNSPECIFIED, version.archiveStatus)
+            assertTrue(version.isArchiveStatusUnspecified)
+            assertFalse(version.isExplicitlyUnarchived)
+        }
+    }
+
+    @Test
+    fun `validateStudyFilePublishTransition rejects UNSPECIFIED archive status on parent or active version`() {
+        val validSha = "d".repeat(64)
+        val unarchivedVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-1",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            r2ObjectKey = "study-files/file-1/versions/v1/document.pdf",
+            fileSizeBytes = 4096L,
+            checksumSha256 = validSha,
+            isPublished = true,
+            archiveStatus = ArchiveStatus.UNARCHIVED
+        )
+
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "file-1",
+                exists = true,
+                archiveStatus = ArchiveStatus.UNSPECIFIED,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersion = unarchivedVersion
+            )
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED for unspecified parent file")
+        } catch (ex: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, ex.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, ex.validationError)
+        }
+
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "file-1",
+                exists = true,
+                archiveStatus = null,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersion = unarchivedVersion
+            )
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED when explicit ArchiveStatus is missing (null)")
+        } catch (ex: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, ex.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, ex.validationError)
+        }
+
+        try {
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = "file-1",
+                exists = true,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
+                targetPublished = true,
+                activeVersionId = "v1",
+                activeVersionNumber = 1,
+                activeVersion = unarchivedVersion.copy(archiveStatus = ArchiveStatus.UNSPECIFIED)
+            )
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED for unspecified active version")
+        } catch (ex: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, ex.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, ex.validationError)
+        }
+
+        // Safe fail-closed defaults on domain models when archiveStatus is omitted: never coerce to UNARCHIVED.
+        val defaultFile = StudyFileMetadata(
+            id = "f-default",
+            sectionId = "sec1",
+            title = "اختبار الافتراضي",
+            order = 1,
+            isPublished = false
+        )
+        assertEquals(ArchiveStatus.UNSPECIFIED, defaultFile.archiveStatus)
+        assertTrue(defaultFile.isArchiveStatusUnspecified)
+        assertFalse(defaultFile.isExplicitlyUnarchived)
+        assertFalse(defaultFile.isArchived)
     }
 }

@@ -8,6 +8,8 @@ import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSch
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogSchema.Fields
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
+import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -128,7 +130,7 @@ object FirestoreAdminCatalogMapper {
         val title = extractText(data, Fields.TITLE, Fields.NAME_AR, Fields.NAME) ?: return null
         val order = (data[Fields.ORDER] as? Number)?.toInt() ?: Int.MAX_VALUE
         val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
-        val isArchived = (data[Fields.IS_ARCHIVED] as? Boolean) ?: false
+        val archiveStatus = ArchiveStatus.fromIsArchivedValue(data[Fields.IS_ARCHIVED])
         val description = (data[Fields.DESCRIPTION] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val mimeType = (data[Fields.MIME_TYPE] as? String)?.trim()?.takeIf { it.isNotEmpty() }
             ?: Defaults.MIME_TYPE_PDF
@@ -151,7 +153,7 @@ object FirestoreAdminCatalogMapper {
             description = description,
             order = order,
             isPublished = isPublished,
-            isArchived = isArchived,
+            archiveStatus = archiveStatus,
             mimeType = mimeType,
             storageProvider = storageProvider,
             activeVersionId = activeVersionId,
@@ -170,7 +172,13 @@ object FirestoreAdminCatalogMapper {
         return documents
             .mapNotNull { (id, data) -> mapStudyFileForAdmin(id, data, expectedSectionId) }
             .sortedWith(
-                compareBy<StudyFileMetadata> { it.isArchived }
+                compareBy<StudyFileMetadata> {
+                    when {
+                        it.isExplicitlyUnarchived -> 0
+                        it.isExplicitlyArchived -> 2
+                        else -> 1
+                    }
+                }
                     .thenBy { it.order }
                     .thenBy { it.title }
             )
@@ -201,7 +209,7 @@ object FirestoreAdminCatalogMapper {
         val fileSizeBytes = (data[Fields.FILE_SIZE_BYTES] as? Number)?.toLong()?.takeIf { it > 0L }
         val checksumSha256 = (data[Fields.CHECKSUM_SHA256] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val isPublished = (data[Fields.IS_PUBLISHED] as? Boolean) ?: false
-        val isArchived = (data[Fields.IS_ARCHIVED] as? Boolean) ?: false
+        val archiveStatus = ArchiveStatus.fromIsArchivedValue(data[Fields.IS_ARCHIVED])
         val createdByUid = (data[Fields.CREATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val updatedByUid = (data[Fields.UPDATED_BY_UID] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val publishedAt = FirestoreCatalogMapper.extractEpochMillis(data[Fields.PUBLISHED_AT])
@@ -224,7 +232,7 @@ object FirestoreAdminCatalogMapper {
             fileReferencePath = fileRef.path,
             updatedByUid = updatedByUid,
             updatedAtEpochMillis = updatedAt,
-            isArchived = isArchived
+            archiveStatus = archiveStatus
         )
     }
 
@@ -295,7 +303,7 @@ object FirestoreAdminCatalogMapper {
     fun validateStudyFilePublishTransition(
         fileId: String,
         exists: Boolean,
-        isArchived: Boolean,
+        archiveStatus: ArchiveStatus?,
         targetPublished: Boolean,
         activeVersionId: String? = null,
         activeVersionNumber: Int? = null,
@@ -309,12 +317,19 @@ object FirestoreAdminCatalogMapper {
         }
         if (!targetPublished) return
 
-        if (isArchived) {
-            throw AdminException(
+        when (archiveStatus) {
+            ArchiveStatus.ARCHIVED -> throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
                 message = "Cannot publish archived study file '$fileId'; unarchive it first."
             )
+            ArchiveStatus.UNSPECIFIED,
+            null -> throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                message = "Study file '$fileId' has unspecified archive status and requires review before publishing."
+            )
+            ArchiveStatus.UNARCHIVED -> Unit
         }
 
         val cleanActiveId = activeVersionId?.trim().orEmpty()
@@ -334,11 +349,18 @@ object FirestoreAdminCatalogMapper {
             )
         }
 
-        if (activeVersion.isArchived) {
+        if (activeVersion.isExplicitlyArchived) {
             throw AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH,
                 message = "Cannot publish study file '$fileId' while active version '$cleanActiveId' is archived."
+            )
+        }
+        if (!activeVersion.isExplicitlyUnarchived) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                message = "Active version '$cleanActiveId' of study file '$fileId' has unspecified archive status."
             )
         }
 

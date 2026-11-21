@@ -20,6 +20,7 @@ import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogException
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadException
@@ -124,12 +125,16 @@ class BackendHttpIntegrationTest {
     @Volatile
     private var lastPublishedVersionId: String? = null
 
+    @Volatile
+    private var includeNonUnarchivedPublicFiles: Boolean = false
+
     @Before
     fun setUpServer() {
         scriptedAdminError = null
         scriptedR2PutError = null
         includeDraftV2InVersionsList = false
         lastPublishedVersionId = null
+        includeNonUnarchivedPublicFiles = false
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.executor = serverExecutor
         val port = server.address.port
@@ -169,10 +174,17 @@ class BackendHttpIntegrationTest {
         assertEquals(1, files.size)
         val file = files.first()
         assertEquals("file-1", file.id)
+        assertEquals(ArchiveStatus.UNARCHIVED, file.archiveStatus)
         assertEquals("v1", file.activeVersionId)
         assertEquals(1, file.activeVersionNumber)
         assertEquals(pdfPayload.size.toLong(), file.activeVersionFileSizeBytes)
         assertEquals(pdfSha256, file.activeVersionChecksumSha256)
+
+        // Items missing archiveStatus or with ARCHIVED / UNSPECIFIED must be filtered fail-closed.
+        includeNonUnarchivedPublicFiles = true
+        val filteredFiles = dataSource.fetchPublishedStudyFiles("sec-1")
+        assertEquals(listOf("file-1"), filteredFiles.map { it.id })
+        includeNonUnarchivedPublicFiles = false
 
         denyCatalogNextRequest = true
         try {
@@ -493,13 +505,18 @@ class BackendHttpIntegrationTest {
             title = "ملزمة الفصل الأول",
             order = 1,
             isPublished = false,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             activeVersionId = null,
             activeVersionNumber = null
         )
+        var archiveMutationCalls = 0
         val firestoreFake = object : NoOpCatalogMetadataRemoteDataSource() {
             override suspend fun fetchStudyFileMetadata(fileId: String): StudyFileMetadata? =
                 if (fileId == "file-1") currentFileMeta else null
+
+            override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
+                archiveMutationCalls++
+            }
         }
         val backendAdmin = BackendAdminVersionDataSource(
             httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
@@ -530,7 +547,7 @@ class BackendHttpIntegrationTest {
 
         // 3) Archived parent file -> must refuse.
         lastPublishedVersionId = null
-        currentFileMeta = currentFileMeta.copy(isArchived = true)
+        currentFileMeta = currentFileMeta.copy(archiveStatus = ArchiveStatus.ARCHIVED)
         try {
             hybridRemote.setStudyFilePublished("file-1", isPublished = true, actorUid = "admin-uid")
             fail("Expected FILE_ARCHIVED_CANNOT_PUBLISH_VERSION when file is archived")
@@ -539,6 +556,83 @@ class BackendHttpIntegrationTest {
             assertEquals(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION, expected.validationError)
         }
         assertNull(lastPublishedVersionId)
+
+        // 4) Unspecified parent archive status -> must fail closed on both publish AND setStudyFileArchived.
+        currentFileMeta = currentFileMeta.copy(archiveStatus = ArchiveStatus.UNSPECIFIED)
+        try {
+            hybridRemote.setStudyFilePublished("file-1", isPublished = true, actorUid = "admin-uid")
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED when file archive status is unspecified")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, expected.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, expected.validationError)
+        }
+        try {
+            hybridRemote.setStudyFileArchived("file-1", isArchived = true, actorUid = "admin-uid")
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED when archiving UNSPECIFIED file via Hybrid")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, expected.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, expected.validationError)
+        }
+        assertEquals(0, archiveMutationCalls)
+        assertNull(lastPublishedVersionId)
+    }
+
+    @Test
+    fun `F-2FR BackendAdminVersionDataSource preserves tri-state archiveStatus and maps ARCHIVE_STATE_UNSPECIFIED`() = runTest {
+        val backendAdmin = BackendAdminVersionDataSource(
+            httpClient = BackendHttpClient(rawBaseUrl = baseUrl, allowInsecureHttpForTesting = true),
+            authTokenProvider = AuthTokenProvider { _ -> "admin-jwt" }
+        )
+
+        val versions = backendAdmin.fetchStudyFileVersions("file-tristate")
+        val byId = versions.associateBy { it.id }
+
+        assertEquals(ArchiveStatus.UNARCHIVED, byId.getValue("v_unarchived").archiveStatus)
+        assertTrue(byId.getValue("v_unarchived").isExplicitlyUnarchived)
+
+        assertEquals(ArchiveStatus.ARCHIVED, byId.getValue("v_archived").archiveStatus)
+        assertTrue(byId.getValue("v_archived").isArchived)
+
+        assertEquals(ArchiveStatus.UNSPECIFIED, byId.getValue("v_unspecified").archiveStatus)
+        assertTrue(byId.getValue("v_unspecified").isArchiveStatusUnspecified)
+        assertFalse(byId.getValue("v_unspecified").isExplicitlyUnarchived)
+
+        // Missing, null, non-boolean, missing archiveStatus, or contradictory pairs MUST all yield UNSPECIFIED (F-2G-4).
+        listOf(
+            "v_invalid_archive_status",
+            "v_missing_archive_null",
+            "v_missing_archive_string",
+            "v_missing_archive_false",
+            "v_missing_archive_true",
+            "v_contradict_unarchived_true",
+            "v_contradict_archived_false",
+            "v_unarchived_null_bool",
+            "v_archived_null_bool",
+            "v_unarchived_string_bool"
+        ).forEach { id ->
+            val v = byId.getValue(id)
+            assertEquals("Expected UNSPECIFIED for $id", ArchiveStatus.UNSPECIFIED, v.archiveStatus)
+            assertTrue("Expected isArchiveStatusUnspecified for $id", v.isArchiveStatusUnspecified)
+            assertFalse("Expected !isExplicitlyUnarchived for $id", v.isExplicitlyUnarchived)
+        }
+
+        scriptedAdminError = 409 to "ARCHIVE_STATE_UNSPECIFIED"
+        try {
+            backendAdmin.publishStudyFileVersion("file-1", "v1")
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED on publish")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, expected.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, expected.validationError)
+        }
+
+        scriptedAdminError = 409 to "ARCHIVE_STATE_UNSPECIFIED"
+        try {
+            backendAdmin.verifyUploadedPdf("file-1", "v1", "11111111-1111-4111-8111-111111111111")
+            fail("Expected ARCHIVE_STATE_UNSPECIFIED on verify")
+        } catch (expected: AdminException) {
+            assertEquals(AdminFailureReason.VALIDATION_ERROR, expected.reason)
+            assertEquals(AdminValidationError.ARCHIVE_STATE_UNSPECIFIED, expected.validationError)
+        }
     }
 
     @Test
@@ -690,11 +784,13 @@ class BackendHttpIntegrationTest {
             }
 
             method == "GET" && path == "/api/catalog/sections/sec-1/study-files" -> {
-                sendJson(
-                    exchange,
-                    200,
-                    """{"items":[{"id":"file-1","sectionId":"sec-1","title":"ملزمة الفصل الأول","description":"شرح","order":1,"mimeType":"application/pdf","activeVersionId":"v1","activeVersionNumber":1,"activeVersionLabel":"1.0","activeVersionPublishedAtEpochMillis":1700000000000,"fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256"}]}"""
-                )
+                val validItem = """{"id":"file-1","sectionId":"sec-1","title":"ملزمة الفصل الأول","description":"شرح","order":1,"archiveStatus":"UNARCHIVED","mimeType":"application/pdf","activeVersionId":"v1","activeVersionNumber":1,"activeVersionLabel":"1.0","activeVersionPublishedAtEpochMillis":1700000000000,"fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256"}"""
+                val extraItems = if (includeNonUnarchivedPublicFiles) {
+                    """,{"id":"file-missing-status","sectionId":"sec-1","title":"بلا حالة","order":2,"mimeType":"application/pdf","activeVersionId":"v1","activeVersionNumber":1,"fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256"},{"id":"file-archived","sectionId":"sec-1","title":"مؤرشف","order":3,"archiveStatus":"ARCHIVED","mimeType":"application/pdf","activeVersionId":"v1","activeVersionNumber":1,"fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256"},{"id":"file-unspecified","sectionId":"sec-1","title":"غير محدد","order":4,"archiveStatus":"UNSPECIFIED","mimeType":"application/pdf","activeVersionId":"v1","activeVersionNumber":1,"fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256"}"""
+                } else {
+                    ""
+                }
+                sendJson(exchange, 200, """{"items":[$validItem$extraItems]}""")
             }
 
             method == "POST" && path == "/api/admin/study-files/file-1/versions" -> {
@@ -765,6 +861,32 @@ class BackendHttpIntegrationTest {
                 )
             }
 
+            method == "GET" && path == "/api/admin/study-files/file-tristate/versions" -> {
+                if (authHeader != "Bearer admin-jwt") {
+                    sendJson(exchange, 401, """{"error":{"code":"UNAUTHENTICATED","message":"Unauthorized"}}""")
+                    return
+                }
+                sendJson(
+                    exchange,
+                    200,
+                    """{"items":[
+                        {"id":"v_unarchived","fileId":"file-tristate","versionNumber":1,"versionLabel":"1.0","isPublished":false,"isArchived":false,"archiveStatus":"UNARCHIVED"},
+                        {"id":"v_archived","fileId":"file-tristate","versionNumber":2,"versionLabel":"2.0","isPublished":false,"isArchived":true,"archiveStatus":"ARCHIVED"},
+                        {"id":"v_unspecified","fileId":"file-tristate","versionNumber":3,"versionLabel":"3.0","isPublished":false,"isArchived":null,"archiveStatus":"UNSPECIFIED"},
+                        {"id":"v_invalid_archive_status","fileId":"file-tristate","versionNumber":4,"versionLabel":"4.0","isPublished":false,"isArchived":false,"archiveStatus":"BOGUS"},
+                        {"id":"v_missing_archive_null","fileId":"file-tristate","versionNumber":5,"versionLabel":"5.0","isPublished":false,"isArchived":null},
+                        {"id":"v_missing_archive_string","fileId":"file-tristate","versionNumber":6,"versionLabel":"6.0","isPublished":false,"isArchived":"false"},
+                        {"id":"v_missing_archive_false","fileId":"file-tristate","versionNumber":7,"versionLabel":"7.0","isPublished":false,"isArchived":false},
+                        {"id":"v_missing_archive_true","fileId":"file-tristate","versionNumber":8,"versionLabel":"8.0","isPublished":false,"isArchived":true},
+                        {"id":"v_contradict_unarchived_true","fileId":"file-tristate","versionNumber":9,"versionLabel":"9.0","isPublished":false,"isArchived":true,"archiveStatus":"UNARCHIVED"},
+                        {"id":"v_contradict_archived_false","fileId":"file-tristate","versionNumber":10,"versionLabel":"10.0","isPublished":false,"isArchived":false,"archiveStatus":"ARCHIVED"},
+                        {"id":"v_unarchived_null_bool","fileId":"file-tristate","versionNumber":11,"versionLabel":"11.0","isPublished":false,"isArchived":null,"archiveStatus":"UNARCHIVED"},
+                        {"id":"v_archived_null_bool","fileId":"file-tristate","versionNumber":12,"versionLabel":"12.0","isPublished":false,"isArchived":null,"archiveStatus":"ARCHIVED"},
+                        {"id":"v_unarchived_string_bool","fileId":"file-tristate","versionNumber":13,"versionLabel":"13.0","isPublished":false,"isArchived":"false","archiveStatus":"UNARCHIVED"}
+                    ]}"""
+                )
+            }
+
             method == "GET" && path == "/api/admin/study-files/file-1/versions" -> {
                 if (authHeader != "Bearer admin-jwt") {
                     sendJson(exchange, 401, """{"error":{"code":"UNAUTHENTICATED","message":"Unauthorized"}}""")
@@ -776,14 +898,14 @@ class BackendHttpIntegrationTest {
                     ""
                 }
                 val draftV2Item = if (includeDraftV2InVersionsList) {
-                    """,{"id":"v2","fileId":"file-1","versionNumber":2,"versionLabel":"2.0","isPublished":false,"isArchived":false,"binaryVerificationStatus":"VERIFIED","fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256","verifiedUploadSessionId":"$currentSessionId","verifiedAttemptId":"$currentAttemptId"}"""
+                    """,{"id":"v2","fileId":"file-1","versionNumber":2,"versionLabel":"2.0","isPublished":false,"isArchived":false,"archiveStatus":"UNARCHIVED","binaryVerificationStatus":"VERIFIED","fileSizeBytes":${pdfPayload.size},"checksumSha256":"$pdfSha256","verifiedUploadSessionId":"$currentSessionId","verifiedAttemptId":"$currentAttemptId"}"""
                 } else {
                     ""
                 }
                 sendJson(
                     exchange,
                     200,
-                    """{"items":[{"id":"v1","fileId":"file-1","versionNumber":1,"versionLabel":"1.0","isPublished":$versionPublished,"isArchived":false,"binaryVerificationStatus":"$versionVerificationStatus"$proofFields}$draftV2Item]}"""
+                    """{"items":[{"id":"v1","fileId":"file-1","versionNumber":1,"versionLabel":"1.0","isPublished":$versionPublished,"isArchived":false,"archiveStatus":"UNARCHIVED","binaryVerificationStatus":"$versionVerificationStatus"$proofFields}$draftV2Item]}"""
                 )
             }
 

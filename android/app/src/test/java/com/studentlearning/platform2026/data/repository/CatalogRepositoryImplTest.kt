@@ -4,6 +4,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.remote.firebase.CatalogRemoteDataSource
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogException
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.StudyBranch
@@ -162,7 +163,7 @@ class CatalogRepositoryImplTest {
                 description = "نسخة مراجعة",
                 order = 1,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 activeVersionId = "v1"
             )
         )

@@ -6,6 +6,7 @@ import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.DownloadException
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
@@ -368,7 +369,8 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
             title = title,
             description = description,
             order = order,
-            isPublished = false
+            isPublished = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED
         )
         studyFiles.add(created)
         return AppResult.Success(created)
@@ -405,7 +407,7 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
             FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
                 fileId = fileId,
                 exists = file != null,
-                isArchived = file?.isArchived == true,
+                archiveStatus = file?.archiveStatus,
                 targetPublished = isPublished,
                 activeVersionId = file?.activeVersionId,
                 activeVersionNumber = file?.activeVersionNumber,
@@ -428,8 +430,20 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
                 cause = AdminException(AdminFailureReason.NOT_FOUND)
             )
         }
-        studyFiles[index] = studyFiles[index].copy(
-            isArchived = isArchived,
+        val current = studyFiles[index]
+        if (current.isArchiveStatusUnspecified ||
+            (!current.isExplicitlyUnarchived && !current.isExplicitlyArchived)
+        ) {
+            return AppResult.Error(
+                message = "Study file '$fileId' has unspecified archive status.",
+                cause = AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED
+                )
+            )
+        }
+        studyFiles[index] = current.copy(
+            archiveStatus = if (isArchived) ArchiveStatus.ARCHIVED else ArchiveStatus.UNARCHIVED,
             isPublished = false
         )
         return AppResult.Success(Unit)
@@ -473,8 +487,19 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
             )
             return AppResult.Error("Cannot publish before uploading PDF", ex)
         }
-        if (studyFiles.none { it.id == validated.fileId }) {
-            return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
+        val parentFile = studyFiles.firstOrNull { it.id == validated.fileId }
+            ?: return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
+        if (parentFile.isExplicitlyArchived) {
+            return AppResult.Error(
+                "Parent file is archived",
+                AdminException(AdminFailureReason.VALIDATION_ERROR, AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION)
+            )
+        }
+        if (!parentFile.isExplicitlyUnarchived) {
+            return AppResult.Error(
+                "Parent file archive state unspecified",
+                AdminException(AdminFailureReason.VALIDATION_ERROR, AdminValidationError.ARCHIVE_STATE_UNSPECIFIED)
+            )
         }
         if (versions.any { it.fileId == validated.fileId && it.versionNumber == validated.versionNumber }) {
             val ex = AdminException(
@@ -498,6 +523,7 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
             versionLabel = validated.versionLabel,
             versionNotes = validated.versionNotes,
             isPublished = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             createdAtEpochMillis = 1_700_000_000_000L + versions.size
         )
         versions.add(created)
@@ -556,24 +582,38 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
             return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
         }
         val file = studyFiles[fileIndex]
-        if (file.isArchived) {
+        if (file.isExplicitlyArchived) {
             val ex = AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION
             )
             return AppResult.Error("Parent file is archived", ex)
         }
+        if (!file.isExplicitlyUnarchived) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED
+            )
+            return AppResult.Error("Parent file archive status is unspecified", ex)
+        }
         val versionIndex = versions.indexOfFirst { it.fileId == fileId && it.id == versionId }
         if (versionIndex < 0) {
             return AppResult.Error("Version not found", AdminException(AdminFailureReason.NOT_FOUND))
         }
         val target = versions[versionIndex]
-        if (target.isArchived) {
+        if (target.isExplicitlyArchived) {
             val ex = AdminException(
                 reason = AdminFailureReason.VALIDATION_ERROR,
                 validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH
             )
             return AppResult.Error("Target version is archived", ex)
+        }
+        if (!target.isExplicitlyUnarchived) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED
+            )
+            return AppResult.Error("Target version archive status is unspecified", ex)
         }
         val hasProof = FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
             fileId = fileId,
@@ -624,7 +664,7 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
         }
         val file = studyFiles.firstOrNull { it.id == fileId }
             ?: return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
-        if (file.isArchived) {
+        if (file.isExplicitlyArchived) {
             return AppResult.Error(
                 "Parent file archived",
                 AdminException(
@@ -633,17 +673,35 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
                 )
             )
         }
+        if (!file.isExplicitlyUnarchived) {
+            return AppResult.Error(
+                "Parent file archive unspecified",
+                AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED
+                )
+            )
+        }
         val versionIdx = versions.indexOfFirst { it.fileId == fileId && it.id == versionId }
         if (versionIdx < 0) {
             return AppResult.Error("Version not found", AdminException(AdminFailureReason.NOT_FOUND))
         }
         val current = versions[versionIdx]
-        if (current.isArchived) {
+        if (current.isExplicitlyArchived) {
             return AppResult.Error(
                 "Version archived",
                 AdminException(
                     reason = AdminFailureReason.VALIDATION_ERROR,
                     validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH
+                )
+            )
+        }
+        if (!current.isExplicitlyUnarchived) {
+            return AppResult.Error(
+                "Version archive unspecified",
+                AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED
                 )
             )
         }

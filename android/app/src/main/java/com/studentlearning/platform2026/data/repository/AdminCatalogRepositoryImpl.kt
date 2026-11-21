@@ -250,6 +250,20 @@ class AdminCatalogRepositoryImpl(
         isArchived: Boolean
     ): AppResult<Unit> = executeAuthorized { actorUid ->
         val validFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
+        val existingFile = remoteDataSource.fetchStudyFileMetadata(validFileId)
+            ?: throw AdminException(
+                reason = AdminFailureReason.NOT_FOUND,
+                message = "Study file '$validFileId' does not exist."
+            )
+        if (existingFile.isArchiveStatusUnspecified ||
+            (!existingFile.isExplicitlyUnarchived && !existingFile.isExplicitlyArchived)
+        ) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.ARCHIVE_STATE_UNSPECIFIED,
+                message = "Study file '$validFileId' has unspecified archive status and requires review before archiving or restoring."
+            )
+        }
         remoteDataSource.setStudyFileArchived(validFileId, isArchived, actorUid)
     }
 

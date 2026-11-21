@@ -32,6 +32,7 @@ fun resolveAuthErrorText(
             AdminValidationError.VERSION_NOTES_TOO_LONG -> R.string.admin_validation_version_notes_too_long
             AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION -> R.string.admin_validation_file_archived_publish
             AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH -> R.string.admin_validation_version_archived_publish
+            AdminValidationError.ARCHIVE_STATE_UNSPECIFIED -> R.string.admin_validation_archive_state_unspecified
             AdminValidationError.VERSION_PDF_BINARY_MISSING -> R.string.admin_validation_version_pdf_missing
             AdminValidationError.VERSION_UPLOAD_INVALID_PDF -> R.string.admin_validation_upload_invalid_pdf
             AdminValidationError.VERSION_UPLOAD_SIZE_MISMATCH -> R.string.admin_validation_upload_size_mismatch

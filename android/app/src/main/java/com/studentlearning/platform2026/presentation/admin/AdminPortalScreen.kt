@@ -1332,9 +1332,13 @@ private fun AdminStudyFileCard(
                     ),
                     highlighted = file.isPublished
                 )
-                if (file.isArchived) {
-                    StatusChip(
+                when {
+                    file.isExplicitlyArchived -> StatusChip(
                         label = stringResource(R.string.admin_status_archived),
+                        highlighted = false
+                    )
+                    file.isArchiveStatusUnspecified -> StatusChip(
+                        label = stringResource(R.string.admin_status_archive_unspecified),
                         highlighted = false
                     )
                 }
@@ -1355,6 +1359,21 @@ private fun AdminStudyFileCard(
                     StatusChip(
                         label = stringResource(R.string.admin_no_active_version_badge),
                         highlighted = false
+                    )
+                }
+            }
+
+            if (file.isArchiveStatusUnspecified) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = stringResource(R.string.admin_study_file_archive_unspecified_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(spacing.sm)
                     )
                 }
             }
@@ -1387,10 +1406,11 @@ private fun AdminStudyFileCard(
             }
 
             val canPublishOrUnpublish = !isSubmitting &&
-                (file.isPublished || (!file.isArchived && file.hasValidActiveVersionForPublish))
+                (file.isPublished || (file.isExplicitlyUnarchived && file.hasValidActiveVersionForPublish))
             val publishDisabledReasonRes = when {
                 file.isPublished -> null
-                file.isArchived -> R.string.admin_study_file_publish_disabled_archived
+                file.isExplicitlyArchived -> R.string.admin_study_file_publish_disabled_archived
+                file.isArchiveStatusUnspecified -> R.string.admin_study_file_publish_disabled_archive_unspecified
                 !file.hasValidActiveVersionForPublish -> R.string.admin_study_file_publish_disabled_no_active_version
                 else -> null
             }
@@ -1421,16 +1441,19 @@ private fun AdminStudyFileCard(
                         )
                     )
                 }
-                TextButton(onClick = onToggleArchive, enabled = !isSubmitting) {
+                TextButton(
+                    onClick = onToggleArchive,
+                    enabled = !isSubmitting && !file.isArchiveStatusUnspecified
+                ) {
                     Icon(
-                        imageVector = if (file.isArchived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
+                        imageVector = if (file.isExplicitlyArchived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = stringResource(
-                            if (file.isArchived) R.string.admin_action_restore else R.string.admin_action_archive
+                            if (file.isExplicitlyArchived) R.string.admin_action_restore else R.string.admin_action_archive
                         )
                     )
                 }

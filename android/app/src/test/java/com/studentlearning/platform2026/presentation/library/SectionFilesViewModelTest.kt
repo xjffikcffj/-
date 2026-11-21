@@ -13,6 +13,7 @@ import com.studentlearning.platform2026.data.pdf.PdfFileSourceDataSource
 import com.studentlearning.platform2026.data.repository.OfflineDownloadsRepositoryImpl
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.ArchiveStatus
 import com.studentlearning.platform2026.domain.model.CatalogException
 import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
@@ -77,7 +78,7 @@ class SectionFilesViewModelTest {
                 description = "نسخة منقحة",
                 order = 1,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 activeVersionId = "v1"
             )
         )
@@ -117,7 +118,7 @@ class SectionFilesViewModelTest {
             title = "ملخص الفصل الأول",
             order = 1,
             isPublished = true,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             activeVersionId = "v1"
         )
         val authRepo = FakeAuthRepository(initialSession = AdminSession()) // GUEST
@@ -155,7 +156,7 @@ class SectionFilesViewModelTest {
             title = "المعادلات التفاضلية",
             order = 1,
             isPublished = true,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             activeVersionId = "v2",
             activeVersionNumber = 2,
             activeVersionLabel = "v2"
@@ -284,7 +285,7 @@ class SectionFilesViewModelTest {
                 title = "ملف تزامن الواجهة",
                 order = 1,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 activeVersionId = "v1",
                 activeVersionNumber = 1,
                 activeVersionLabel = "v1"
@@ -453,7 +454,7 @@ class SectionFilesViewModelTest {
                 title = "الكيمياء العضوية",
                 order = 1,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 activeVersionId = "v2",
                 activeVersionNumber = 2,
                 activeVersionLabel = "2.0",
@@ -532,7 +533,7 @@ class SectionFilesViewModelTest {
                 title = "الفيزياء",
                 order = 1,
                 isPublished = true,
-                isArchived = false,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
                 activeVersionId = "v2",
                 activeVersionNumber = 2,
                 activeVersionLabel = "2.0",
@@ -585,7 +586,7 @@ class SectionFilesViewModelTest {
             title = "الأحياء",
             order = 1,
             isPublished = true,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             activeVersionId = "v2",
             activeVersionNumber = 2,
             activeVersionLabel = "2.0",
@@ -623,7 +624,7 @@ class SectionFilesViewModelTest {
             title = "الرياضيات",
             order = 1,
             isPublished = true,
-            isArchived = false,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
             activeVersionId = "v2",
             activeVersionNumber = 2,
             activeVersionLabel = "2.0",

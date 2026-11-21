@@ -245,6 +245,8 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'isArchived', 'isPublished', 'updatedByUid', 'updatedAt'
             ])
+            && ('isArchived' in resource.data)
+            && resource.data.isArchived is bool
             && request.resource.data.isArchived is bool
             && request.resource.data.isPublished == false
           )

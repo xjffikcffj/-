@@ -16,7 +16,7 @@ class NewVersionBadgePolicyTest {
         title = "ملزمة الفيزياء",
         order = 1,
         isPublished = true,
-        isArchived = false,
+        archiveStatus = ArchiveStatus.UNARCHIVED,
         activeVersionId = activeVersionId,
         activeVersionNumber = if (activeVersionId != null) 2 else null,
         activeVersionLabel = if (activeVersionId != null) "2.0" else null,

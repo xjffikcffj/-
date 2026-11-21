@@ -442,4 +442,13 @@
     <string name="admin_validation_r2_not_configured">تخزين Cloudflare R2 غير مهيأ على الخادم حالياً؛ تعذّر إتمام العملية.</string>
     <string name="admin_validation_upload_r2_rejected">رفض تخزين Cloudflare R2 استلام ملف PDF المؤقت؛ يرجى طلب جلسة رفع جديدة والمحاولة مرة أخرى.</string>
     <string name="admin_validation_backend_request_rejected">رفض الخادم الطلب بسبب تعارض في الحالة أو بيانات غير صالحة؛ راجع المدخلات وأعد المحاولة.</string>
+
+    <!-- Fix Pack 2F-R: Tri-state archive status strings -->
+    <string name="admin_status_archive_unspecified">حالة الأرشفة غير محددة</string>
+    <string name="admin_status_parent_archive_unspecified">أرشفة الملف الأب غير محددة</string>
+    <string name="admin_study_file_archive_unspecified_warning">حالة الأرشفة غير محددة — هذه الوثيقة تحتاج إلى مراجعة قبل النشر</string>
+    <string name="admin_study_file_publish_disabled_archive_unspecified">النشر وإلغاء الأرشفة التلقائي معطّلان لأن حالة الأرشفة غير محددة؛ يرجى مراجعة الوثيقة أولاً.</string>
+    <string name="admin_version_parent_archive_unspecified_warning">حالة أرشفة الملف الأب غير محددة — هذا الإصدار يحتاج إلى مراجعة ويُمنع رفع PDF جديد أو نشره حتى تُحسم حالة الأرشفة.</string>
+    <string name="admin_version_archive_unspecified_warning">حالة أرشفة هذا الإصدار غير محددة — يُمنع رفع PDF جديد أو نشره حتى تُراجع الوثيقة.</string>
+    <string name="admin_validation_archive_state_unspecified">حالة الأرشفة غير محددة في قاعدة البيانات (حقل isArchived مفقود أو غير صالح) — تحتاج الوثيقة إلى مراجعة إدارية قبل تنفيذ هذه العملية.</string>
 </resources>
