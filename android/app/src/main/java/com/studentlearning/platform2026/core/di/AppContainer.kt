@@ -1,6 +1,7 @@
 package com.studentlearning.platform2026.core.di
 
 import android.content.Context
+import com.studentlearning.platform2026.BuildConfig
 import com.studentlearning.platform2026.core.common.DefaultDispatcherProvider
 import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.download.DownloadExecutionEngine
@@ -19,14 +20,18 @@ import com.studentlearning.platform2026.data.pdf.HttpPdfContentFetcher
 import com.studentlearning.platform2026.data.pdf.PdfContentFetcher
 import com.studentlearning.platform2026.data.pdf.PdfDocumentSessionFactory
 import com.studentlearning.platform2026.data.pdf.PdfFileSourceDataSource
+import com.studentlearning.platform2026.data.remote.backend.BackendAdminVersionDataSource
+import com.studentlearning.platform2026.data.remote.backend.BackendCatalogDataSource
+import com.studentlearning.platform2026.data.remote.backend.BackendHttpClient
+import com.studentlearning.platform2026.data.remote.backend.HybridAdminCatalogDataSource
 import com.studentlearning.platform2026.data.remote.firebase.AdminCatalogRemoteDataSource
 import com.studentlearning.platform2026.data.remote.firebase.AuthRemoteDataSource
+import com.studentlearning.platform2026.data.remote.firebase.AuthTokenProvider
 import com.studentlearning.platform2026.data.remote.firebase.CatalogRemoteDataSource
 import com.studentlearning.platform2026.data.remote.firebase.FirebaseAuthDataSource
 import com.studentlearning.platform2026.data.remote.firebase.FirebaseClientProvider
 import com.studentlearning.platform2026.data.remote.firebase.FirebaseStatusDataSource
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogDataSource
-import com.studentlearning.platform2026.data.remote.firebase.FirestoreCatalogDataSource
 import com.studentlearning.platform2026.data.repository.AdminCatalogRepositoryImpl
 import com.studentlearning.platform2026.data.repository.AuthRepositoryImpl
 import com.studentlearning.platform2026.data.repository.CatalogRepositoryImpl
@@ -72,26 +77,66 @@ class AppContainer(context: Context) {
         FirebaseStatusDataSource(firebaseClientProvider)
     }
 
-    private val catalogRemoteDataSource: CatalogRemoteDataSource by lazy {
-        FirestoreCatalogDataSource(firebaseClientProvider)
-    }
-
-    private val authRemoteDataSource: AuthRemoteDataSource by lazy {
+    private val firebaseAuthDataSource: FirebaseAuthDataSource by lazy {
         FirebaseAuthDataSource(firebaseClientProvider)
     }
 
-    private val adminCatalogRemoteDataSource: AdminCatalogRemoteDataSource by lazy {
-        FirestoreAdminCatalogDataSource(firebaseClientProvider)
+    private val authRemoteDataSource: AuthRemoteDataSource
+        get() = firebaseAuthDataSource
+
+    private val authTokenProvider: AuthTokenProvider
+        get() = firebaseAuthDataSource
+
+    private val backendBaseUrl: String? = BuildConfig.HAQIBATI_BACKEND_BASE_URL
+        .trim()
+        .takeIf { it.isNotEmpty() }
+
+    private val backendHttpClient: BackendHttpClient by lazy {
+        BackendHttpClient(rawBaseUrl = backendBaseUrl)
     }
 
-    // Secure Cloudflare R2 broker base URL remains unconfigured until backend signed-URL
-    // integration; never embeds storage keys or public bucket guesses inside the APK.
+    private val backendCatalogDataSource: BackendCatalogDataSource by lazy {
+        BackendCatalogDataSource(
+            httpClient = backendHttpClient,
+            authTokenProvider = authTokenProvider
+        )
+    }
+
+    private val backendAdminVersionDataSource: BackendAdminVersionDataSource by lazy {
+        BackendAdminVersionDataSource(
+            httpClient = backendHttpClient,
+            authTokenProvider = authTokenProvider
+        )
+    }
+
+    private val catalogRemoteDataSource: CatalogRemoteDataSource
+        get() = backendCatalogDataSource
+
+    private val adminCatalogRemoteDataSource: AdminCatalogRemoteDataSource by lazy {
+        HybridAdminCatalogDataSource(
+            firestoreDataSource = FirestoreAdminCatalogDataSource(firebaseClientProvider),
+            backendVersionDataSource = backendAdminVersionDataSource
+        )
+    }
+
+    // Secure Cloudflare R2 broker base URL is supplied exclusively via HAQIBATI_BACKEND_BASE_URL
+    // BuildConfig at build time; never embeds storage keys or public bucket guesses inside the APK.
     private val pdfFileSourceDataSource: PdfFileSourceDataSource by lazy {
-        BrokeredPdfFileSourceDataSource(brokerEndpointBaseUrl = null)
+        BrokeredPdfFileSourceDataSource(
+            brokerEndpointBaseUrl = backendBaseUrl,
+            authTokenProvider = authTokenProvider
+        )
     }
 
     val pdfVersionStorageBroker: PdfVersionStorageBroker by lazy {
-        BrokeredPdfVersionStorageDataSource(brokerEndpointBaseUrl = null)
+        BrokeredPdfVersionStorageDataSource(
+            brokerEndpointBaseUrl = backendBaseUrl,
+            backendUploadClient = if (backendHttpClient.isConfigured) {
+                backendAdminVersionDataSource
+            } else {
+                null
+            }
+        )
     }
 
     private val pdfContentFetcher: PdfContentFetcher by lazy {

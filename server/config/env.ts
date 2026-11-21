@@ -54,7 +54,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     allowedOrigins,
     uploadSessionTtlSeconds: parsePositiveIntEnv(
       env.UPLOAD_SESSION_TTL_SECONDS,
-      15 * 60,
+      10 * 60,
       60,
       3600,
     ),

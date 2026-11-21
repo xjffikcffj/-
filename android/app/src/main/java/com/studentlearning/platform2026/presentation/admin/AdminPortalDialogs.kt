@@ -18,10 +18,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -493,10 +496,12 @@ internal fun AdminFileVersionsDialog(
     errorReason: AdminFailureReason?,
     r2BrokerStatus: PdfBrokerConfigurationStatus,
     canMutate: Boolean,
+    uploadingVersionId: String? = null,
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
     onAddVersion: () -> Unit,
     onEditVersion: (StudyFileVersionMetadata) -> Unit,
+    onUploadVersionPdf: (StudyFileVersionMetadata) -> Unit = {},
     onPublishVersion: (StudyFileVersionMetadata) -> Unit
 ) {
     val spacing = HaqibatiThemeTokens.spacing
@@ -630,18 +635,61 @@ internal fun AdminFileVersionsDialog(
                                         )
                                     }
 
-                                    Text(
-                                        text = if (!version.r2ObjectKey.isNullOrBlank()) {
-                                            stringResource(
-                                                R.string.admin_version_r2_key_label,
-                                                version.r2ObjectKey
-                                            )
-                                        } else {
+                                    val verificationSummaryText = when {
+                                        version.hasUploadedPdfBinary ->
+                                            stringResource(R.string.admin_version_verification_verified)
+                                        version.binaryVerificationStatus == "PENDING_UPLOAD" ->
+                                            stringResource(R.string.admin_version_verification_pending_upload)
+                                        r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED ->
+                                            stringResource(R.string.admin_version_verification_none)
+                                        else ->
                                             stringResource(R.string.admin_version_r2_pending_label)
-                                        },
+                                    }
+                                    Text(
+                                        text = verificationSummaryText,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = if (version.hasUploadedPdfBinary) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
                                     )
+
+                                    if (version.hasUploadedPdfBinary && version.fileSizeBytes != null) {
+                                        val sizeMb = version.fileSizeBytes.toDouble() / (1024.0 * 1024.0)
+                                        Text(
+                                            text = stringResource(
+                                                R.string.admin_version_pdf_verified_badge,
+                                                sizeMb
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
+                                    val checksumSha256 = version.checksumSha256?.takeIf { it.isNotBlank() }
+                                    if (checksumSha256 != null) {
+                                        Text(
+                                            text = stringResource(
+                                                R.string.admin_version_checksum_label,
+                                                checksumSha256
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    val verifiedAttemptId = version.verifiedAttemptId?.takeIf { it.isNotBlank() }
+                                    if (verifiedAttemptId != null) {
+                                        Text(
+                                            text = stringResource(
+                                                R.string.admin_version_attempt_id_label,
+                                                verifiedAttemptId
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
 
                                     version.publishedAtEpochMillis?.let { millis ->
                                         val dateText = remember(millis) {
@@ -669,9 +717,42 @@ internal fun AdminFileVersionsDialog(
                                         )
                                     }
 
-                                    if (!isActivePublished && !canPublishVersion) {
+                                    val isUploadingThisVersion = uploadingVersionId == version.id
+                                    val canUploadPdf = canMutate &&
+                                        uploadingVersionId == null &&
+                                        !file.isArchived &&
+                                        !version.isArchived &&
+                                        !isActivePublished &&
+                                        r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED
+
+                                    if (isUploadingThisVersion) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Text(
+                                                text = stringResource(R.string.admin_uploading_verifying_pdf),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    } else if (!isActivePublished && !canPublishVersion) {
+                                        val hintRes = if (
+                                            r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED &&
+                                            !version.hasUploadedPdfBinary &&
+                                            !file.isArchived &&
+                                            !version.isArchived
+                                        ) {
+                                            R.string.admin_version_waiting_upload_notice
+                                        } else {
+                                            R.string.admin_version_requires_pdf_notice
+                                        }
                                         Text(
-                                            text = stringResource(R.string.admin_version_requires_pdf_notice),
+                                            text = stringResource(hintRes),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -683,7 +764,7 @@ internal fun AdminFileVersionsDialog(
                                     ) {
                                         OutlinedButton(
                                             onClick = { onEditVersion(version) },
-                                            enabled = canMutate
+                                            enabled = canMutate && uploadingVersionId == null
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Rounded.Edit,
@@ -693,10 +774,27 @@ internal fun AdminFileVersionsDialog(
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(text = stringResource(R.string.admin_action_edit))
                                         }
+                                        if (!isActivePublished &&
+                                            !version.isArchived &&
+                                            r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED
+                                        ) {
+                                            FilledTonalButton(
+                                                onClick = { onUploadVersionPdf(version) },
+                                                enabled = canUploadPdf
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.CloudUpload,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(text = stringResource(R.string.admin_action_upload_verify_pdf))
+                                            }
+                                        }
                                         if (!isActivePublished) {
                                             Button(
                                                 onClick = { onPublishVersion(version) },
-                                                enabled = canPublishVersion
+                                                enabled = canPublishVersion && uploadingVersionId == null
                                             ) {
                                                 Text(
                                                     text = stringResource(

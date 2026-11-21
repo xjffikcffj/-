@@ -47,13 +47,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -62,6 +67,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.studentlearning.platform2026.R
+import com.studentlearning.platform2026.core.common.AppResult
+import com.studentlearning.platform2026.data.remote.backend.PdfUploadUriReader
+import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminValidationError
@@ -70,6 +78,9 @@ import com.studentlearning.platform2026.presentation.account.resolveAuthErrorTex
 import com.studentlearning.platform2026.presentation.components.HaqibatiSurfaceCard
 import com.studentlearning.platform2026.presentation.components.HaqibatiTopBar
 import com.studentlearning.platform2026.presentation.theme.HaqibatiThemeTokens
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun AdminPortalScreen(
@@ -78,6 +89,38 @@ fun AdminPortalScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var pendingUploadTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val target = pendingUploadTarget
+        pendingUploadTarget = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        coroutineScope.launch {
+            when (val inspected = withContext(Dispatchers.IO) {
+                PdfUploadUriReader.inspectSelectedPdf(context.contentResolver, uri)
+            }) {
+                is AppResult.Success -> {
+                    viewModel.uploadAndVerifyVersionPdf(
+                        fileId = target.first,
+                        versionId = target.second,
+                        binarySource = inspected.data
+                    )
+                }
+                is AppResult.Error -> {
+                    val ex = inspected.cause as? AdminException
+                    viewModel.reportVersionUploadError(
+                        validationError = ex?.validationError ?: AdminValidationError.VERSION_UPLOAD_INVALID_PDF,
+                        reason = ex?.reason ?: AdminFailureReason.VALIDATION_ERROR
+                    )
+                }
+                AppResult.Loading -> Unit
+            }
+        }
+    }
 
     AdminPortalScreenContent(
         uiState = uiState,
@@ -116,6 +159,11 @@ fun AdminPortalScreen(
         onRetryFileVersions = { viewModel.loadFileVersions() },
         onOpenCreateVersion = viewModel::openCreateVersionDialog,
         onOpenEditVersion = viewModel::openEditVersionDialog,
+        onRequestUploadVersionPdf = { version ->
+            val targetFileId = uiState.versionsDialogFile?.id ?: version.fileId
+            pendingUploadTarget = targetFileId to version.id
+            pdfPickerLauncher.launch(arrayOf("application/pdf"))
+        },
         onRequestPublishVersion = viewModel::requestPublishStudyFileVersion,
         onDismissEditor = viewModel::dismissEditorDialog,
         onSaveBranch = { editing, customId, name, order, isPublished ->
@@ -193,6 +241,7 @@ fun AdminPortalScreenContent(
     onRetryFileVersions: () -> Unit = {},
     onOpenCreateVersion: () -> Unit = {},
     onOpenEditVersion: (com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata) -> Unit = {},
+    onRequestUploadVersionPdf: (com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata) -> Unit = {},
     onRequestPublishVersion: (com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata) -> Unit = {},
     onDismissEditor: () -> Unit,
     onSaveBranch: (com.studentlearning.platform2026.domain.model.StudyBranch?, String?, String, Int, Boolean) -> Unit,
@@ -310,10 +359,12 @@ fun AdminPortalScreenContent(
                 errorReason = uiState.fileVersionsError,
                 r2BrokerStatus = uiState.r2BrokerStatus,
                 canMutate = !uiState.isSubmitting,
+                uploadingVersionId = uiState.uploadingVersionId,
                 onDismiss = onDismissFileVersions,
                 onRetry = onRetryFileVersions,
                 onAddVersion = onOpenCreateVersion,
                 onEditVersion = onOpenEditVersion,
+                onUploadVersionPdf = onRequestUploadVersionPdf,
                 onPublishVersion = onRequestPublishVersion
             )
         }
@@ -680,6 +731,7 @@ private fun AdminDashboardContent(
     val spacing = HaqibatiThemeTokens.spacing
     val tabs = AdminManagementSection.entries
     val canMutate = uiState.session.canPerformAdminActions && !uiState.isSubmitting
+    val canPerformOwnerOnly = uiState.session.canPerformOwnerOnlyActions && !uiState.isSubmitting
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScrollableTabRow(
@@ -779,9 +831,25 @@ private fun AdminDashboardContent(
                         SectionActionHeader(
                             contextText = null,
                             addLabel = stringResource(R.string.admin_add_branch),
-                            addEnabled = canMutate,
+                            addEnabled = canPerformOwnerOnly,
                             onAddClick = onOpenCreateBranch
                         )
+                    }
+                    if (!uiState.session.canPerformOwnerOnlyActions) {
+                        item {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.admin_owner_only_branches_notice),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(spacing.sm)
+                                )
+                            }
+                        }
                     }
                     when {
                         uiState.isLoadingBranches -> item { AdminLoadingBox() }
@@ -798,9 +866,11 @@ private fun AdminDashboardContent(
                                     referenceBadge = stringResource(R.string.admin_reference_badge, branch.referencePath),
                                     order = branch.order,
                                     isPublished = branch.isPublished,
-                                    canMoveUp = index > 0 && canMutate,
-                                    canMoveDown = index < uiState.branches.lastIndex && canMutate,
-                                    isSubmitting = !canMutate,
+                                    canMoveUp = index > 0 && canPerformOwnerOnly,
+                                    canMoveDown = index < uiState.branches.lastIndex && canPerformOwnerOnly,
+                                    isSubmitting = !canPerformOwnerOnly,
+                                    canEdit = canPerformOwnerOnly,
+                                    canTogglePublish = canPerformOwnerOnly,
                                     onMoveUp = { onMoveBranch(branch, true) },
                                     onMoveDown = { onMoveBranch(branch, false) },
                                     onEdit = { onOpenEditBranch(branch) },
@@ -826,6 +896,22 @@ private fun AdminDashboardContent(
                                 onAddClick = onOpenCreateSubject
                             )
                         }
+                        if (!uiState.session.canPerformOwnerOnlyActions) {
+                            item {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.admin_owner_only_subject_unpublish_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(spacing.sm)
+                                    )
+                                }
+                            }
+                        }
                         when {
                             uiState.isLoadingSubjects -> item { AdminLoadingBox() }
                             uiState.subjectsError != null -> item {
@@ -836,6 +922,11 @@ private fun AdminDashboardContent(
                             }
                             else -> {
                                 itemsIndexed(uiState.subjects, key = { _, item -> item.id }) { index, subject ->
+                                    val canToggleSubjectPublish = if (subject.isPublished) {
+                                        canPerformOwnerOnly
+                                    } else {
+                                        canMutate
+                                    }
                                     AdminCatalogItemCard(
                                         title = subject.name,
                                         referenceBadge = stringResource(R.string.admin_reference_badge, subject.branchReferencePath),
@@ -844,6 +935,8 @@ private fun AdminDashboardContent(
                                         canMoveUp = index > 0 && canMutate,
                                         canMoveDown = index < uiState.subjects.lastIndex && canMutate,
                                         isSubmitting = !canMutate,
+                                        canEdit = canMutate,
+                                        canTogglePublish = canToggleSubjectPublish,
                                         onMoveUp = { onMoveSubject(subject, true) },
                                         onMoveDown = { onMoveSubject(subject, false) },
                                         onEdit = { onOpenEditSubject(subject) },
@@ -1095,6 +1188,8 @@ private fun AdminCatalogItemCard(
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     isSubmitting: Boolean,
+    canEdit: Boolean = !isSubmitting,
+    canTogglePublish: Boolean = !isSubmitting,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onEdit: () -> Unit,
@@ -1157,12 +1252,12 @@ private fun AdminCatalogItemCard(
                 horizontalArrangement = Arrangement.spacedBy(spacing.xs),
                 verticalArrangement = Arrangement.spacedBy(spacing.xs)
             ) {
-                OutlinedButton(onClick = onEdit, enabled = !isSubmitting) {
+                OutlinedButton(onClick = onEdit, enabled = canEdit) {
                     Icon(imageVector = Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(text = stringResource(R.string.admin_action_edit))
                 }
-                OutlinedButton(onClick = onTogglePublish, enabled = !isSubmitting) {
+                OutlinedButton(onClick = onTogglePublish, enabled = canTogglePublish) {
                     Text(
                         text = stringResource(
                             if (isPublished) R.string.admin_action_unpublish else R.string.admin_action_publish
@@ -1434,6 +1529,7 @@ private fun resolveAdminSuccessText(message: AdminSuccessMessage?): String {
         AdminSuccessMessage.FILE_UPDATED -> R.string.admin_success_file_updated
         AdminSuccessMessage.VERSION_CREATED -> R.string.admin_success_version_created
         AdminSuccessMessage.VERSION_UPDATED -> R.string.admin_success_version_updated
+        AdminSuccessMessage.VERSION_PDF_VERIFIED -> R.string.admin_success_version_pdf_verified
         AdminSuccessMessage.VERSION_PUBLISHED -> R.string.admin_success_version_published
         AdminSuccessMessage.PUBLISH_UPDATED -> R.string.admin_success_publish_updated
         AdminSuccessMessage.ARCHIVE_UPDATED -> R.string.admin_success_archive_updated

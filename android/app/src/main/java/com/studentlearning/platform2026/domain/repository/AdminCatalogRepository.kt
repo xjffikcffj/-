@@ -1,11 +1,15 @@
 package com.studentlearning.platform2026.domain.repository
 
 import com.studentlearning.platform2026.core.common.AppResult
+import com.studentlearning.platform2026.domain.model.AdminException
+import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
+import com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 
 interface AdminCatalogRepository {
     suspend fun getAllBranches(): AppResult<List<StudyBranch>>
@@ -105,6 +109,14 @@ interface AdminCatalogRepository {
         fileId: String,
         versionId: String
     ): AppResult<Unit>
+    suspend fun uploadAndVerifyStudyFileVersionPdf(
+        fileId: String,
+        versionId: String,
+        binarySource: PdfUploadBinarySource
+    ): AppResult<VerifiedPdfBinaryProof> = AppResult.Error(
+        message = "PDF upload is not supported by this repository implementation.",
+        cause = AdminException(AdminFailureReason.UNKNOWN)
+    )
 
     suspend fun reorderBranches(
         firstId: String,

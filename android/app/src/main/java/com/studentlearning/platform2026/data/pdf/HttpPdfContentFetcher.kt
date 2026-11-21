@@ -33,7 +33,8 @@ interface PdfContentFetcher {
  * (deleted on session close; NOT an offline download manager).
  */
 class HttpPdfContentFetcher(
-    private val sessionCacheDir: File
+    private val sessionCacheDir: File,
+    private val allowInsecureHttpForTesting: Boolean = false
 ) : PdfContentFetcher {
 
     private val tempFileSequence = AtomicLong(0L)
@@ -69,7 +70,11 @@ class HttpPdfContentFetcher(
     private suspend fun fetchRemoteHttpsPdf(
         source: PdfSourceDescriptor.AuthorizedRemoteUrl
     ): PreparedPdfFile {
-        if (!source.url.startsWith("https://", ignoreCase = true)) {
+        val isHttps = source.url.startsWith("https://", ignoreCase = true)
+        val isLoopbackTestHttp = allowInsecureHttpForTesting &&
+            (source.url.startsWith("http://127.0.0.1", ignoreCase = true) ||
+                source.url.startsWith("http://localhost", ignoreCase = true))
+        if (!isHttps && !isLoopbackTestHttp) {
             throw PdfLoadException(
                 reason = PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED,
                 message = "Only HTTPS sources are permitted for remote PDF streaming."

@@ -66,6 +66,23 @@ npm run build
 | `R2_ACCESS_KEY_ID` | مفتاح الوصول لـ Cloudflare R2 API Token (أقل صلاحيات على Bucket واحد فقط) | **نعم** |
 | `R2_SECRET_ACCESS_KEY` | المفتاح السري لـ Cloudflare R2 API Token | **نعم** |
 | `ALLOWED_ORIGINS` | قائمة المصادر المسموحة لـ CORS مفصولة بفاصلة (بدون `*`) | لا |
-| `UPLOAD_SESSION_TTL_SECONDS` | مدة صلاحية جلسة الرفع المؤقتة بالثواني (افتراضي `900`) | لا |
-| `VERIFY_LOCK_TTL_SECONDS` | مدة قفل محاولة التحقق بالثواني (افتراضي `300`) | لا |
+| `UPLOAD_SESSION_TTL_SECONDS` | مدة صلاحية جلسة الرفع المؤقتة بالثواني (افتراضي `600` = 10 دقائق) | لا |
+| `VERIFY_LOCK_TTL_SECONDS` | مدة قفل محاولة التحقق بالثواني (افتراضي `300` = 5 دقائق) | لا |
 | `MAX_PDF_BYTES` | الحد الأقصى المسموح لحجم ملف PDF بالبايت (افتراضي `104857600` = 100 MiB) | لا |
+| `HAQIBATI_BACKEND_BASE_URL` | عنوان الـ HTTPS للخادم الوسيط يُمرّر لبناء Android عبر Gradle property أو متغير بيئة (`BuildConfig`) دون كشف أي أسرار R2 | لا |
+
+---
+
+## 4. ربط تطبيق Android بـ Backend D2
+
+لتفعيل جلب الفهرس الحي ووسيط R2 والبث والتنزيل في تطبيق Android دون إدخال أي مفاتيح أو روابط داخل الكود المصدري:
+```bash
+cd android
+HAQIBATI_BACKEND_BASE_URL="https://api.example.com" ./gradlew testDebugUnitTest assembleDebug
+```
+أو عبر Gradle property:
+```bash
+cd android
+./gradlew assembleDebug -PHAQIBATI_BACKEND_BASE_URL="https://api.example.com"
+```
+عند ترك `HAQIBATI_BACKEND_BASE_URL` فارغاً، يعمل التطبيق بوضع **Fail-Closed** الآمن (`AWAITING_SECURE_BROKER_INTEGRATION`) دون استخدام روابط غير مشفرة (`http://`) أو أي بيانات وهمية.

@@ -54,6 +54,7 @@ interface AdminCatalogRemoteDataSource {
     suspend fun setSectionPublished(sectionId: String, isPublished: Boolean, actorUid: String)
 
     suspend fun fetchStudyFilesForSection(sectionId: String): List<StudyFileMetadata>
+    suspend fun fetchStudyFileMetadata(fileId: String): StudyFileMetadata? = null
     suspend fun createStudyFileMetadata(
         customId: String?,
         sectionId: String,
@@ -367,6 +368,35 @@ class FirestoreAdminCatalogDataSource(
 
         val rawDocuments = snapshot.documents.map { it.id to (it.data ?: emptyMap()) }
         return FirestoreAdminCatalogMapper.mapStudyFilesForAdmin(rawDocuments, expectedSectionId = sectionId)
+    }
+
+    override suspend fun fetchStudyFileMetadata(fileId: String): StudyFileMetadata? {
+        val cleanFileId = fileId.trim()
+        if (cleanFileId.isEmpty()) return null
+
+        val firestore = requireConfiguredFirestore()
+        val fileSnap = firestore.collection(Collections.STUDY_FILES)
+            .document(cleanFileId)
+            .get()
+            .awaitResult()
+        if (!fileSnap.exists()) {
+            throw AdminException(
+                reason = AdminFailureReason.NOT_FOUND,
+                message = "Study file '$cleanFileId' does not exist."
+            )
+        }
+        val data = fileSnap.data ?: emptyMap()
+        val sectionRef = FirestoreCatalogMapper.extractReferenceTarget(data[Fields.SECTION_ID])
+            ?: throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
+                message = "Study file '$cleanFileId' is missing a valid sectionId reference."
+            )
+        return FirestoreAdminCatalogMapper.mapStudyFileForAdmin(
+            id = fileSnap.id,
+            data = data,
+            expectedSectionId = sectionRef.documentId
+        )
     }
 
     override suspend fun createStudyFileMetadata(

@@ -7,6 +7,7 @@ import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -15,6 +16,7 @@ import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
+import com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -360,13 +362,13 @@ class AdminPortalViewModel(
     }
 
     fun openCreateBranchDialog() {
-        if (!ensureCanPerformAdminWrite()) return
+        if (!ensureCanPerformOwnerOnlyWrite()) return
         val nextOrder = (_uiState.value.branches.maxOfOrNull { it.order } ?: 0) + 1
         _uiState.update { it.copy(editorDialog = AdminEditorDialogState.BranchEditor(suggestedOrder = nextOrder)) }
     }
 
     fun openEditBranchDialog(branch: StudyBranch) {
-        if (!ensureCanPerformAdminWrite()) return
+        if (!ensureCanPerformOwnerOnlyWrite()) return
         _uiState.update { it.copy(editorDialog = AdminEditorDialogState.BranchEditor(editing = branch, suggestedOrder = branch.order)) }
     }
 
@@ -442,7 +444,7 @@ class AdminPortalViewModel(
     }
 
     fun saveBranch(editing: StudyBranch?, customId: String?, name: String, order: Int, isPublished: Boolean) {
-        if (!ensureCanPerformAdminWrite()) return
+        if (!ensureCanPerformOwnerOnlyWrite()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, feedback = null) }
             val result = if (editing == null) {
@@ -646,7 +648,7 @@ class AdminPortalViewModel(
     }
 
     fun requestToggleBranchPublished(branch: StudyBranch) {
-        if (!ensureCanPerformAdminWrite()) return
+        if (!ensureCanPerformOwnerOnlyWrite()) return
         if (branch.isPublished) {
             _uiState.update { it.copy(confirmationAction = AdminConfirmationAction.UnpublishBranch(branch)) }
         } else {
@@ -655,10 +657,11 @@ class AdminPortalViewModel(
     }
 
     fun requestToggleSubjectPublished(subject: StudySubject) {
-        if (!ensureCanPerformAdminWrite()) return
         if (subject.isPublished) {
+            if (!ensureCanPerformOwnerOnlyWrite()) return
             _uiState.update { it.copy(confirmationAction = AdminConfirmationAction.UnpublishSubject(subject)) }
         } else {
+            if (!ensureCanPerformAdminWrite()) return
             executeSetSubjectPublished(subject.id, isPublished = true)
         }
     }
@@ -691,11 +694,16 @@ class AdminPortalViewModel(
     }
 
     fun confirmPendingAction() {
-        if (!ensureCanPerformAdminWrite()) {
+        val pending = _uiState.value.confirmationAction ?: return
+        val allowed = when (pending) {
+            is AdminConfirmationAction.UnpublishBranch,
+            is AdminConfirmationAction.UnpublishSubject -> ensureCanPerformOwnerOnlyWrite()
+            else -> ensureCanPerformAdminWrite()
+        }
+        if (!allowed) {
             _uiState.update { it.copy(confirmationAction = null) }
             return
         }
-        val pending = _uiState.value.confirmationAction ?: return
         _uiState.update { it.copy(confirmationAction = null) }
         when (pending) {
             is AdminConfirmationAction.UnpublishBranch ->
@@ -717,8 +725,68 @@ class AdminPortalViewModel(
         _uiState.update { it.copy(confirmationAction = null) }
     }
 
-    fun moveBranch(branch: StudyBranch, moveUp: Boolean) {
+    fun uploadAndVerifyVersionPdf(
+        fileId: String,
+        versionId: String,
+        binarySource: PdfUploadBinarySource
+    ) {
         if (!ensureCanPerformAdminWrite()) return
+        if (_uiState.value.isSubmitting || _uiState.value.uploadingVersionId != null) return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isSubmitting = true,
+                    uploadingVersionId = versionId,
+                    feedback = null
+                )
+            }
+            when (val result = adminCatalogRepository.uploadAndVerifyStudyFileVersionPdf(
+                fileId = fileId,
+                versionId = versionId,
+                binarySource = binarySource
+            )) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isSubmitting = false,
+                            uploadingVersionId = null,
+                            feedback = AdminFeedbackState(
+                                isError = false,
+                                successMessage = AdminSuccessMessage.VERSION_PDF_VERIFIED
+                            )
+                        )
+                    }
+                    loadFileVersions(fileId)
+                    loadStudyFiles()
+                }
+                is AppResult.Error -> {
+                    _uiState.update { it.copy(uploadingVersionId = null) }
+                    handleSubmissionError(result.cause)
+                }
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun reportVersionUploadError(
+        validationError: AdminValidationError?,
+        reason: AdminFailureReason = AdminFailureReason.VALIDATION_ERROR
+    ) {
+        _uiState.update {
+            it.copy(
+                isSubmitting = false,
+                uploadingVersionId = null,
+                feedback = AdminFeedbackState(
+                    isError = true,
+                    failureReason = reason,
+                    validationError = validationError
+                )
+            )
+        }
+    }
+
+    fun moveBranch(branch: StudyBranch, moveUp: Boolean) {
+        if (!ensureCanPerformOwnerOnlyWrite()) return
         val list = _uiState.value.branches
         val swapPair = computeSwappedOrders(list.indexOfFirst { it.id == branch.id }, list.map { it.order }, moveUp) ?: return
         viewModelScope.launch {
@@ -798,6 +866,24 @@ class AdminPortalViewModel(
                 feedback = AdminFeedbackState(
                     isError = true,
                     failureReason = reason
+                )
+            )
+        }
+        return false
+    }
+
+    private fun ensureCanPerformOwnerOnlyWrite(): Boolean {
+        if (!ensureCanPerformAdminWrite()) return false
+        val session = _uiState.value.session
+        if (session.canPerformOwnerOnlyActions) {
+            return true
+        }
+        _uiState.update {
+            it.copy(
+                isSubmitting = false,
+                feedback = AdminFeedbackState(
+                    isError = true,
+                    failureReason = AdminFailureReason.INSUFFICIENT_ROLE
                 )
             )
         }

@@ -191,4 +191,53 @@ class AdminCatalogValidatorTest {
             assertEquals(AdminValidationError.INVALID_DOCUMENT_ID, ex.validationError)
         }
     }
+
+    @Test
+    fun `validateStudyFileCreate and Update allow 1000-char description and reject longer`() {
+        val exact1000 = "a".repeat(1000)
+        val created = AdminCatalogValidator.validateStudyFileCreate(
+            customId = "f-1000",
+            sectionId = "sec-1",
+            title = "ملزمة",
+            description = " $exact1000 ",
+            order = 1
+        )
+        assertEquals(exact1000, created.description)
+
+        val updated = AdminCatalogValidator.validateStudyFileUpdate(
+            fileId = "f-1000",
+            sectionId = "sec-1",
+            title = "ملزمة",
+            description = exact1000,
+            order = 1
+        )
+        assertEquals(exact1000, updated.description)
+
+        val tooLong = "b".repeat(1001)
+        try {
+            AdminCatalogValidator.validateStudyFileCreate(
+                customId = null,
+                sectionId = "sec-1",
+                title = "ملزمة",
+                description = tooLong,
+                order = 1
+            )
+            fail("Expected DESCRIPTION_TOO_LONG on create")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.DESCRIPTION_TOO_LONG, ex.validationError)
+        }
+
+        try {
+            AdminCatalogValidator.validateStudyFileUpdate(
+                fileId = "f-1000",
+                sectionId = "sec-1",
+                title = "ملزمة",
+                description = tooLong,
+                order = 1
+            )
+            fail("Expected DESCRIPTION_TOO_LONG on update")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.DESCRIPTION_TOO_LONG, ex.validationError)
+        }
+    }
 }

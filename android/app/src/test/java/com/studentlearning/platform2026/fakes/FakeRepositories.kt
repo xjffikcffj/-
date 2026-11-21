@@ -31,9 +31,11 @@ import com.studentlearning.platform2026.domain.repository.CatalogRepository
 import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
+import com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource
 import com.studentlearning.platform2026.domain.repository.PreferencesRepository
 import com.studentlearning.platform2026.domain.repository.ReadingProgressRepository
 import com.studentlearning.platform2026.domain.repository.SystemStatusRepository
+import com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof
 import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.CancellationException
@@ -605,6 +607,69 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
             activeVersionPublishedAtEpochMillis = publishedAt
         )
         return AppResult.Success(Unit)
+    }
+
+    override suspend fun uploadAndVerifyStudyFileVersionPdf(
+        fileId: String,
+        versionId: String,
+        binarySource: PdfUploadBinarySource
+    ): AppResult<VerifiedPdfBinaryProof> {
+        writeAttemptCount++
+        if (brokerStatus != PdfBrokerConfigurationStatus.CONFIGURED) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING
+            )
+            return AppResult.Error("Broker not configured", ex)
+        }
+        val file = studyFiles.firstOrNull { it.id == fileId }
+            ?: return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
+        if (file.isArchived) {
+            return AppResult.Error(
+                "Parent file archived",
+                AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION
+                )
+            )
+        }
+        val versionIdx = versions.indexOfFirst { it.fileId == fileId && it.id == versionId }
+        if (versionIdx < 0) {
+            return AppResult.Error("Version not found", AdminException(AdminFailureReason.NOT_FOUND))
+        }
+        val current = versions[versionIdx]
+        if (current.isArchived) {
+            return AppResult.Error(
+                "Version archived",
+                AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH
+                )
+            )
+        }
+        val sha = binarySource.sha256Hex.trim().lowercase()
+        val sessionId = "00000000-0000-4000-8000-000000000001"
+        val attemptId = "00000000-0000-4000-8000-000000000002"
+        val finalKey = "study-files/$fileId/versions/$versionId/${sha.take(16)}_${sessionId}_$attemptId.pdf"
+        versions[versionIdx] = current.copy(
+            r2ObjectKey = finalKey,
+            fileSizeBytes = binarySource.sizeBytes,
+            checksumSha256 = sha,
+            binaryVerificationStatus = "VERIFIED",
+            verifiedUploadSessionId = sessionId,
+            verifiedAttemptId = attemptId
+        )
+        return AppResult.Success(
+            VerifiedPdfBinaryProof(
+                fileId = fileId,
+                versionId = versionId,
+                r2ObjectKey = finalKey,
+                fileSizeBytes = binarySource.sizeBytes,
+                checksumSha256 = sha,
+                uploadSessionId = sessionId,
+                attemptId = attemptId
+            )
+        )
     }
 
     override suspend fun reorderBranches(

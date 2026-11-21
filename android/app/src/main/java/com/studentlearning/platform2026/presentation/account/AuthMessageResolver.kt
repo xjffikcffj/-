@@ -22,6 +22,7 @@ fun resolveAuthErrorText(
             AdminValidationError.PASSWORDS_DO_NOT_MATCH -> R.string.auth_validation_passwords_mismatch
             AdminValidationError.EMPTY_NAME -> R.string.admin_validation_empty_name
             AdminValidationError.NAME_TOO_LONG -> R.string.admin_validation_name_too_long
+            AdminValidationError.DESCRIPTION_TOO_LONG -> R.string.admin_validation_description_too_long
             AdminValidationError.NEGATIVE_ORDER -> R.string.admin_validation_negative_order
             AdminValidationError.INVALID_DOCUMENT_ID -> R.string.admin_validation_invalid_document_id
             AdminValidationError.EMPTY_PARENT_REFERENCE -> R.string.admin_validation_empty_parent
@@ -32,6 +33,16 @@ fun resolveAuthErrorText(
             AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION -> R.string.admin_validation_file_archived_publish
             AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH -> R.string.admin_validation_version_archived_publish
             AdminValidationError.VERSION_PDF_BINARY_MISSING -> R.string.admin_validation_version_pdf_missing
+            AdminValidationError.VERSION_UPLOAD_INVALID_PDF -> R.string.admin_validation_upload_invalid_pdf
+            AdminValidationError.VERSION_UPLOAD_SIZE_MISMATCH -> R.string.admin_validation_upload_size_mismatch
+            AdminValidationError.VERSION_UPLOAD_SHA256_MISMATCH -> R.string.admin_validation_upload_sha256_mismatch
+            AdminValidationError.VERSION_UPLOAD_SESSION_EXPIRED -> R.string.admin_validation_upload_session_expired
+            AdminValidationError.VERSION_UPLOAD_SESSION_CONFLICT -> R.string.admin_validation_upload_session_conflict
+            AdminValidationError.VERSION_UPLOAD_ETAG_MISMATCH -> R.string.admin_validation_upload_etag_mismatch
+            AdminValidationError.VERSION_ALREADY_PUBLISHED_IMMUTABLE -> R.string.admin_validation_version_already_published
+            AdminValidationError.VERSION_ALREADY_VERIFIED_IMMUTABLE -> R.string.admin_validation_version_already_verified
+            AdminValidationError.R2_STORAGE_NOT_CONFIGURED -> R.string.admin_validation_r2_not_configured
+            AdminValidationError.BACKEND_REQUEST_REJECTED -> R.string.admin_validation_backend_request_rejected
             AdminValidationError.STUDY_FILE_NO_ACTIVE_VERSION -> R.string.admin_validation_study_file_no_active_version
         }
         return stringResource(validationRes)

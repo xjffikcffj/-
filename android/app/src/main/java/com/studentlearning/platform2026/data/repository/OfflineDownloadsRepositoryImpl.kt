@@ -124,6 +124,10 @@ class OfflineDownloadsRepositoryImpl(
         expectedFileSizeBytes: Long?,
         expectedChecksumSha256: String?
     ): AppResult<DownloadTaskState> {
+        val resolvedExpectedSize = expectedFileSizeBytes?.takeIf { it > 0L }
+            ?: file.activeVersionFileSizeBytes?.takeIf { it > 0L }
+        val resolvedExpectedSha = expectedChecksumSha256?.trim()?.takeIf { it.isNotEmpty() }
+            ?: file.activeVersionChecksumSha256?.trim()?.takeIf { it.isNotEmpty() }
         val request = OfflineDownloadRequest(
             fileId = file.id,
             versionId = file.activeVersionId.orEmpty(),
@@ -131,8 +135,8 @@ class OfflineDownloadsRepositoryImpl(
             versionLabel = file.activeVersionLabel,
             fileTitle = file.title,
             sectionId = file.sectionId,
-            expectedFileSizeBytes = expectedFileSizeBytes,
-            expectedChecksumSha256 = expectedChecksumSha256
+            expectedFileSizeBytes = resolvedExpectedSize,
+            expectedChecksumSha256 = resolvedExpectedSha
         )
         return startDownloadInternal(request = request, replaceExisting = false)
     }
@@ -146,6 +150,10 @@ class OfflineDownloadsRepositoryImpl(
         expectedFileSizeBytes: Long?,
         expectedChecksumSha256: String?
     ): AppResult<DownloadTaskState> {
+        val resolvedExpectedSize = expectedFileSizeBytes?.takeIf { it > 0L }
+            ?: file.activeVersionFileSizeBytes?.takeIf { it > 0L }
+        val resolvedExpectedSha = expectedChecksumSha256?.trim()?.takeIf { it.isNotEmpty() }
+            ?: file.activeVersionChecksumSha256?.trim()?.takeIf { it.isNotEmpty() }
         val request = OfflineDownloadRequest(
             fileId = file.id,
             versionId = file.activeVersionId.orEmpty(),
@@ -153,8 +161,8 @@ class OfflineDownloadsRepositoryImpl(
             versionLabel = file.activeVersionLabel,
             fileTitle = file.title,
             sectionId = file.sectionId,
-            expectedFileSizeBytes = expectedFileSizeBytes,
-            expectedChecksumSha256 = expectedChecksumSha256
+            expectedFileSizeBytes = resolvedExpectedSize,
+            expectedChecksumSha256 = resolvedExpectedSha
         )
         return startDownloadInternal(request = request, replaceExisting = true)
     }

@@ -307,8 +307,8 @@ class AdminCatalogRepositoryImplTest {
     }
 
     @Test
-    fun `reorderBranches and reorderStudyFiles pass swapped orders atomically with actor UID`() = runTest {
-        val authRepository = FakeAuthRepository(
+    fun `reorderBranches is owner-only while reorderStudyFiles allows admin with actor UID`() = runTest {
+        val adminAuth = FakeAuthRepository(
             AdminSession(
                 isSignedIn = true,
                 uid = "admin-uid",
@@ -319,21 +319,52 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(
-            authRepository = authRepository,
+        val adminRepo = AdminCatalogRepositoryImpl(
+            authRepository = adminAuth,
             remoteDataSource = remote,
             dispatcherProvider = testDispatchers,
             pdfVersionStorageBroker = fakeVersionStorageBroker()
         )
 
-        val branchResult = repository.reorderBranches("b2", 1, "b1", 2)
-        val fileResult = repository.reorderStudyFiles("f2", 1, "f1", 2)
+        val adminBranchReorder = adminRepo.reorderBranches("b2", 1, "b1", 2)
+        assertTrue(adminBranchReorder is AppResult.Error)
+        assertEquals(
+            AdminFailureReason.INSUFFICIENT_ROLE,
+            ((adminBranchReorder as AppResult.Error).cause as AdminException).reason
+        )
 
-        assertTrue(branchResult is AppResult.Success)
+        val adminSubjectUnpublish = adminRepo.setSubjectPublished("s1", isPublished = false)
+        assertTrue(adminSubjectUnpublish is AppResult.Error)
+        assertEquals(
+            AdminFailureReason.INSUFFICIENT_ROLE,
+            ((adminSubjectUnpublish as AppResult.Error).cause as AdminException).reason
+        )
+
+        val adminSubjectPublish = adminRepo.setSubjectPublished("s1", isPublished = true)
+        val fileResult = adminRepo.reorderStudyFiles("f2", 1, "f1", 2)
+        assertTrue(adminSubjectPublish is AppResult.Success)
         assertTrue(fileResult is AppResult.Success)
-        assertEquals(2, remote.writeCallCount)
+
+        val ownerAuth = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-uid",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val ownerRepo = AdminCatalogRepositoryImpl(
+            authRepository = ownerAuth,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
+        val ownerBranchResult = ownerRepo.reorderBranches("b2", 1, "b1", 2)
+        assertTrue(ownerBranchResult is AppResult.Success)
         assertEquals(listOf("b2" to 1, "b1" to 2), remote.lastReorderedPair)
-        assertEquals("admin-uid", remote.lastActorUid)
+        assertEquals("owner-uid", remote.lastActorUid)
     }
 
     @Test
@@ -761,6 +792,92 @@ class AdminCatalogRepositoryImplTest {
             val unpublishResult = repository.setStudyFilePublished("file-1", isPublished = false)
             assertTrue(unpublishResult is AppResult.Success)
             assertEquals(false, remote.lastFilePublished)
+        }
+
+    @Test
+    fun `uploadAndVerifyStudyFileVersionPdf executes slot put verify pipeline and validates returned checksum`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "admin-uid",
+                    email = "admin@example.com",
+                    role = AdminRole.ADMIN,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val remote = RecordingAdminRemoteDataSource()
+            val validSha = "e".repeat(64)
+            var putCalled = false
+            val customBroker = object : com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker {
+                override fun getBrokerStatus() = PdfBrokerConfigurationStatus.CONFIGURED
+                override suspend fun requestVersionUploadSlot(
+                    fileId: String,
+                    versionId: String,
+                    expectedFileSizeBytes: Long,
+                    expectedChecksumSha256: String
+                ) = AppResult.Success(
+                    com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot(
+                        fileId = fileId,
+                        versionId = versionId,
+                        r2ObjectKey = "uploads-staging/$fileId/$versionId/sess-1.pdf",
+                        signedUploadUrl = "https://r2.example.invalid/put",
+                        uploadSessionId = "sess-1"
+                    )
+                )
+
+                override suspend fun uploadPdfToSignedSlot(
+                    slot: com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot,
+                    binarySource: com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource
+                ): AppResult<Unit> {
+                    putCalled = true
+                    return AppResult.Success(Unit)
+                }
+
+                override suspend fun verifyUploadedPdfBinary(
+                    fileId: String,
+                    versionId: String,
+                    uploadSessionId: String?
+                ) = AppResult.Success(
+                    com.studentlearning.platform2026.domain.repository.VerifiedPdfBinaryProof(
+                        fileId = fileId,
+                        versionId = versionId,
+                        r2ObjectKey = "study-files/$fileId/versions/$versionId/proof.pdf",
+                        fileSizeBytes = 1024L,
+                        checksumSha256 = validSha,
+                        uploadSessionId = uploadSessionId
+                    )
+                )
+            }
+            val repository = AdminCatalogRepositoryImpl(
+                authRepository = authRepository,
+                remoteDataSource = remote,
+                dispatcherProvider = testDispatchers,
+                pdfVersionStorageBroker = customBroker
+            )
+            val binarySource = com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource(
+                sizeBytes = 1024L,
+                sha256Hex = validSha,
+                displayName = "lesson.pdf",
+                openInputStream = { "%PDF-1.7\n".toByteArray().inputStream() }
+            )
+
+            val result = repository.uploadAndVerifyStudyFileVersionPdf("file-1", "v1", binarySource)
+            assertTrue(result is AppResult.Success)
+            assertTrue(putCalled)
+            assertEquals(validSha, (result as AppResult.Success).data.checksumSha256)
+
+            val mismatchResult = repository.uploadAndVerifyStudyFileVersionPdf(
+                "file-1",
+                "v1",
+                binarySource.copy(sha256Hex = "f".repeat(64))
+            )
+            assertTrue(mismatchResult is AppResult.Error)
+            assertEquals(
+                AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                ((mismatchResult as AppResult.Error).cause as AdminException).validationError
+            )
         }
 
     private class RecordingAdminRemoteDataSource(

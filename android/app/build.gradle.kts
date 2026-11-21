@@ -18,6 +18,20 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val configuredBackendBaseUrl = (
+            providers.gradleProperty("HAQIBATI_BACKEND_BASE_URL").orNull
+                ?: providers.environmentVariable("HAQIBATI_BACKEND_BASE_URL").orNull
+                ?: ""
+            ).trim()
+        val escapedBackendBaseUrl = configuredBackendBaseUrl
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField(
+            "String",
+            "HAQIBATI_BACKEND_BASE_URL",
+            "\"$escapedBackendBaseUrl\""
+        )
     }
 
     buildTypes {

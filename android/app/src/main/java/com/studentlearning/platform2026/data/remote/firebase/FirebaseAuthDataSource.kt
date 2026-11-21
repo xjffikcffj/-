@@ -16,6 +16,10 @@ data class AuthUserSnapshot(
     val email: String? = null
 )
 
+interface AuthTokenProvider {
+    suspend fun getIdTokenOrNull(forceRefresh: Boolean = false): String?
+}
+
 interface AuthRemoteDataSource {
     fun observeAuthUserState(): Flow<AuthUserSnapshot>
     fun getCurrentSignedInUser(): AuthUserSnapshot
@@ -28,7 +32,7 @@ interface AuthRemoteDataSource {
 
 class FirebaseAuthDataSource(
     private val authProvider: FirebaseAuthProvider
-) : AuthRemoteDataSource {
+) : AuthRemoteDataSource, AuthTokenProvider {
 
     override fun observeAuthUserState(): Flow<AuthUserSnapshot> = callbackFlow {
         val auth = authProvider.getAuthOrNull()
@@ -107,6 +111,13 @@ class FirebaseAuthDataSource(
 
     override suspend fun signOut() {
         authProvider.getAuthOrNull()?.signOut()
+    }
+
+    override suspend fun getIdTokenOrNull(forceRefresh: Boolean): String? {
+        val currentUser = authProvider.getAuthOrNull()?.currentUser ?: return null
+        if (currentUser.isAnonymous) return null
+        val tokenResult = currentUser.getIdToken(forceRefresh).awaitResult()
+        return tokenResult.token?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun requireConfiguredAuth(): FirebaseAuth {

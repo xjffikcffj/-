@@ -45,6 +45,7 @@ data class ValidatedStudyFileVersionUpdateInput(
 object AdminCatalogValidator {
 
     private const val MAX_NAME_LENGTH = 120
+    private const val MAX_DESCRIPTION_LENGTH = 1000
     private const val MAX_VERSION_LABEL_LENGTH = 64
     private const val MAX_VERSION_NOTES_LENGTH = 500
     private val DOCUMENT_ID_REGEX = Regex("^[a-zA-Z0-9_-]{2,64}$")
@@ -103,6 +104,30 @@ object AdminCatalogValidator {
             return false
         }
         return true
+    }
+
+    fun hasVerifiedServerPdfMetadata(
+        fileId: String,
+        versionId: String,
+        fileSizeBytes: Long?,
+        checksumSha256: String?,
+        verifiedUploadSessionId: String?,
+        verifiedAttemptId: String?
+    ): Boolean {
+        val cleanFileId = fileId.trim()
+        val cleanVersionId = versionId.trim()
+        if (cleanFileId.isEmpty() || cleanVersionId.isEmpty()) return false
+        if (containsUnsafePathChars(cleanFileId) || containsUnsafePathChars(cleanVersionId)) {
+            return false
+        }
+        if (fileSizeBytes == null || fileSizeBytes <= 0L) return false
+
+        val cleanChecksum = checksumSha256?.trim().orEmpty()
+        if (!SHA256_HEX_REGEX.matches(cleanChecksum)) return false
+
+        val cleanSessionId = verifiedUploadSessionId?.trim().orEmpty()
+        val cleanAttemptId = verifiedAttemptId?.trim().orEmpty()
+        return cleanSessionId.isNotEmpty() && cleanAttemptId.isNotEmpty()
     }
 
     private fun containsUnsafePathChars(value: String): Boolean {
@@ -171,13 +196,14 @@ object AdminCatalogValidator {
         val normalizedSectionId = validateParentId(sectionId)
         val normalizedCustomId = normalizeAndValidateCustomId(customId)
         val normalizedTitle = normalizeAndValidateName(title)
+        val normalizedDescription = normalizeAndValidateDescription(description)
         validateNonNegativeOrder(order)
 
         return ValidatedStudyFileCreateInput(
             customId = normalizedCustomId,
             sectionId = normalizedSectionId,
             title = normalizedTitle,
-            description = description?.trim()?.takeIf { it.isNotEmpty() },
+            description = normalizedDescription,
             order = order
         )
     }
@@ -192,13 +218,14 @@ object AdminCatalogValidator {
         val normalizedFileId = validateRequiredDocumentId(fileId)
         val normalizedSectionId = validateParentId(sectionId)
         val normalizedTitle = normalizeAndValidateName(title)
+        val normalizedDescription = normalizeAndValidateDescription(description)
         validateNonNegativeOrder(order)
 
         return ValidatedStudyFileUpdateInput(
             fileId = normalizedFileId,
             sectionId = normalizedSectionId,
             title = normalizedTitle,
-            description = description?.trim()?.takeIf { it.isNotEmpty() },
+            description = normalizedDescription,
             order = order
         )
     }
@@ -253,6 +280,14 @@ object AdminCatalogValidator {
         }
         if (trimmed.length > MAX_NAME_LENGTH) {
             throw validationException(AdminValidationError.NAME_TOO_LONG)
+        }
+        return trimmed
+    }
+
+    private fun normalizeAndValidateDescription(description: String?): String? {
+        val trimmed = description?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (trimmed.length > MAX_DESCRIPTION_LENGTH) {
+            throw validationException(AdminValidationError.DESCRIPTION_TOO_LONG)
         }
         return trimmed
     }

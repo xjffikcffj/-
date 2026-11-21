@@ -11,6 +11,9 @@ import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
+import com.studentlearning.platform2026.domain.model.StudySubject
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.presentation.admin.AdminManagementSection
 import com.studentlearning.platform2026.presentation.admin.AdminPortalScreenContent
 import com.studentlearning.platform2026.presentation.admin.AdminPortalUiState
@@ -346,6 +349,109 @@ class AdminPortalRtlTest {
         composeTestRule.onNodeWithText("منشور").assertIsDisplayed()
         composeTestRule.onNodeWithText("بانتظار إضافة إصدار PDF").assertIsDisplayed()
         composeTestRule.onNodeWithText("إلغاء النشر").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun adminRole_disablesBranchMutationsAndSubjectUnpublishWithArabicNotices() {
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "admin-1",
+                            email = "admin@example.com",
+                            role = AdminRole.ADMIN,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        activeTab = AdminManagementSection.BRANCHES,
+                        branches = listOf(
+                            StudyBranch("scientific", "السادس العلمي", 1, true)
+                        )
+                    )
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "تنبيه الصلاحيات: إنشاء الفروع وتعديلها ونشرها وترتيبها محصور بدور المالك (Owner) فقط حسب قواعد الأمان."
+        ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("إضافة فرع").assertIsNotEnabled()
+        composeTestRule.onNodeWithText("تعديل").assertIsNotEnabled()
+        composeTestRule.onNodeWithText("إلغاء النشر").assertIsNotEnabled()
+    }
+
+    @Test
+    fun adminRole_disablesSubjectUnpublishButAllowsCreateSubject() {
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "admin-1",
+                            email = "admin@example.com",
+                            role = AdminRole.ADMIN,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        activeTab = AdminManagementSection.SUBJECTS,
+                        branches = listOf(StudyBranch("scientific", "السادس العلمي", 1, true)),
+                        selectedBranchId = "scientific",
+                        subjects = listOf(StudySubject("math", "scientific", "الرياضيات", 1, true))
+                    )
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("إضافة مادة").assertIsEnabled()
+        composeTestRule.onNodeWithText("تعديل").assertIsEnabled()
+        composeTestRule.onNodeWithText("إلغاء النشر").assertIsNotEnabled()
+    }
+
+    @Test
+    fun fileVersionsDialog_showsUploadPdfButtonWhenBrokerConfigured() {
+        val file = StudyFileMetadata(
+            id = "file-1",
+            sectionId = "sec-1",
+            title = "ملزمة الكيمياء",
+            order = 1,
+            isPublished = false,
+            isArchived = false
+        )
+        val draftUnverified = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-1",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            isPublished = false
+        )
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                RenderAdminScreen(
+                    uiState = AdminPortalUiState(
+                        isCheckingSession = false,
+                        session = AdminSession(
+                            isSignedIn = true,
+                            uid = "admin-1",
+                            email = "admin@example.com",
+                            role = AdminRole.ADMIN,
+                            hasLoadedTokenClaims = true,
+                            areClaimsConfirmedCurrent = true
+                        ),
+                        r2BrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED,
+                        versionsDialogFile = file,
+                        fileVersions = listOf(draftUnverified)
+                    )
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("رفع والتحقق من PDF").assertIsDisplayed().assertIsEnabled()
+        composeTestRule.onNodeWithText("نشر وتفعيل هذا الإصدار").assertIsDisplayed().assertIsNotEnabled()
     }
 
     @androidx.compose.runtime.Composable

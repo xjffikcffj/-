@@ -96,7 +96,7 @@ class AdminPortalViewModelTest {
     }
 
     @Test
-    fun `admin role unlocks catalog management and supports creating branch`() = runTest {
+    fun `admin role blocks owner-only branch and subject unpublish ops while allowing subject creation`() = runTest {
         val authRepository = FakeAuthRepository(
             AdminSession(
                 isSignedIn = true,
@@ -107,12 +107,17 @@ class AdminPortalViewModelTest {
                 areClaimsConfirmedCurrent = true
             )
         )
-        val catalogRepository = FakeAdminCatalogRepository()
+        val existingBranch = StudyBranch("scientific", "السادس العلمي", 1, true)
+        val catalogRepository = FakeAdminCatalogRepository().apply {
+            branches.add(existingBranch)
+        }
 
         val viewModel = AdminPortalViewModel(authRepository, catalogRepository)
         advanceUntilIdle()
 
         assertTrue(viewModel.uiState.value.session.canPerformAdminActions)
+        assertFalse(viewModel.uiState.value.session.canPerformOwnerOnlyActions)
+
         viewModel.saveBranch(
             editing = null,
             customId = "vocational",
@@ -120,11 +125,36 @@ class AdminPortalViewModelTest {
             order = 3,
             isPublished = false
         )
+        viewModel.requestToggleBranchPublished(existingBranch)
+        viewModel.moveBranch(existingBranch, moveUp = false)
+        viewModel.requestToggleSubjectPublished(
+            com.studentlearning.platform2026.domain.model.StudySubject(
+                id = "math",
+                branchId = "scientific",
+                name = "الرياضيات",
+                order = 1,
+                isPublished = true
+            )
+        )
+        advanceUntilIdle()
+
+        assertEquals(0, catalogRepository.writeAttemptCount)
+        assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
+        assertNull(viewModel.uiState.value.confirmationAction)
+
+        viewModel.saveSubject(
+            branchId = "scientific",
+            editing = null,
+            customId = "physics",
+            name = "الفيزياء",
+            order = 1,
+            isPublished = false
+        )
         advanceUntilIdle()
 
         assertEquals(1, catalogRepository.writeAttemptCount)
-        assertEquals(listOf("vocational"), viewModel.uiState.value.branches.map { it.id })
-        assertEquals(AdminSuccessMessage.BRANCH_CREATED, viewModel.uiState.value.feedback?.successMessage)
+        assertEquals(listOf("physics"), viewModel.uiState.value.subjects.map { it.id })
+        assertEquals(AdminSuccessMessage.SUBJECT_CREATED, viewModel.uiState.value.feedback?.successMessage)
     }
 
     @Test
@@ -586,4 +616,65 @@ class AdminPortalViewModelTest {
             )
             assertFalse(catalogRepository.studyFiles.first { it.id == "file-mismatch-num" }.isPublished)
         }
+
+    @Test
+    fun `uploadAndVerifyVersionPdf verifies version binary and surfaces VERSION_PDF_VERIFIED success`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "admin-1",
+                email = "admin@example.com",
+                role = AdminRole.ADMIN,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val draftFile = StudyFileMetadata(
+            id = "file-up",
+            sectionId = "sec-1",
+            title = "ملزمة الرفع",
+            order = 1,
+            isPublished = false,
+            isArchived = false
+        )
+        val draftVersion = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-up",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            isPublished = false
+        )
+        val catalogRepository = FakeAdminCatalogRepository().apply {
+            brokerStatus = PdfBrokerConfigurationStatus.CONFIGURED
+            studyFiles.add(draftFile)
+            versions.add(draftVersion)
+        }
+        val viewModel = AdminPortalViewModel(
+            authRepository = authRepository,
+            adminCatalogRepository = catalogRepository,
+            r2BrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED
+        )
+        advanceUntilIdle()
+
+        viewModel.openFileVersionsManager(draftFile)
+        advanceUntilIdle()
+
+        val validSha = "a".repeat(64)
+        val binary = com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource(
+            sizeBytes = 2048L,
+            sha256Hex = validSha,
+            displayName = "ch1.pdf",
+            openInputStream = { "%PDF-1.7\n".toByteArray().inputStream() }
+        )
+        viewModel.uploadAndVerifyVersionPdf("file-up", "v1", binary)
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.uploadingVersionId)
+        assertEquals(AdminSuccessMessage.VERSION_PDF_VERIFIED, viewModel.uiState.value.feedback?.successMessage)
+        assertTrue(viewModel.uiState.value.fileVersions.first().hasUploadedPdfBinary)
+
+        viewModel.reportVersionUploadError(AdminValidationError.VERSION_UPLOAD_INVALID_PDF)
+        assertEquals(true, viewModel.uiState.value.feedback?.isError)
+        assertEquals(AdminValidationError.VERSION_UPLOAD_INVALID_PDF, viewModel.uiState.value.feedback?.validationError)
+    }
 }

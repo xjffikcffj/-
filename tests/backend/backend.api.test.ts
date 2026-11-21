@@ -1,8 +1,11 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import { Readable } from 'node:stream';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Response as ExpressResponse } from 'express';
 import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
@@ -22,6 +25,8 @@ import type {
   DecodedIdTokenLike,
   IdTokenVerifier,
 } from '../../server/firebase/adminApp.js';
+import { DeliveryService } from '../../server/services/deliveryService.js';
+import type { CatalogService } from '../../server/services/catalogService.js';
 import {
   UnconfiguredR2StorageAdapter,
   type PresignedPutParams,
@@ -48,6 +53,10 @@ class MockR2StorageAdapter implements R2StoragePort {
   onGetStreamHook?: (key: string) => Promise<void>;
   corruptCopyBytesForKey?: string;
   forceMissingHeadForKey?: string;
+  forceNullHeadLengthForKey?: string;
+  forceNullStreamLengthForKey?: string;
+  overrideStreamBytesForKey?: { key: string; bytes: Buffer };
+  lastStreamClosedKey?: string;
 
   isConfigured(): boolean {
     return true;
@@ -75,17 +84,26 @@ class MockR2StorageAdapter implements R2StoragePort {
     if (!obj) {
       throw new ApiError(404, 'R2_OBJECT_MISSING', `Mock R2 object '${key}' not found.`);
     }
-    const bytes = obj.bytes;
+    const streamBytes =
+      this.overrideStreamBytesForKey?.key === key
+        ? this.overrideStreamBytesForKey.bytes
+        : obj.bytes;
+    const adapter = this;
     async function* chunkedStream(): AsyncIterable<Uint8Array> {
-      const chunkSize = 8;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        yield bytes.subarray(i, i + chunkSize);
+      try {
+        const chunkSize = 8;
+        for (let i = 0; i < streamBytes.length; i += chunkSize) {
+          yield streamBytes.subarray(i, i + chunkSize);
+        }
+      } finally {
+        adapter.lastStreamClosedKey = key;
       }
     }
     return {
       stream: chunkedStream(),
       etag: obj.etag,
-      contentLength: bytes.length,
+      contentLength:
+        this.forceNullStreamLengthForKey === key ? null : obj.bytes.length,
       contentType: obj.contentType,
     };
   }
@@ -121,7 +139,8 @@ class MockR2StorageAdapter implements R2StoragePort {
     }
     return {
       exists: true,
-      contentLength: obj.bytes.length,
+      contentLength:
+        this.forceNullHeadLengthForKey === key ? null : obj.bytes.length,
       etag: obj.etag,
       contentType: obj.contentType,
     };
@@ -260,6 +279,10 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     mockR2.onGetStreamHook = undefined;
     mockR2.corruptCopyBytesForKey = undefined;
     mockR2.forceMissingHeadForKey = undefined;
+    mockR2.forceNullHeadLengthForKey = undefined;
+    mockR2.forceNullStreamLengthForKey = undefined;
+    mockR2.overrideStreamBytesForKey = undefined;
+    mockR2.lastStreamClosedKey = undefined;
     verifier.calls.length = 0;
     currentNowMs = 1_750_000_000_000;
     uuidSeq = 1;
@@ -1172,5 +1195,498 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     } finally {
       await new Promise<void>((resolve) => guardSrv.close(() => resolve()));
     }
+  });
+
+  // =========================================================================
+  // 8. Default 600s Upload Session TTL Check
+  // =========================================================================
+  it('defaults UPLOAD_SESSION_TTL_SECONDS to 600s (10 minutes) when unset', async () => {
+    const defaultConfig = loadServerConfig({
+      FIREBASE_PROJECT_ID: PROJECT_ID,
+      FIRESTORE_EMULATOR_HOST: extractEmulatorHost(),
+    });
+    assert.equal(defaultConfig.uploadSessionTtlSeconds, 600);
+    assert.equal(defaultConfig.verifyLockTtlSeconds, 300);
+
+    await seedHierarchy({ withPublishedVersion: false });
+    const defaultTtlApp = createBackendApp({
+      config: defaultConfig,
+      firestore: adminFirestore,
+      idTokenVerifier: verifier,
+      r2Storage: mockR2,
+      nowMs: () => currentNowMs,
+      uuidGenerator: () => {
+        const suffix = String(uuidSeq++).padStart(12, '0');
+        return `22222222-3333-4444-8555-${suffix}`;
+      },
+    });
+    const srv = await new Promise<ReturnType<typeof defaultTtlApp.listen>>(
+      (resolve) => {
+        const s = defaultTtlApp.listen(0, '127.0.0.1', () => resolve(s));
+      },
+    );
+    try {
+      const port = (srv.address() as AddressInfo).port;
+      await fetch(
+        `http://127.0.0.1:${port}/api/admin/study-files/file-1/versions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer token-admin',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            customVersionId: 'ver-1',
+            versionNumber: 1,
+            versionLabel: 'v1',
+          }),
+        },
+      );
+      const pdf = makePdfBuffer('Default TTL PDF');
+      const slotRes = await fetch(
+        `http://127.0.0.1:${port}/api/admin/study-files/file-1/versions/ver-1/upload-slot`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer token-admin',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            expectedSizeBytes: pdf.sizeBytes,
+            expectedSha256: pdf.sha256,
+          }),
+        },
+      );
+      assert.equal(slotRes.status, 201);
+      const body = (await slotRes.json()) as { expiresAtEpochMillis: number };
+      assert.equal(body.expiresAtEpochMillis, currentNowMs + 600_000);
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    }
+  });
+
+  // =========================================================================
+  // 9. Legacy Unmigrated Docs (Missing isArchived) & Archived Parent Hierarchy
+  // =========================================================================
+  it('hides legacy study_files/versions without isArchived from public catalog/delivery/publish while keeping admin inspection intact, and blocks archived hierarchy nodes', async () => {
+    const seeded = await seedHierarchy({ withPublishedVersion: true });
+    assert.ok(seeded);
+
+    // Seed a legacy published study file & version WITHOUT isArchived field
+    const sectionRef = adminFirestore.collection('sections').doc('sec-1');
+    const legacyFileRef = adminFirestore.collection('study_files').doc('legacy-file');
+    const now = Timestamp.fromMillis(currentNowMs);
+    const pdf = makePdfBuffer('Legacy PDF');
+    const legacySessionId = 'bbbbbbbb-cccc-4ddd-8eee-000000000001';
+    const legacyAttemptId = 'bbbbbbbb-cccc-4ddd-8eee-000000000002';
+    const legacyR2Key = `study-files/legacy-file/versions/legacy-ver/${pdf.sha256.slice(0, 16)}_${legacySessionId}_${legacyAttemptId}.pdf`;
+    mockR2.putRaw(legacyR2Key, pdf.bytes);
+
+    await adminFirestore.collection('upload_sessions').doc(legacySessionId).set({
+      sessionId: legacySessionId,
+      fileId: 'legacy-file',
+      versionId: 'legacy-ver',
+      stagingKey: `uploads-staging/legacy-file/legacy-ver/${legacySessionId}.pdf`,
+      status: 'CONSUMED',
+      expectedSizeBytes: pdf.sizeBytes,
+      expectedSha256: pdf.sha256,
+      attemptCount: 1,
+      activeAttemptId: legacyAttemptId,
+      lockToken: legacyAttemptId,
+      finalObjectKey: legacyR2Key,
+      expiresAt: Timestamp.fromMillis(currentNowMs + 600_000),
+      consumedAt: now,
+    });
+
+    await legacyFileRef.set({
+      sectionId: sectionRef,
+      title: 'ملف قديم غير مُهاجر',
+      order: 1,
+      isPublished: true,
+      mimeType: 'application/pdf',
+      storageProvider: 'cloudflare_r2',
+      activeVersionId: 'legacy-ver',
+      activeVersionNumber: 1,
+      activeVersionLabel: 'v1',
+      activeVersionPublishedAt: now,
+    });
+
+    await legacyFileRef.collection('versions').doc('legacy-ver').set({
+      fileId: legacyFileRef,
+      versionNumber: 1,
+      versionLabel: 'v1',
+      r2ObjectKey: legacyR2Key,
+      fileSizeBytes: pdf.sizeBytes,
+      checksumSha256: pdf.sha256,
+      binaryVerificationStatus: 'VERIFIED',
+      verifiedUploadSessionId: legacySessionId,
+      verifiedAttemptId: legacyAttemptId,
+      isPublished: true,
+      publishedAt: now,
+    });
+
+    // Public catalog hides legacy-file while still showing file-1 (isArchived: false)
+    const publicFiles = await apiJson('/api/catalog/sections/sec-1/study-files');
+    assert.equal(publicFiles.status, 200);
+    const publicIds = (
+      publicFiles.json as { items: Array<{ id: string }> }
+    ).items.map((x) => x.id);
+    assert.deepEqual(publicIds, ['file-1']);
+
+    // Direct stream/download on legacy-file MUST 404
+    const legacyStream = await apiJson(
+      '/api/study-files/legacy-file/versions/legacy-ver/stream',
+    );
+    assert.equal(legacyStream.status, 404);
+    const legacyDownload = await apiJson(
+      '/api/study-files/legacy-file/versions/legacy-ver/download',
+      { token: 'token-student' },
+    );
+    assert.equal(legacyDownload.status, 404);
+
+    // Republish on legacy doc without isArchived=false MUST fail closed
+    const legacyPublish = await apiJson(
+      '/api/admin/study-files/legacy-file/versions/legacy-ver/publish',
+      { method: 'POST', token: 'token-admin', body: {} },
+    );
+    assert.equal(legacyPublish.status, 409);
+
+    // Admin read endpoints MUST still list legacy files & versions for inspection/migration
+    const adminFiles = await apiJson(
+      '/api/admin/sections/sec-1/study-files',
+      { token: 'token-admin' },
+    );
+    assert.equal(adminFiles.status, 200);
+    const adminIds = (
+      adminFiles.json as { items: Array<{ id: string }> }
+    ).items.map((x) => x.id);
+    assert.equal(adminIds.includes('legacy-file'), true);
+
+    const adminVers = await apiJson(
+      '/api/admin/study-files/legacy-file/versions',
+      { token: 'token-admin' },
+    );
+    assert.equal(adminVers.status, 200);
+    assert.equal(
+      (adminVers.json as { items: Array<{ id: string }> }).items[0]?.id,
+      'legacy-ver',
+    );
+
+    // Marking parent section isArchived: true MUST immediately block catalog, stream & download
+    await adminFirestore.collection('sections').doc('sec-1').update({
+      isArchived: true,
+    });
+    assert.equal(
+      (await apiJson('/api/catalog/sections/sec-1/study-files')).status,
+      404,
+    );
+    assert.equal(
+      (await apiJson('/api/study-files/file-1/versions/ver-1/stream')).status,
+      404,
+    );
+    assert.equal(
+      (
+        await apiJson('/api/study-files/file-1/versions/ver-1/download', {
+          token: 'token-student',
+        })
+      ).status,
+      404,
+    );
+  });
+
+  // =========================================================================
+  // 10. Concurrent ETag Change During Staging Copy (412 ETAG_MISMATCH)
+  // =========================================================================
+  it('rejects staging mutation between stream read and CopyObjectIfMatch with 412 ETAG_MISMATCH', async () => {
+    await seedHierarchy({ withPublishedVersion: false });
+    await apiJson('/api/admin/study-files/file-1/versions', {
+      method: 'POST',
+      token: 'token-admin',
+      body: { customVersionId: 'ver-1', versionNumber: 1, versionLabel: 'v1' },
+    });
+
+    const pdf = makePdfBuffer('Concurrent ETag PDF');
+    const slot = (
+      await apiJson('/api/admin/study-files/file-1/versions/ver-1/upload-slot', {
+        method: 'POST',
+        token: 'token-admin',
+        body: { expectedSizeBytes: pdf.sizeBytes, expectedSha256: pdf.sha256 },
+      })
+    ).json as { uploadSessionId: string; stagingKey: string };
+    mockR2.putRaw(slot.stagingKey, pdf.bytes);
+
+    // Simulate another uploader replacing stagingKey right before CopySourceIfMatch runs
+    mockR2.onCopyHook = async (params) => {
+      mockR2.putRaw(params.sourceKey, pdf.bytes);
+    };
+
+    const verifyRes = await apiJson(
+      '/api/admin/study-files/file-1/versions/ver-1/verify',
+      {
+        method: 'POST',
+        token: 'token-admin',
+        body: { uploadSessionId: slot.uploadSessionId },
+      },
+    );
+    assert.equal(verifyRes.status, 412);
+    assert.equal(
+      (verifyRes.json as { error: { code: string } }).error.code,
+      'ETAG_MISMATCH',
+    );
+  });
+
+  // =========================================================================
+  // 11. Fail-Closed Publish when HeadObject Omits ContentLength or Session Proof Mismatches
+  // =========================================================================
+  it('rejects publish when HeadObject omits contentLength or session expectedSha256 mismatches', async () => {
+    const seeded = await seedHierarchy({ withPublishedVersion: true });
+    assert.ok(seeded);
+
+    // Null contentLength from HeadObject -> fail-closed 409 SIZE_MISMATCH
+    mockR2.forceNullHeadLengthForKey = seeded.r2ObjectKey;
+    const nullHeadPub = await apiJson(
+      '/api/admin/study-files/file-1/versions/ver-1/publish',
+      { method: 'POST', token: 'token-owner', body: {} },
+    );
+    assert.equal(nullHeadPub.status, 409);
+    assert.equal(
+      (nullHeadPub.json as { error: { code: string } }).error.code,
+      'SIZE_MISMATCH',
+    );
+    mockR2.forceNullHeadLengthForKey = undefined;
+
+    // Session expectedSha256 tampered -> fail-closed 409 PROOF_MISMATCH
+    await adminFirestore
+      .collection('upload_sessions')
+      .doc(seeded.sessionId)
+      .update({
+        expectedSha256: '0'.repeat(64),
+      });
+    const shaMismatchPub = await apiJson(
+      '/api/admin/study-files/file-1/versions/ver-1/publish',
+      { method: 'POST', token: 'token-owner', body: {} },
+    );
+    assert.equal(shaMismatchPub.status, 409);
+    assert.equal(
+      (shaMismatchPub.json as { error: { code: string } }).error.code,
+      'PROOF_MISMATCH',
+    );
+  });
+
+  // =========================================================================
+  // 12. Fail-Closed Delivery on null/mismatched Content-Length & Truncated Stream (F-D2-2)
+  // =========================================================================
+  it('rejects stream/download with 409 SIZE_MISMATCH when R2 contentLength is null or mismatched and guards truncated streams', async () => {
+    const seeded = await seedHierarchy({ withPublishedVersion: true });
+    assert.ok(seeded);
+
+    // Null R2 stream Content-Length -> fail-closed 409 SIZE_MISMATCH + upstream stream closed
+    mockR2.forceNullStreamLengthForKey = seeded.r2ObjectKey;
+    const nullLenStream = await apiJson(
+      '/api/study-files/file-1/versions/ver-1/stream',
+    );
+    assert.equal(nullLenStream.status, 409);
+    assert.equal(
+      (nullLenStream.json as { error: { code: string } }).error.code,
+      'SIZE_MISMATCH',
+    );
+    assert.equal(mockR2.lastStreamClosedKey, seeded.r2ObjectKey);
+    mockR2.forceNullStreamLengthForKey = undefined;
+
+    // Truncated stream (body ends early after headers sent) -> response destroyed without res.end()
+    const truncatedBytes = seeded.pdf.bytes.subarray(
+      0,
+      Math.max(5, seeded.pdf.bytes.length - 12),
+    );
+    let upstreamDestroyed = false;
+    const truncatedStream = new Readable({
+      read() {
+        this.push(truncatedBytes);
+        this.push(null);
+      },
+      destroy(err, cb) {
+        upstreamDestroyed = true;
+        cb(err);
+      },
+    });
+    let destroyedError: Error | undefined;
+    let endedNormally = false;
+    class MockRes extends EventEmitter {
+      destroyed = false;
+      writableEnded = false;
+      headersSent = false;
+      private readonly headers = new Map<string, string>();
+      status() {
+        return this;
+      }
+      setHeader(k: string, v: string) {
+        this.headers.set(k.toLowerCase(), v);
+      }
+      write(_chunk: Buffer) {
+        this.headersSent = true;
+        return true;
+      }
+      end() {
+        endedNormally = true;
+        this.writableEnded = true;
+        this.emit('close');
+      }
+      destroy(err?: Error) {
+        this.destroyed = true;
+        destroyedError = err;
+        this.emit('close');
+        return this;
+      }
+    }
+    const stubCatalog = {
+      resolvePublishedHierarchyForVersion: async () => ({
+        fileId: 'file-1',
+        versionId: 'ver-1',
+        versionNumber: 1,
+        r2ObjectKey: seeded.r2ObjectKey,
+        fileSizeBytes: seeded.pdf.sizeBytes,
+        checksumSha256: seeded.pdf.sha256,
+      }),
+    } as unknown as CatalogService;
+    const stubR2: R2StoragePort = {
+      isConfigured: () => true,
+      createPresignedPutUrl: async () => 'https://example.invalid',
+      getObjectStreamWithETag: async () => ({
+        stream: truncatedStream,
+        etag: 'etag-1',
+        contentLength: seeded.pdf.sizeBytes,
+        contentType: 'application/pdf',
+      }),
+      copyObjectIfMatch: async () => ({ etag: 'etag-1' }),
+      headObject: async () => ({
+        exists: true,
+        contentLength: seeded.pdf.sizeBytes,
+        etag: 'etag-1',
+        contentType: 'application/pdf',
+      }),
+      deleteObject: async () => undefined,
+    };
+    const delivery = new DeliveryService(stubCatalog, stubR2);
+    const res = new MockRes();
+    await delivery.deliverPublishedPdf({
+      fileId: 'file-1',
+      versionId: 'ver-1',
+      mode: 'stream',
+      res: res as unknown as ExpressResponse,
+    });
+    assert.equal(endedNormally, false);
+    assert.equal(res.destroyed, true);
+    assert.match(destroyedError?.message ?? '', /truncated/i);
+    assert.equal(upstreamDestroyed, true);
+  });
+
+  // =========================================================================
+  // 13. Client Disconnect During Backpressure Cancels Upstream & Cleans Listeners (F-D2-1)
+  // =========================================================================
+  it('resolves cleanly without hanging, destroys upstream R2 stream, and cleans listeners if client disconnects during backpressure', async () => {
+    let upstreamDestroyed = false;
+    const bigChunkA = Buffer.from('%PDF-1.4\nCHUNK_A_00000000\n', 'utf8');
+    const bigChunkB = Buffer.from('CHUNK_B_SHOULD_NOT_HANG\n%%EOF\n', 'utf8');
+    const totalLen = bigChunkA.length + bigChunkB.length;
+    const fakePdfSha = createHash('sha256')
+      .update(Buffer.concat([bigChunkA, bigChunkB]))
+      .digest('hex');
+
+    let pushedCount = 0;
+    const pausedUpstream = new Readable({
+      read() {
+        if (pushedCount === 0) {
+          pushedCount++;
+          this.push(bigChunkA);
+        } else if (pushedCount === 1) {
+          pushedCount++;
+          this.push(bigChunkB);
+        } else {
+          this.push(null);
+        }
+      },
+      destroy(err, cb) {
+        upstreamDestroyed = true;
+        cb(err);
+      },
+    });
+
+    class BackpressureRes extends EventEmitter {
+      destroyed = false;
+      writableEnded = false;
+      headersSent = false;
+      status() {
+        return this;
+      }
+      setHeader() {
+        return this;
+      }
+      write() {
+        this.headersSent = true;
+        // Force backpressure on first chunk
+        return false;
+      }
+      end() {
+        this.writableEnded = true;
+        this.emit('close');
+      }
+      destroy() {
+        this.destroyed = true;
+        this.emit('close');
+        return this;
+      }
+    }
+
+    const res = new BackpressureRes();
+    const delivery = new DeliveryService(
+      {
+        resolvePublishedHierarchyForVersion: async () => ({
+          fileId: 'file-1',
+          versionId: 'ver-1',
+          versionNumber: 1,
+          r2ObjectKey: 'study-files/file-1/versions/ver-1/key.pdf',
+          fileSizeBytes: totalLen,
+          checksumSha256: fakePdfSha,
+        }),
+      } as unknown as CatalogService,
+      {
+        isConfigured: () => true,
+        createPresignedPutUrl: async () => 'https://example.invalid',
+        getObjectStreamWithETag: async () => ({
+          stream: pausedUpstream,
+          etag: 'etag-1',
+          contentLength: totalLen,
+          contentType: 'application/pdf',
+        }),
+        copyObjectIfMatch: async () => ({ etag: 'etag-1' }),
+        headObject: async () => ({
+          exists: true,
+          contentLength: totalLen,
+          etag: 'etag-1',
+          contentType: 'application/pdf',
+        }),
+        deleteObject: async () => undefined,
+      },
+    );
+
+    const deliveryPromise = delivery.deliverPublishedPdf({
+      fileId: 'file-1',
+      versionId: 'ver-1',
+      mode: 'download',
+      res: res as unknown as ExpressResponse,
+    });
+
+    // Wait a tick so write() hits backpressure, then simulate client closing socket
+    await new Promise((r) => setTimeout(r, 25));
+    res.destroyed = true;
+    res.emit('close');
+
+    await deliveryPromise;
+
+    assert.equal(upstreamDestroyed, true);
+    assert.equal(res.writableEnded, false);
+    assert.equal(res.listenerCount('drain'), 0);
+    assert.equal(res.listenerCount('error'), 0);
+    assert.equal(res.listenerCount('close'), 0);
   });
 });

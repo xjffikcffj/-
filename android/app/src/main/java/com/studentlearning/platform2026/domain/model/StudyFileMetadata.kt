@@ -29,7 +29,9 @@ data class StudyFileMetadata(
     val activeVersionLabel: String? = null,
     val createdByUid: String? = null,
     val updatedByUid: String? = null,
-    val activeVersionPublishedAtEpochMillis: Long? = null
+    val activeVersionPublishedAtEpochMillis: Long? = null,
+    val activeVersionFileSizeBytes: Long? = null,
+    val activeVersionChecksumSha256: String? = null
 ) {
     val hasActiveVersion: Boolean
         get() = !activeVersionId.isNullOrBlank()
@@ -69,14 +71,41 @@ data class StudyFileVersionMetadata(
     val fileReferencePath: String = "study_files/$fileId",
     val updatedByUid: String? = null,
     val updatedAtEpochMillis: Long? = null,
-    val isArchived: Boolean = false
+    val isArchived: Boolean = false,
+    val binaryVerificationStatus: String? = null,
+    val verifiedUploadSessionId: String? = null,
+    val verifiedAttemptId: String? = null
 ) {
     val hasUploadedPdfBinary: Boolean
-        get() = AdminCatalogValidator.hasReliableUploadedPdfProof(
-            fileId = fileId,
-            versionId = id,
-            r2ObjectKey = r2ObjectKey,
-            fileSizeBytes = fileSizeBytes,
-            checksumSha256 = checksumSha256
-        )
+        get() {
+            if (binaryVerificationStatus == "VERIFIED") {
+                if (!r2ObjectKey.isNullOrBlank()) {
+                    return AdminCatalogValidator.hasReliableUploadedPdfProof(
+                        fileId = fileId,
+                        versionId = id,
+                        r2ObjectKey = r2ObjectKey,
+                        fileSizeBytes = fileSizeBytes,
+                        checksumSha256 = checksumSha256
+                    )
+                }
+                return AdminCatalogValidator.hasVerifiedServerPdfMetadata(
+                    fileId = fileId,
+                    versionId = id,
+                    fileSizeBytes = fileSizeBytes,
+                    checksumSha256 = checksumSha256,
+                    verifiedUploadSessionId = verifiedUploadSessionId,
+                    verifiedAttemptId = verifiedAttemptId
+                )
+            }
+            if (binaryVerificationStatus != null) {
+                return false
+            }
+            return AdminCatalogValidator.hasReliableUploadedPdfProof(
+                fileId = fileId,
+                versionId = id,
+                r2ObjectKey = r2ObjectKey,
+                fileSizeBytes = fileSizeBytes,
+                checksumSha256 = checksumSha256
+            )
+        }
 }

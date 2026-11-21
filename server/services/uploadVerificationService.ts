@@ -457,6 +457,31 @@ export class UploadVerificationService {
           );
         }
 
+        const stagingKey =
+          typeof sessionData.stagingKey === 'string'
+            ? sessionData.stagingKey.trim()
+            : '';
+        const expectedSizeBytes = sessionData.expectedSizeBytes;
+        const expectedSha256 =
+          typeof sessionData.expectedSha256 === 'string'
+            ? sessionData.expectedSha256.trim().toLowerCase()
+            : '';
+        if (
+          stagingKey.length === 0 ||
+          stagingKey !== buildStagingKey(fileId, versionId, sessionId) ||
+          typeof expectedSizeBytes !== 'number' ||
+          !Number.isInteger(expectedSizeBytes) ||
+          expectedSizeBytes <= 0 ||
+          expectedSizeBytes > this.config.maxPdfBytes ||
+          !/^[a-f0-9]{64}$/.test(expectedSha256)
+        ) {
+          throw new ApiError(
+            409,
+            'PROOF_MISMATCH',
+            'Upload session metadata is invalid or malformed.',
+          );
+        }
+
         const prevAttemptCount =
           typeof sessionData.attemptCount === 'number'
             ? sessionData.attemptCount
@@ -474,9 +499,9 @@ export class UploadVerificationService {
 
         return {
           kind: 'acquired',
-          stagingKey: String(sessionData.stagingKey),
-          expectedSizeBytes: Number(sessionData.expectedSizeBytes),
-          expectedSha256: String(sessionData.expectedSha256).toLowerCase(),
+          stagingKey,
+          expectedSizeBytes,
+          expectedSha256,
         };
       },
     );
@@ -725,6 +750,13 @@ export class UploadVerificationService {
         `Cannot publish archived study file '${fileId}'.`,
       );
     }
+    if (preFileData.isArchived !== false) {
+      throw new ApiError(
+        409,
+        'PROOF_MISMATCH',
+        `Study file '${fileId}' is missing explicit non-archived flag.`,
+      );
+    }
     if (!preVersionSnap.exists || !preVersionData) {
       throw new ApiError(
         404,
@@ -737,6 +769,13 @@ export class UploadVerificationService {
         409,
         'VERSION_ARCHIVED',
         `Cannot publish archived version '${versionId}'.`,
+      );
+    }
+    if (preVersionData.isArchived !== false) {
+      throw new ApiError(
+        409,
+        'PROOF_MISMATCH',
+        `Version '${versionId}' is missing explicit non-archived flag.`,
       );
     }
     if (preVersionData.binaryVerificationStatus !== 'VERIFIED') {
@@ -755,6 +794,7 @@ export class UploadVerificationService {
     if (
       !isReliableR2ObjectKey(fileId, versionId, preR2Key) ||
       typeof preSizeBytes !== 'number' ||
+      !Number.isInteger(preSizeBytes) ||
       preSizeBytes <= 0 ||
       typeof preSessionId !== 'string' ||
       !preSessionId ||
@@ -776,11 +816,11 @@ export class UploadVerificationService {
         'Verified R2 object is missing from storage.',
       );
     }
-    if (head.contentLength !== null && head.contentLength !== preSizeBytes) {
+    if (head.contentLength !== preSizeBytes) {
       throw new ApiError(
         409,
         'SIZE_MISMATCH',
-        'Stored R2 object size does not match verified Firestore metadata.',
+        'Stored R2 object size is missing or does not match verified Firestore metadata.',
       );
     }
 
@@ -803,6 +843,13 @@ export class UploadVerificationService {
           409,
           'FILE_ARCHIVED',
           `Cannot publish archived study file '${fileId}'.`,
+        );
+      }
+      if (fileData.isArchived !== false) {
+        throw new ApiError(
+          409,
+          'PROOF_MISMATCH',
+          `Study file '${fileId}' is missing explicit non-archived flag.`,
         );
       }
 
@@ -829,6 +876,13 @@ export class UploadVerificationService {
           `Cannot publish archived version '${versionId}'.`,
         );
       }
+      if (targetData.isArchived !== false) {
+        throw new ApiError(
+          409,
+          'PROOF_MISMATCH',
+          `Version '${versionId}' is missing explicit non-archived flag.`,
+        );
+      }
 
       const sessionData = sessionSnap.data();
       if (!sessionSnap.exists || !sessionData) {
@@ -843,6 +897,10 @@ export class UploadVerificationService {
         typeof targetData.checksumSha256 === 'string'
           ? targetData.checksumSha256.trim().toLowerCase()
           : '';
+      const sessionExpectedSha256 =
+        typeof sessionData.expectedSha256 === 'string'
+          ? sessionData.expectedSha256.trim().toLowerCase()
+          : '';
       const fileSizeBytes = targetData.fileSizeBytes;
       const versionNumber = targetData.versionNumber;
       const versionLabel = targetData.versionLabel;
@@ -852,17 +910,23 @@ export class UploadVerificationService {
         sessionData.status !== 'CONSUMED' ||
         sessionData.fileId !== fileId ||
         sessionData.versionId !== versionId ||
+        targetData.r2ObjectKey !== preR2Key ||
         sessionData.finalObjectKey !== targetData.r2ObjectKey ||
+        targetData.verifiedUploadSessionId !== preSessionId ||
         targetData.verifiedUploadSessionId !== sessionSnap.id ||
+        targetData.verifiedAttemptId !== preAttemptId ||
         targetData.verifiedAttemptId !== sessionData.activeAttemptId ||
         !isReliableR2ObjectKey(fileId, versionId, targetData.r2ObjectKey) ||
         typeof fileSizeBytes !== 'number' ||
-        fileSizeBytes <= 0 ||
+        !Number.isInteger(fileSizeBytes) ||
+        fileSizeBytes !== preSizeBytes ||
+        sessionData.expectedSizeBytes !== fileSizeBytes ||
         typeof versionNumber !== 'number' ||
         versionNumber < 1 ||
         typeof versionLabel !== 'string' ||
         !versionLabel.trim() ||
-        !/^[a-f0-9]{64}$/.test(sha256)
+        !/^[a-f0-9]{64}$/.test(sha256) ||
+        sessionExpectedSha256 !== sha256
       ) {
         throw new ApiError(
           409,

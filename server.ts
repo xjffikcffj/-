@@ -1,5 +1,8 @@
 import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
+import express from 'express';
 import { createBackendApp } from './server/app.js';
 import { loadServerConfig } from './server/config/env.js';
 import { createFirebaseAdminServices } from './server/firebase/adminApp.js';
@@ -16,6 +19,19 @@ export function startBackendServer() {
     idTokenVerifier,
     r2Storage,
   });
+
+  const distDir = path.resolve(import.meta.dirname, 'dist');
+  const distIndexPath = path.join(distDir, 'index.html');
+  if (fs.existsSync(distIndexPath)) {
+    app.use(express.static(distDir));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) {
+        next();
+        return;
+      }
+      res.sendFile(distIndexPath);
+    });
+  }
 
   const server = app.listen(config.port, '0.0.0.0', () => {
     console.log(

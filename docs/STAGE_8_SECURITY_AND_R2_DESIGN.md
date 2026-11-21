@@ -33,7 +33,7 @@
 ### تسلسل التحقق والاعتماد والنشر
 1. **`POST /api/admin/study-files/{fileId}/versions/{versionId}/upload-slot`:**
    - يتحقق ذرياً داخل معاملة Firestore من أن الملف غير مؤرشف، والإصدار غير مؤرشف، وغير منشور (`!isPublished`)، وغير موثق (`binaryVerificationStatus != "VERIFIED"`)، ولا توجد جلسة `"VERIFYING"` نشطة.
-   - يُبطل أي جلسة `"PENDING"` أقدم لنفس الإصدار (`SUPERSEDED`)، وينشئ وثيقة `upload_sessions/{sessionId}` (`status = "PENDING"`, TTL قصير، `expectedSizeBytes`, `expectedSha256`) ويصدر Presigned `PUT` URL مقيداً بـ `uploads-staging/{fileId}/{versionId}/{sessionId}.pdf` و`Content-Length` و`Content-Type: application/pdf`.
+   - يُبطل أي جلسة `"PENDING"` أقدم لنفس الإصدار (`SUPERSEDED`)، وينشئ وثيقة `upload_sessions/{sessionId}` (`status = "PENDING"`, TTL = 10 دقائق افتراضياً `600` ثانية، `expectedSizeBytes`, `expectedSha256`) ويصدر Presigned `PUT` URL مقيداً بـ `uploads-staging/{fileId}/{versionId}/{sessionId}.pdf` و`Content-Length` و`Content-Type: application/pdf`.
 2. **الرفع المباشر لـ `stagingKey`:** يرفع العميل إلى `stagingKey` مباشرة.
 3. **`POST /api/admin/study-files/{fileId}/versions/{versionId}/verify` (`{ uploadSessionId }`):**
    - **المرحلة أ — معاملة قفل المحاولة (`Acquire Lock Tx`):**
@@ -64,16 +64,16 @@
      - **`session.finalObjectKey === version.r2ObjectKey`**.
      - **`version.verifiedUploadSessionId === sessionId`**.
      - **`version.verifiedAttemptId === session.activeAttemptId`**.
-     - تحقق `HeadObject(version.r2ObjectKey)` في R2 من وجود الكائن ومطابقة `fileSizeBytes`.
+     - تحقق `HeadObject(version.r2ObjectKey)` في R2 من وجود الكائن ومطابقة `fileSizeBytes` (يرفض النشر إذا كانت `head.contentLength == null` أو لا تطابق الحجم الموثق).
      - عدم أرشفة الملف الأب ولا الإصدار المستهدف.
 
 ---
 
-## 3. سياسة نقاط الـ API والكاش المرحلية
+## 3. سياسة نقاط الـ API والكاش المرحلية ومسارات Android المعتمدة
 
 | المسار | الأدوار المسموحة | التحقق والكاش |
 | :--- | :--- | :--- |
-| `GET /api/catalog/*` | الجميع (`Guest`, `Student`, `Admin`, `Owner`) | قراءة حية من Firestore دون كاش داخلي مبدئياً حتى إتمام الاختبارات. |
-| `POST .../upload-slot`, `/verify`, `/publish` | `Admin`, `Owner` | `verifyIdToken(token, true)` + `decoded.role in ['admin', 'owner']`. |
-| `GET /study-files/{f}/versions/{v}/stream` | الجميع (`Guest` فأعلى) | فحص حي لـ 5 مستويات دون كاش + `200 OK` دون `3xx` + `Content-Length` + `X-Content-Sha256`. |
-| `GET /study-files/{f}/versions/{v}/download` | الحسابات المسجلة (`Student`, `Admin`, `Owner`) — ممنوع على `Guest` | `verifyIdToken(token, true)` غير مجهول + نفس الفحص الحي واستجابة `200 OK`. |
+| `GET /api/catalog/*` | الجميع (`Guest`, `Student`, `Admin`, `Owner`) | قراءة حية من Firestore (مع استبعاد `isArchived == true`) دون كاش داخلي. |
+| `POST .../versions`, `.../upload-slot`, `.../verify`, `.../publish` | `Admin`, `Owner` | `verifyIdToken(token, true)` + `decoded.role in ['admin', 'owner']`. |
+| `GET /api/study-files/{f}/versions/{v}/stream` | الجميع (`Guest` فأعلى) | فحص حي لـ 5 مستويات دون كاش + `200 OK` دون `3xx` + `Content-Length` + `X-Content-Sha256`. |
+| `GET /api/study-files/{f}/versions/{v}/download` | الحسابات المسجلة (`Student`, `Admin`, `Owner`) — ممنوع على `Guest` | `verifyIdToken(token, true)` غير مجهول + نفس الفحص الحي واستجابة `200 OK`. |

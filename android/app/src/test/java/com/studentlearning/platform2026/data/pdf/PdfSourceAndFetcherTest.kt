@@ -1,5 +1,6 @@
 package com.studentlearning.platform2026.data.pdf
 
+import com.studentlearning.platform2026.data.remote.firebase.AuthTokenProvider
 import com.studentlearning.platform2026.domain.model.PdfFailureReason
 import com.studentlearning.platform2026.domain.model.PdfLoadException
 import com.studentlearning.platform2026.domain.model.PdfSourceDescriptor
@@ -43,10 +44,13 @@ class PdfSourceAndFetcherTest {
         }
 
     @Test
-    fun `configured https broker generates authorized descriptor without fake R2 secrets`() =
+    fun `configured https broker generates authorized stream and download descriptors`() =
         runBlocking {
+            var currentToken: String? = null
+            val tokenProvider = AuthTokenProvider { _ -> currentToken }
             val source = BrokeredPdfFileSourceDataSource(
-                brokerEndpointBaseUrl = "https://media.example.invalid/"
+                brokerEndpointBaseUrl = "https://media.example.invalid/",
+                authTokenProvider = tokenProvider
             )
             assertEquals(PdfBrokerConfigurationStatus.CONFIGURED, source.getBrokerStatus())
 
@@ -54,9 +58,28 @@ class PdfSourceAndFetcherTest {
             assertTrue(descriptor is PdfSourceDescriptor.AuthorizedRemoteUrl)
             val remote = descriptor as PdfSourceDescriptor.AuthorizedRemoteUrl
             assertEquals(
-                "https://media.example.invalid/study-files/file%201/versions/v2/stream",
+                "https://media.example.invalid/api/study-files/file%201/versions/v2/stream",
                 remote.url
             )
+            assertTrue(remote.headers.isEmpty())
+
+            // Guest / missing token must be rejected before calling /download.
+            try {
+                source.resolveDownloadPdfSource(fileId = "file 1", activeVersionId = "v2")
+                fail("Expected UNAUTHORIZED_ACCESS when token is missing")
+            } catch (expected: PdfLoadException) {
+                assertEquals(PdfFailureReason.UNAUTHORIZED_ACCESS, expected.reason)
+            }
+
+            currentToken = "jwt-student-1"
+            val downloadDescriptor = source.resolveDownloadPdfSource(fileId = "file 1", activeVersionId = "v2")
+            assertTrue(downloadDescriptor is PdfSourceDescriptor.AuthorizedRemoteUrl)
+            val remoteDownload = downloadDescriptor as PdfSourceDescriptor.AuthorizedRemoteUrl
+            assertEquals(
+                "https://media.example.invalid/api/study-files/file%201/versions/v2/download",
+                remoteDownload.url
+            )
+            assertEquals("Bearer jwt-student-1", remoteDownload.headers["Authorization"])
         }
 
     @Test

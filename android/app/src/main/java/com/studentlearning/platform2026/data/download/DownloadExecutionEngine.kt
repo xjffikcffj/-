@@ -68,7 +68,7 @@ class DownloadExecutionEngine(
         }
 
         val source = try {
-            sourceDataSource.resolvePdfSource(
+            sourceDataSource.resolveDownloadPdfSource(
                 fileId = request.fileId,
                 activeVersionId = request.versionId
             )

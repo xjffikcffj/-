@@ -160,9 +160,9 @@
     <string name="admin_version_badge">الإصدار الفعّال %1$s (رقم %2$d)</string>
     <string name="admin_no_active_version_badge">بانتظار إضافة إصدار PDF</string>
     <string name="admin_r2_pending_badge">سجل الإصدارات مفعّل (مسودات)؛ رفع ملفات PDF إلى Cloudflare R2 بانتظار وسيط التوقيع الآمن</string>
-    <string name="admin_r2_configured_badge">وسيط Cloudflare R2 مهيّأ؛ النشر متاح فقط للإصدارات ذات سجل PDF موثّق (تدفق الرفع والتحقق لم يُفعّل في الواجهة بعد)</string>
+    <string name="admin_r2_configured_badge">وسيط Cloudflare R2 مفعّل عبر Backend D2؛ ارفع ملف PDF وتحقق منه من نافذة «إدارة الإصدارات» قبل النشر.</string>
     <string name="admin_r2_deferred_notice">تنبيه: يُمكنك إعداد هوية الملف وسجلات الإصدارات كمسودات، بينما يتطلب تفعيل أي إصدار للطلاب رفع ملف PDF الفعلي عبر وسيط Cloudflare R2 عند تفعيله.</string>
-    <string name="admin_r2_configured_notice">تنبيه: تشير الحالة إلى تهيئة وسيط Cloudflare R2، غير أن تدفق رفع ملفات PDF والتحقق الخادمي غير مفعّل في الواجهة بعد؛ يتطلب النشر وجود سجل PDF موثّق مسبقاً.</string>
+    <string name="admin_r2_configured_notice">وسيط Cloudflare R2 مفعّل: يمكنك إنشاء إصدار مسودة ثم رفع ملف PDF والتحقق من سلامته وبصمته خادمياً من نافذة «إدارة الإصدارات» قبل النشر.</string>
     <string name="admin_file_edit_preserves_versions_notice">يعدّل هذا النموذج هوية الملف الأساسية فقط (العنوان، الوصف، الترتيب) ولا يمسّ رقم الإصدار أو ملفات PDF في سجل الإصدارات.</string>
     <string name="admin_active_version_readonly">مؤشر الإصدار الفعّال (للقراءة فقط): %1$s (رقم %2$d)</string>
 
@@ -391,7 +391,7 @@
     <string name="admin_field_publish_version_immediately">تفعيل ونشر هذا الإصدار فوراً كأحدث إصدار للطلاب</string>
 
     <string name="admin_r2_upload_broker_pending_notice">رفع ملفات PDF الفعلية إلى Cloudflare R2 بانتظار تفعيل وسيط التوقيع الآمن على الخادم؛ لا تُستخدم أي مفاتيح أو روابط وهمية.</string>
-    <string name="admin_r2_upload_broker_configured_notice">وسيط Cloudflare R2 مهيّأ على مستوى الإعدادات؛ تدفق رفع ملفات PDF والتحقق منها من الواجهة غير مكتمل بعد، ويُشترط سجل PDF موثّق قبل النشر.</string>
+    <string name="admin_r2_upload_broker_configured_notice" formatted="false">وسيط Cloudflare R2 مفعّل عبر Backend D2: اختر ملف PDF (%PDF- بحد أقصى 100 ميجابايت) لرفعه مؤقتاً ثم التحقق من حجمه وبصمة SHA-256 قبل النشر.</string>
     <string name="admin_version_requires_pdf_notice">يتطلب النشر والتفعيل توفر ملف PDF مرفوعاً عبر وسيط R2 مع مسار وبصمة SHA-256 موثّقين، وألا يكون الملف أو الإصدار مؤرشفاً.</string>
     <string name="admin_version_create_draft_only_notice">بانتظار ربط وسيط رفع Cloudflare R2، ستُحفظ الإصدارات الجديدة كمسودات فقط ولن تُفعّل للطلاب حتى يُرفع ملف PDF الخاص بها.</string>
     <string name="admin_file_create_draft_only_notice">يُحفظ الملف الجديد كمسودة غير منشورة إلى أن يُضاف ويُنشر له إصدار PDF فعّال موثّق.</string>
@@ -413,4 +413,31 @@
     <string name="admin_validation_study_file_no_active_version">لا يمكن نشر الملف الدراسي قبل وجود إصدار PDF فعّال منشور وموثّق مطابق لـ activeVersionId.</string>
     <string name="admin_study_file_publish_disabled_archived">النشر معطّل: الملف مؤرشف حالياً؛ قم باستعادته من الأرشيف أولاً قبل نشره للطلاب.</string>
     <string name="admin_study_file_publish_disabled_no_active_version">النشر معطّل: يتطلب نشر الملف وجود إصدار PDF فعّال موثّق (activeVersionId) من نافذة «إدارة الإصدارات».</string>
+
+    <!-- Stage 8 D2 Backend Integration & RBAC -->
+    <string name="admin_validation_description_too_long">وصف الملف طويل جداً (الحد الأقصى 1000 حرف).</string>
+    <string name="admin_validation_upload_invalid_pdf" formatted="false">الملف المختار ليس PDF صالحاً (%PDF-) أو يتجاوز الحد المسموح (100 ميجابايت).</string>
+    <string name="admin_owner_only_branches_notice">تنبيه الصلاحيات: إنشاء الفروع وتعديلها ونشرها وترتيبها محصور بدور المالك (Owner) فقط حسب قواعد الأمان.</string>
+    <string name="admin_owner_only_subject_unpublish_hint">ملاحظة: إلغاء نشر مادة منشورة متاح لدور المالك (Owner) فقط.</string>
+    <string name="admin_action_upload_verify_pdf">رفع والتحقق من PDF</string>
+    <string name="admin_uploading_verifying_pdf">جاري رفع ملف PDF والتحقق من سلامته على الخادم…</string>
+    <string name="admin_version_pdf_verified_badge">ملف PDF موثّق وجاهز للنشر (%1$.2f م.ب)</string>
+    <string name="admin_version_waiting_upload_notice" formatted="false">ارفع ملف PDF صالحاً (%PDF- بحد أقصى 100 ميجابايت) وتحقّق منه قبل التمكن من نشر هذا الإصدار.</string>
+    <string name="admin_success_version_pdf_verified">تم رفع ملف PDF والتحقق من بصمته وسلامته بنجاح — الإصدار جاهز للنشر.</string>
+
+    <!-- F-AND-1 & F-AND-2: Server verification metadata & D2 error messages -->
+    <string name="admin_version_verification_verified">حالة التحقق الخادمي: موثّق ومعتمد</string>
+    <string name="admin_version_verification_pending_upload">حالة التحقق الخادمي: بانتظار إتمام الرفع والتحقق</string>
+    <string name="admin_version_verification_none">حالة التحقق الخادمي: لم يُرفع ملف PDF موثّق بعد</string>
+    <string name="admin_version_checksum_label">بصمة SHA-256: %1$s</string>
+    <string name="admin_version_attempt_id_label">معرف محاولة التحقق: %1$s</string>
+    <string name="admin_validation_upload_size_mismatch">حجم ملف PDF على الخادم لا يطابق الحجم المتوقع للملف المختار؛ أعد رفع الملف.</string>
+    <string name="admin_validation_upload_sha256_mismatch">فشل تطابق بصمة SHA-256 لملف PDF على الخادم؛ قد يكون الملف تلف أثناء النقل، أعد الرفع.</string>
+    <string name="admin_validation_upload_session_expired">انتهت مهلة جلسة الرفع؛ اطلب جلسة رفع جديدة وأعد رفع ملف PDF.</string>
+    <string name="admin_validation_upload_session_conflict">تعارض في جلسة الرفع أو هناك عملية تحقق جارية حالياً؛ انتظر لحظات أو أعد الرفع.</string>
+    <string name="admin_validation_upload_etag_mismatch">تغيّر الملف المؤقت أثناء النسخ الآمن (ETag Mismatch)؛ أعد رفع ملف PDF.</string>
+    <string name="admin_validation_version_already_published">هذا الإصدار منشور ومقفل ضد التعديل؛ أنشئ إصداراً جديداً لتحديث الملف.</string>
+    <string name="admin_validation_version_already_verified">تم التحقق من ملف PDF لهذا الإصدار مسبقاً ولا يمكن استبداله؛ يمكنك نشره أو إنشاء إصدار جديد.</string>
+    <string name="admin_validation_r2_not_configured">تخزين Cloudflare R2 غير مهيأ على الخادم حالياً؛ تعذّر إتمام العملية.</string>
+    <string name="admin_validation_backend_request_rejected">رفض الخادم الطلب بسبب تعارض في الحالة أو بيانات غير صالحة؛ راجع المدخلات وأعد المحاولة.</string>
 </resources>

@@ -96,6 +96,13 @@ function mapVerificationStatus(raw: unknown): BinaryVerificationStatus {
   return 'PENDING_UPLOAD';
 }
 
+function isHierarchyNodePublishedAndNotArchived(data: DocumentData): boolean {
+  return (
+    data.isPublished === true &&
+    (data.isArchived === undefined || data.isArchived === false)
+  );
+}
+
 export interface ResolvedPublishedVersionBinary {
   fileId: string;
   fileTitle: string;
@@ -120,7 +127,7 @@ export class CatalogService {
     return snapshot.docs
       .map((doc): CatalogBranchDto | null => {
         const data = doc.data();
-        if (data.isPublished !== true) return null;
+        if (!isHierarchyNodePublishedAndNotArchived(data)) return null;
         const name = extractString(data, 'nameAr', 'name', 'title');
         if (!name) return null;
         return {
@@ -139,7 +146,12 @@ export class CatalogService {
     const branchId = validateDocId(rawBranchId, 'branchId');
     const branchRef = this.firestore.collection('branches').doc(branchId);
     const branchSnap = await branchRef.get();
-    if (!branchSnap.exists || branchSnap.data()?.isPublished !== true) {
+    const branchData = branchSnap.data();
+    if (
+      !branchSnap.exists ||
+      !branchData ||
+      !isHierarchyNodePublishedAndNotArchived(branchData)
+    ) {
       throw new ApiError(
         404,
         'CATALOG_UNAVAILABLE',
@@ -156,7 +168,7 @@ export class CatalogService {
     return snapshot.docs
       .map((doc): CatalogSubjectDto | null => {
         const data = doc.data();
-        if (data.isPublished !== true) return null;
+        if (!isHierarchyNodePublishedAndNotArchived(data)) return null;
         const refInfo = extractRefInfo(data.branchId);
         if (!refInfo || refInfo.collectionId !== 'branches' || refInfo.id !== branchId) {
           return null;
@@ -181,7 +193,11 @@ export class CatalogService {
     const subjectRef = this.firestore.collection('subjects').doc(subjectId);
     const subjectSnap = await subjectRef.get();
     const subjectData = subjectSnap.data();
-    if (!subjectSnap.exists || !subjectData || subjectData.isPublished !== true) {
+    if (
+      !subjectSnap.exists ||
+      !subjectData ||
+      !isHierarchyNodePublishedAndNotArchived(subjectData)
+    ) {
       throw new ApiError(
         404,
         'CATALOG_UNAVAILABLE',
@@ -197,7 +213,12 @@ export class CatalogService {
       .collection('branches')
       .doc(branchInfo.id)
       .get();
-    if (!branchSnap.exists || branchSnap.data()?.isPublished !== true) {
+    const branchData = branchSnap.data();
+    if (
+      !branchSnap.exists ||
+      !branchData ||
+      !isHierarchyNodePublishedAndNotArchived(branchData)
+    ) {
       throw new ApiError(
         404,
         'CATALOG_UNAVAILABLE',
@@ -214,7 +235,7 @@ export class CatalogService {
     return snapshot.docs
       .map((doc): CatalogSectionDto | null => {
         const data = doc.data();
-        if (data.isPublished !== true) return null;
+        if (!isHierarchyNodePublishedAndNotArchived(data)) return null;
         const refInfo = extractRefInfo(data.subjectId);
         if (!refInfo || refInfo.collectionId !== 'subjects' || refInfo.id !== subjectId) {
           return null;
@@ -239,7 +260,11 @@ export class CatalogService {
     const sectionRef = this.firestore.collection('sections').doc(sectionId);
     const sectionSnap = await sectionRef.get();
     const sectionData = sectionSnap.data();
-    if (!sectionSnap.exists || !sectionData || sectionData.isPublished !== true) {
+    if (
+      !sectionSnap.exists ||
+      !sectionData ||
+      !isHierarchyNodePublishedAndNotArchived(sectionData)
+    ) {
       throw new ApiError(
         404,
         'CATALOG_UNAVAILABLE',
@@ -256,7 +281,11 @@ export class CatalogService {
       .doc(subjectInfo.id)
       .get();
     const subjectData = subjectSnap.data();
-    if (!subjectSnap.exists || !subjectData || subjectData.isPublished !== true) {
+    if (
+      !subjectSnap.exists ||
+      !subjectData ||
+      !isHierarchyNodePublishedAndNotArchived(subjectData)
+    ) {
       throw new ApiError(404, 'CATALOG_UNAVAILABLE', 'Parent subject is not published.');
     }
 
@@ -268,7 +297,12 @@ export class CatalogService {
       .collection('branches')
       .doc(branchInfo.id)
       .get();
-    if (!branchSnap.exists || branchSnap.data()?.isPublished !== true) {
+    const branchData = branchSnap.data();
+    if (
+      !branchSnap.exists ||
+      !branchData ||
+      !isHierarchyNodePublishedAndNotArchived(branchData)
+    ) {
       throw new ApiError(404, 'CATALOG_UNAVAILABLE', 'Parent branch is not published.');
     }
 
@@ -281,7 +315,7 @@ export class CatalogService {
     const mapped = await Promise.all(
       filesSnap.docs.map(async (fileDoc): Promise<PublicStudyFileDto | null> => {
         const data = fileDoc.data();
-        if (data.isPublished !== true || data.isArchived === true) {
+        if (data.isPublished !== true || data.isArchived !== false) {
           return null;
         }
         const refInfo = extractRefInfo(data.sectionId);
@@ -308,7 +342,7 @@ export class CatalogService {
           .get();
         const verData = versionSnap.data();
         if (!versionSnap.exists || !verData) return null;
-        if (verData.isPublished !== true || verData.isArchived === true) return null;
+        if (verData.isPublished !== true || verData.isArchived !== false) return null;
         if (verData.versionNumber !== activeVersionNumber) return null;
         if (verData.binaryVerificationStatus !== 'VERIFIED') return null;
 
@@ -378,7 +412,7 @@ export class CatalogService {
     if (!fileSnap.exists || !fileData) {
       throw new ApiError(404, 'NOT_FOUND', `Study file '${fileId}' was not found.`);
     }
-    if (fileData.isPublished !== true || fileData.isArchived === true) {
+    if (fileData.isPublished !== true || fileData.isArchived !== false) {
       throw new ApiError(
         404,
         'CATALOG_UNAVAILABLE',
@@ -405,7 +439,7 @@ export class CatalogService {
 
     if (
       versionData.isPublished !== true ||
-      versionData.isArchived === true ||
+      versionData.isArchived !== false ||
       versionData.binaryVerificationStatus !== 'VERIFIED'
     ) {
       throw new ApiError(
@@ -457,7 +491,11 @@ export class CatalogService {
       .doc(sectionInfo.id)
       .get();
     const sectionData = sectionSnap.data();
-    if (!sectionSnap.exists || !sectionData || sectionData.isPublished !== true) {
+    if (
+      !sectionSnap.exists ||
+      !sectionData ||
+      !isHierarchyNodePublishedAndNotArchived(sectionData)
+    ) {
       throw new ApiError(404, 'CATALOG_UNAVAILABLE', 'Parent section is not published.');
     }
 
@@ -470,7 +508,11 @@ export class CatalogService {
       .doc(subjectInfo.id)
       .get();
     const subjectData = subjectSnap.data();
-    if (!subjectSnap.exists || !subjectData || subjectData.isPublished !== true) {
+    if (
+      !subjectSnap.exists ||
+      !subjectData ||
+      !isHierarchyNodePublishedAndNotArchived(subjectData)
+    ) {
       throw new ApiError(404, 'CATALOG_UNAVAILABLE', 'Parent subject is not published.');
     }
 
@@ -482,7 +524,12 @@ export class CatalogService {
       .collection('branches')
       .doc(branchInfo.id)
       .get();
-    if (!branchSnap.exists || branchSnap.data()?.isPublished !== true) {
+    const branchData = branchSnap.data();
+    if (
+      !branchSnap.exists ||
+      !branchData ||
+      !isHierarchyNodePublishedAndNotArchived(branchData)
+    ) {
       throw new ApiError(404, 'CATALOG_UNAVAILABLE', 'Parent branch is not published.');
     }
 
