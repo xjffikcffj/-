@@ -53,6 +53,7 @@
     <string name="catalog_loading_message">جاري تحميل البيانات…</string>
     <string name="catalog_error_title">تعذّر تحميل البيانات</string>
     <string name="catalog_error_not_configured">الاتصال بـ Firebase غير مفعّل محلياً بعد؛ يلزم إضافة ملف google-services.json وتكوين المشروع.</string>
+    <string name="catalog_error_backend_not_configured">Catalog service (Backend D2) is not connected yet; please configure the backend server URL. This does not indicate a Firebase setup issue.</string>
     <string name="catalog_error_permission_denied">الوصول إلى بيانات Firestore مقيّد مؤقتاً بقواعد الأمان الحالية، وسيعمل فور اعتماد صلاحيات القراءة.</string>
     <string name="catalog_error_network">تعذّر الاتصال بالشبكة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.</string>
     <string name="catalog_error_unknown">حدث خطأ غير متوقع أثناء جلب البيانات. يرجى المحاولة مجدداً.</string>

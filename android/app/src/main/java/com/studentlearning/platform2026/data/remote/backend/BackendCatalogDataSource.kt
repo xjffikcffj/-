@@ -135,7 +135,7 @@ internal class BackendCatalogDataSource(
     ): Map<String, Any?> {
         if (!httpClient.isConfigured) {
             throw CatalogException(
-                reason = CatalogFailureReason.FIREBASE_NOT_CONFIGURED,
+                reason = CatalogFailureReason.BACKEND_NOT_CONFIGURED,
                 message = "Backend catalog endpoint URL is not configured yet."
             )
         }
@@ -152,7 +152,7 @@ internal class BackendCatalogDataSource(
             throw cancelled
         } catch (notConfigured: BackendNotConfiguredException) {
             throw CatalogException(
-                reason = CatalogFailureReason.FIREBASE_NOT_CONFIGURED,
+                reason = CatalogFailureReason.BACKEND_NOT_CONFIGURED,
                 message = notConfigured.message,
                 cause = notConfigured
             )

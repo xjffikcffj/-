@@ -35,6 +35,70 @@ export default defineConfig(({command, mode}) => {
           }
         },
       },
+      {
+        name: 'serve-debug-apk-download',
+        apply: 'serve',
+        configureServer(server) {
+          const apkAbsolutePath = path.resolve(
+            import.meta.dirname,
+            'android/app/build/outputs/apk/debug/app-debug.apk',
+          );
+          const allowedUrlPaths = new Set([
+            '/android/app/build/outputs/apk/debug/app-debug.apk',
+            '/download/app-debug.apk',
+          ]);
+
+          server.middlewares.use((req, res, next) => {
+            const requestPath = req.url?.split('?')[0];
+            if (!requestPath || !allowedUrlPaths.has(requestPath)) {
+              next();
+              return;
+            }
+            if (req.method !== 'GET' && req.method !== 'HEAD') {
+              res.statusCode = 405;
+              res.setHeader('Allow', 'GET, HEAD');
+              res.end();
+              return;
+            }
+            if (!fs.existsSync(apkAbsolutePath)) {
+              res.statusCode = 404;
+              res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+              res.end('Debug APK not found.');
+              return;
+            }
+
+            const stat = fs.statSync(apkAbsolutePath);
+            res.statusCode = 200;
+            res.setHeader(
+              'Content-Type',
+              'application/vnd.android.package-archive',
+            );
+            res.setHeader(
+              'Content-Disposition',
+              'attachment; filename="app-debug.apk"',
+            );
+            res.setHeader('Content-Length', String(stat.size));
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Cache-Control', 'no-store');
+
+            if (req.method === 'HEAD') {
+              res.end();
+              return;
+            }
+
+            const stream = fs.createReadStream(apkAbsolutePath);
+            stream.on('error', () => {
+              if (!res.headersSent) {
+                res.statusCode = 500;
+                res.end();
+              } else {
+                res.destroy();
+              }
+            });
+            stream.pipe(res);
+          });
+        },
+      },
     ],
     resolve: {
       alias: {

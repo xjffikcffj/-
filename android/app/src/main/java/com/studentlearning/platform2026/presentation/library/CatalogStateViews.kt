@@ -75,11 +75,14 @@ fun CatalogErrorState(
         CatalogFailureReason.PERMISSION_DENIED -> Icons.Rounded.Lock
         CatalogFailureReason.NETWORK_UNAVAILABLE -> Icons.Rounded.CloudOff
         CatalogFailureReason.FIREBASE_NOT_CONFIGURED,
+        CatalogFailureReason.BACKEND_NOT_CONFIGURED,
         CatalogFailureReason.UNKNOWN -> Icons.Rounded.WarningAmber
     }
     val message = when (reason) {
         CatalogFailureReason.FIREBASE_NOT_CONFIGURED ->
             stringResource(R.string.catalog_error_not_configured)
+        CatalogFailureReason.BACKEND_NOT_CONFIGURED ->
+            stringResource(R.string.catalog_error_backend_not_configured)
         CatalogFailureReason.PERMISSION_DENIED ->
             stringResource(R.string.catalog_error_permission_denied)
         CatalogFailureReason.NETWORK_UNAVAILABLE ->

@@ -2,6 +2,7 @@ package com.studentlearning.platform2026.domain.model
 
 enum class CatalogFailureReason {
     FIREBASE_NOT_CONFIGURED,
+    BACKEND_NOT_CONFIGURED,
     PERMISSION_DENIED,
     NETWORK_UNAVAILABLE,
     UNKNOWN

@@ -2,6 +2,7 @@
 
 **حالة المرحلة:** لم تُغلق المرحلة الثامنة نهائياً بعد، ولم تبدأ المرحلة التاسعة. تم تنفيذ **دفعة الإصلاح المحدودة للأعطال الستة** لإزالة عوائق بناء Android واختبارات Backend، ونجحت اختبارات `npm run lint` (`0`) و`npm run build` (`0`) و`npm run test:rules` (`17/17`, `0`) و`npm run test:backend` (`16/16`, `0`) وبناء `:app:compileDebugKotlin` وإنتاج ملف Debug APK فعلي (`android/app/build/outputs/apk/debug/app-debug.apk`, `32,883,248` بايت، `0`). بقيت مهام `:app:testDebugUnitTest` (`exit 1`) و`:app:lintDebug` (`exit 1`) معلقة بسبب أخطاء مسبقة ومستقلة عن الإصلاحات الستة في ملفات اختبارات الوحدة الـ 7 (`:app:compileDebugUnitTestKotlin`) و3 أخطاء Lint مسبقة في `AndroidManifest.xml` و`PdfReaderScreen.kt`، إضافةً إلى تعذر `connectedDebugAndroidTest` لغياب `/dev/kvm` والأجهزة المتصلة.
 - تم التوقف عند حدود دفعة الأعطال الستة دون فتح سلسلة إصلاحات متسلسلة للأعطال المستقلة المذكورة حتى تتم مراجعتها واعتماد خطوتها التالية.
+- **تحديث تنظيف المستودع وربط Firebase وبناء Debug APK (الجولة الحالية):** تم تحديث `.gitignore` في الجذر و`android/.gitignore`، وإزالة مجلد `android/.gradle/` المؤقت، وإضافة ملف Firebase الرسمي نفسه إلى `android/app/google-services.json` (مع التأكد من خلو `public/` تماماً). بعد تجهيز `OpenJDK 17` و`Android SDK 35` في بيئة الحاوية (`/usr/lib/jvm/java-17-openjdk-amd64` و`/opt/android-sdk`) نجحت تباعاً مهام `:app:processDebugGoogleServices` و`:app:compileDebugKotlin` و`:app:assembleDebug` وأُنتج ملف `android/app/build/outputs/apk/debug/app-debug.apk` (`32,885,792` بايت) بحزمة `com.studentlearning.platform2026` وموارد Firebase مضمنة للمشروع `student-learning-platform-2026`. **لم يُختبر الاتصال الحي بـ Firebase Auth أو Firestore بعد**؛ وتبقى المرحلة الثامنة مفتوحة.
 
 ---
 
@@ -90,6 +91,113 @@
 - **ما تعذّر تشغيله وبقي معلقاً:**
   - `connectedDebugAndroidTest`: متعذر في الحاوية لغياب `/dev/kvm` والأجهزة المتصلة عبر `adb` (فضلاً عن بقاء `testDebugUnitTest` و`lintDebug` بانتظار قرار إصلاح الأخطاء المستقلة).
   - الربط والاختبار الحي مع Firebase Production وCloudflare R2 وCloud Run Backend (`android/app/google-services.json` و`.env` وتعيين `HAQIBATI_BACKEND_BASE_URL` وتوقيع Release).
+
+---
+
+## 2.5. نتيجة مهمة تنظيف المستودع وتدقيق تجهيز ربط Firebase
+
+1. **تنظيف GitHub و`.gitignore` وفحص الأسرار:**
+   - تم تحديث `/.gitignore` و`/android/.gitignore` لتغطية `.gradle/` و`**/.gradle/` و`**/build/` و`*.apk` و`*.aab` و`*.ap_` و`*.keystore` و`*.jks` و`*.p12` و`*.pem` و`*.key` و`keystore.properties` و`local.properties` و`**/google-services.json` و`*service-account*.json` و`*firebase-adminsdk*.json`.
+   - تم حذف مجلد التخزين المؤقت `android/.gradle/` (`8.11.1`, `buildOutputCleanup`, `vcs-1`) من مساحة العمل دون المساس بـ `android/gradle/wrapper/` (`gradle-wrapper.jar`, `gradle-wrapper.properties`) أو `gradlew` أو `gradlew.bat` أو ملفات المصدر والبناء.
+   - ملاحظة بيئية: مجلد `.git` غير متوفر داخل حاوية AI Studio المستوردة، لذا يجب على المستخدم في نسخته المحلية تنفيذ `git rm -r --cached android/.gradle` (إن بقيت متتبعة في الفهرس) ثم دفع التعديلات إلى GitHub.
+   - فحص المستودع لم يعثر على أي ملفات `.apk` أو `.aab` أو مفاتيح Keystore أو `.env` فعلية (عدا `.env.example`) أو `local.properties` أو `google-services.json` أو أسرار مضمنة في الكود.
+
+2. **نتيجة تدقيق Firebase في الكود (قراءة وفحص فقط دون تعديل الكود الصحيح):**
+   - **المشروع المعتمد فقط:** `student-learning-platform-2026` (`48673314803`)، حزمة `com.studentlearning.platform2026`، قاعدة Firestore `(default)`، المنطقة المرجعية `me-central1`. لم يُعثر على أي مرجع لمشروع Firebase آخر في أي ملف.
+   - **الإضافات والاعتماديات:** `com.google.gms.google-services` بالإصدار `4.4.2` (يُفعّل تلقائياً داخل `android/app/build.gradle.kts` فور وجود `android/app/google-services.json`)، و`firebase-bom:33.7.0` مع `firebase-auth` و`firebase-firestore`.
+   - **التهيئة والجلسات والتوكن وCustom Claims:** `FirebaseClientProvider` يتحقق من تطابق `projectId` بصيغة Fail-Closed، و`FirebaseAuthDataSource` + `AuthRepositoryImpl` يغطيان الدخول بالبريد وكلمة المرور، إنشاء حساب الطالب (`AdminRole.NONE`)، استعادة كلمة المرور، تسجيل الخروج، استعادة الجلسة عبر `AuthStateListener` مع تحديث قسري للـ Claims عند التشغيل، استخراج `ID Token` غير مجهول إلى Backend، وقراءة `claims["role"]` (`owner`/`admin`) مع التحقق السيرفري في `server/middleware/auth.ts` (`verifyIdToken(token, true)`).
+   - **ملاحظة تدقيقية حول تجديد الرمز:** مسار الإدارة (`BackendAdminVersionDataSource`) يفرض `forceRefresh = true` عند كل طلب، بينما مسارات الكتالوج والبث والتنزيل تمرر `forceRefresh = false` وتعتمد على التجديد التلقائي من Firebase SDK مع رفض `401/403` دون إعادة محاولة تلقائية في `HttpPdfContentFetcher`/`HttpDownloadStreamFetcher` (يتاح أيضاً زر/دالة تحديث الجلسة يدوياً عبر `AccountViewModel.refreshSession`).
+   - **ملف `android/app/google-services.json`:** تم نقل الملف الرسمي المرفق نفسه إلى المسار `android/app/google-services.json` (`720` بايت، دون تعديل محتواه أو إنشاء ملف بديل، ودون إبقاء نسخة داخل `public/`).
+   - **التحقق من التطابق:** تطابقت البيانات غير السرية مع المشروع المعتمد (`project_id`: `student-learning-platform-2026`، `project_number`: `48673314803`، `package_name`: `com.studentlearning.platform2026`، `mobilesdk_app_id`: `1:48673314803:android:d9dcbc07559c76520aa486`، `storage_bucket`: `student-learning-platform-2026.firebasestorage.app`، `configuration_version`: `1`).
+   - **حماية الملف والتفعيل التلقائي:** كلٌّ من `/.gitignore` و`/android/.gitignore` يمنعان رفع الملف إلى GitHub، وملف `android/app/build.gradle.kts` مهيأ لتفعيل `com.google.gms.google-services` تلقائياً بمجرد وجود الملف في المسار نفسه، بينما يتصل `FirebaseClientProvider` بالمشروع `student-learning-platform-2026` وقاعدة Firestore `(default)`.
+
+3. **نتائج التحقق الفعلي من Gradle وFirebase والبناء (الجولة الحالية):**
+   - **فحص سلامة الملف:** `android/app/google-services.json` موجود فعلياً (`720` بايت) ومطابق للمشروع `student-learning-platform-2026` (`48673314803`) والحزمة `com.studentlearning.platform2026` ومعرّف التطبيق `1:48673314803:android:d9dcbc07559c76520aa486`، دون أي نسخة متبقية في `public/` أو `public/assets/` أو `public/assets/aistudio/`، ومستثنى في كل من `/.gitignore` و`android/.gitignore`.
+   - **تجهيز أدوات البناء في الحاوية:** `OpenJDK 17.0.21.1` (`/usr/lib/jvm/java-17-openjdk-amd64`) و`Android SDK` (`platforms;android-35`, `build-tools;35.0.0`, `build-tools;34.0.0`, `platform-tools` في `/opt/android-sdk`).
+   - `sh ./android/gradlew -p android :app:processDebugGoogleServices --no-daemon`: **نجح (`BUILD SUCCESSFUL in 1m 36s`)** وولّد `android/app/build/generated/res/processDebugGoogleServices/values/values.xml` بالمعرّفات المعتمدة نفسها.
+   - `sh ./android/gradlew -p android :app:compileDebugKotlin --no-daemon`: **نجح (`BUILD SUCCESSFUL in 1m 49s`)**.
+   - `sh ./android/gradlew -p android :app:assembleDebug --no-daemon`: **نجح (`BUILD SUCCESSFUL in 3m 20s`)** وأنتج:
+     - المسار: `android/app/build/outputs/apk/debug/app-debug.apk`
+     - الحجم: **`32,885,792` بايت**
+     - التحقق بـ `aapt2 dump badging` و`aapt2 dump strings`: الحزمة **`com.studentlearning.platform2026`** (`compileSdkVersion='35'`, `targetSdkVersion='35'`, `minSdkVersion='24'`) وموارد Firebase المضمنة تشير إلى **`student-learning-platform-2026`** و`48673314803` و`1:48673314803:android:d9dcbc07559c76520aa486`.
+   - **الاتصال الحي بخدمات Firebase Auth / Firestore:** **لم يُختبر فعلياً بعد** (يحتاج اختباراً منفصلاً على جهاز/محاكي مع تفعيل الخدمات في Firebase Console).
+
+---
+
+## 2.6. نتيجة تدقيق جاهزية الاتصال بـ Firebase (Firebase Connection Readiness Audit)
+
+- **الحالة العامة:** **المرحلة الثامنة لا تزال مفتوحة**؛ تم إتمام فحص جاهزية الكود والتهيئة دون تشغيل اختبارات اتصال حية بـ Production أو نشر قواعد/خوادم.
+- **1. تهيئة Firebase داخل Android (`student-learning-platform-2026` / `48673314803` / `(default)` / `me-central1`):**
+  - التهيئة القياسية تتم عبر `FirebaseInitProvider` والموارد المولّدة من `android/app/google-services.json` بواسطة `com.google.gms.google-services` (`4.4.2`) مع `firebase-bom:33.7.0` (`firebase-auth`, `firebase-firestore`).
+  - `FirebaseClientProvider.kt` يفرض حارس `Fail-Closed`: يتحقق من تطابق `projectId == "student-learning-platform-2026"` قبل إرجاع `FirebaseAuth.getInstance(app)` أو `FirebaseFirestore.getInstance(app, "(default)")`، ولا توجد أي تهيئة يدوية مكررة أو استخدام `useEmulator` أو إشارة لمشروع آخر أو أسرار مكتوبة في كود Android أو مسارات Mock في `AppContainer.kt` (محاكاة `VITE_ENABLE_PREVIEW_DEMO` محصورة في معاينة الويب `src/` فقط).
+- **2. مسارات المصادقة (Firebase Auth):**
+  - المزوّد الفعلي الوحيد في Android هو **Email/Password** (`FirebaseAuthDataSource.kt`, `AuthRepositoryImpl.kt`, `SignInScreen.kt`, `SignUpScreen.kt`, `ForgotPasswordScreen.kt`): تسجيل الدخول، إنشاء حساب طالب (يُجبر دور `AdminRole.NONE` محلياً)، استعادة كلمة المرور، تسجيل الخروج، واستعادة الجلسة عند فتح التطبيق عبر `AuthStateListener` مع `readCurrentSession(forceTokenRefresh = true)` ومسح الامتيازات فوراً عند تبديل الحساب أو أخطاء التعطيل/فقدان الحساب، والتمييز الصارم للضيف (`GUEST` بدون توكن) عن المسجل (`STUDENT`/`ADMIN`/`OWNER`).
+  - **متطلب Console غير قابل للتحقق من الكود:** يلزم التأكد في Firebase Console من تفعيل **Authentication -> Sign-in method -> Email/Password** قبل أول اختبار مصادقة حي.
+- **3. مسارات Firestore ومنع الالتفاف (Zero-Bypass Check):**
+  - **قراءة الكتالوج العام للطلاب/الضيوف:** مربوطة في `AppContainer.kt` بـ `BackendCatalogDataSource` (`/api/catalog/...`)؛ أما `FirestoreCatalogDataSource.kt` فغير موصول في الإنتاج (موجود للاختبار فقط)، لذا **لا يلتف التطبيق على Backend** نحو قراءة Firestore مباشرة، وهو ما يتطابق مع `firestore.rules` التي تحصر القراءة المباشرة في `isAdminOrOwner()`.
+  - **قراءة/كتابة الإدارة عبر Firestore Client SDK (`FirestoreAdminCatalogDataSource` عبر `HybridAdminCatalogDataSource`):** قراءة وكتابة `branches` (لـ `owner` فقط) و`subjects` و`sections` و`study_files` metadata/أرشفة/إلغاء نشر/ترتيب.
+  - **مسارات محجوزة للخادم فقط (`firestore.rules`):** كتابة `study_files/{fileId}/versions/*`، تعيين `study_files.isPublished = true` أو مؤشرات `activeVersion*`، وجميع عمليات `upload_sessions` (تُوجَّه عبر `BackendAdminVersionDataSource`).
+  - **البيانات المحلية فقط:** التفضيلات (`PreferencesDataSource` عبر DataStore)، تقدم القراءة (`ReadingProgressDataSource`)، وسجلات/ملفات التنزيلات (`LocalPdfStorageManager`, `OfflineDownloadsDataSource`, WorkManager).
+- **4. اتصال Backend D2 (`HAQIBATI_BACKEND_BASE_URL`):**
+  - متغير `BuildConfig.HAQIBATI_BACKEND_BASE_URL` مضبوط افتراضياً على `""` (بدون URL وهمي)، و`AppContainer.kt` يترك `allowInsecureHttpForTesting = false`؛ لذا تقف مسارات الكتالوج والبث والتنزيل والرفع والإصدارات على وضع **Fail-Closed** (`AWAITING_SECURE_BROKER_INTEGRATION` / `FIREBASE_NOT_CONFIGURED` / `SECURE_SOURCE_NOT_CONFIGURED`).
+  - مسارات Android تتطابق مع مسارات `server/app.ts` و`server/routes/*.ts` (`/api/catalog/*`, `/api/study-files/*/versions/*/{stream,download}`, `/api/admin/study-files/*/versions*`).
+- **5. العوائق الحالية قبل الاختبار الحي الكامل (المتبقية بعد Auth):**
+  - عدم نشر `firestore.rules` و`firestore.indexes.json` إلى Production بعد (مع ملاحظة أن مزوّد Email/Password وحساب المالك بـ Custom Claim موجودان ومفعّلان مسبقاً بحسب تأكيد المالك).
+  - عدم تشغيل/نشر Backend D2 (`server.ts`) على رابط **HTTPS** عام (`HAQIBATI_BACKEND_BASE_URL`) وعدم توفر متغيرات الإنتاج السيرفرية (Service Account + مفاتيح Cloudflare R2).
+  - بالنسبة لاختبار المحاكي المعزول (`npm run test:rules` و`npm run test:backend`): البيئة الحالية تحتوي `OpenJDK 17` و`firebase-cli 15.34.1` دون حزمة محاكي Firestore المخبأة أو `JDK 21+` المطلوب افتراضياً في التوثيق لتشغيل محاكي `firebase-tools`.
+
+---
+
+## 2.7. فحص Debug APK وتجهيز اختبار Firebase Auth الحقيقي (على الهاتف)
+
+- **نتيجة فحص الملف `android/app/build/outputs/apk/debug/app-debug.apk` (دون إعادة البناء):**
+  - **الوجود والحجم والتاريخ:** موجود فعلياً بحجم **`32,885,792` بايت** (`~31.36 MiB`)، تاريخ آخر تعديل **`2026-11-21 19:26:15 UTC`**، وبصمة `SHA-256`: `3dcac397f9615e31074c44708680742ea871c4464ef93363ff2e2d12b6a94f0f`.
+  - **فحص الموارد وإعداد Firebase داخل APK (`aapt2 dump badging` / `resources` / `strings`):**
+    - الحزمة: **`com.studentlearning.platform2026`** (`versionCode=1`, `versionName=0.1.0`, `minSdkVersion=24`, `targetSdkVersion=35`).
+    - الأذونات المضمّنة: `android.permission.INTERNET` و`android.permission.ACCESS_NETWORK_STATE`.
+    - موارد Firebase المترجمة داخل APK موجودة (`project_id`, `gcm_defaultSenderId`, `google_app_id`, `google_storage_bucket`, `google_api_key`, `google_crash_reporting_api_key`) وتطابق المشروع **`student-learning-platform-2026`** ورقم المشروع **`48673314803`** ومعرّف التطبيق **`1:48673314803:android:d9dcbc07559c76520aa486`** وحاوية التخزين **`student-learning-platform-2026.firebasestorage.app`**.
+    - لم يلزم أي إعادة بناء لأن APK جاهز ومطابق تماماً.
+- **مسار استعادة Custom Claims ودور المالك الموجود مسبقاً:**
+  - عند تسجيل الدخول (`FirebaseAuthDataSource.signInWithEmailAndPassword`) أو استعادة الجلسة عند تشغيل التطبيق (`AuthRepositoryImpl` عبر `AuthStateListener`) أو فتح لوحة المشرفين (`AdminPortalViewModel.refreshSession(forceTokenRefresh = true)`), يستدعي التطبيق `currentUser.getIdToken(true)` ويقرأ `claims["role"]` (`AdminRole.fromClaim`) لإظهار دور **`مالك (Owner)`** في الإعدادات وفتح بوابة `AdminPortalScreen` دون إعادة تعيين أي صلاحية أو إنشاء حساب مالك جديد.
+- **الإتاحة المباشرة للـ APK (دون ZIP ودون GitHub):** تم التحقق من أن خادم التطوير المحلي (`vite --port=3000`) يقدّم المسار `/android/app/build/outputs/apk/debug/app-debug.apk` مباشرة بالحالة `HTTP 200 OK` وبالحجم والبصمة نفسهما (`32,885,792` بايت).
+- **حالة المرحلة:** **بانتظار تنفيذ المالك لاختبار Firebase Auth الحقيقي على هاتفه Android وتثبيت النتيجة**؛ تبقى **المرحلة الثامنة مفتوحة** ولم تبدأ المرحلة التاسعة.
+
+---
+
+## 2.8. تشخيص ظهور رسالة «الاتصال بـ Firebase غير مفعّل محلياً بعد» داخل تبويب المكتبة
+
+- **النتيجة المؤكدة (Read-only، دون إعادة بناء APK):**
+  - **لا يوجد أي خلل في `google-services.json` أو `FirebaseInitProvider` أو `FirebaseClientProvider` أو تطابق المعرّفات.**
+    - `BuildConfig.APPLICATION_ID` و`AndroidManifest.xml package` (`Context.packageName`) و`google-services.json` متطابقة جميعاً على `com.studentlearning.platform2026`.
+    - `FirebaseInitProvider` مسجل في `AndroidManifest.xml` داخل `app-debug.apk` بالسلطة `com.studentlearning.platform2026.firebaseinitprovider` (`initOrder=100`).
+    - موارد Google Services المترجمة داخل APK تطابق `project_id = student-learning-platform-2026` و`google_app_id = 1:48673314803:android:d9dcbc07559c76520aa486` و`gcm_defaultSenderId = 48673314803`.
+    - دالة `FirebaseStatusDataSource.inspectReadiness()` (أسطر `10-26`) تعيد `FirebaseConfigurationStatus.CONFIGURED_LOCALLY` عبر `FirebaseClientProvider.isFirebaseConfigured()` (`projectId == "student-learning-platform-2026"`).
+  - **السبب الحقيقي المباشر لظهور الرسالة داخل «المكتبة»:**
+    1. عند فتح «المكتبة» يستدعي `LibraryViewModel.kt:33` الدالة `catalogRepository.getPublishedBranches()` المربوطة في `AppContainer.kt:112-113` بـ **`BackendCatalogDataSource`** (وليس `FirestoreCatalogDataSource`).
+    2. في `AppContainer.kt:90-96`، تكون قيمة `BuildConfig.HAQIBATI_BACKEND_BASE_URL` داخل APK الحالي **`""`**، فتصبح `backendHttpClient.isConfigured = false`.
+    3. في `BackendCatalogDataSource.kt:136-141`، عند غياب رابط الـ Backend يرمي الكود `CatalogException` برمز السبب القديم **`CatalogFailureReason.FIREBASE_NOT_CONFIGURED`**.
+    4. في `CatalogStateViews.kt:80-82`، يربط `CatalogErrorState` الرمز `CatalogFailureReason.FIREBASE_NOT_CONFIGURED` مباشرة بالنص `R.string.catalog_error_not_configured` (`values/strings.xml:55`, `values-ar/strings.xml:55`): «الاتصال بـ Firebase غير مفعّل محلياً بعد؛ يلزم إضافة ملف google-services.json وتكوين المشروع.»
+  - **الخلاصة العملية:** الرسالة داخل «المكتبة» ناتجة عن **غياب `HAQIBATI_BACKEND_BASE_URL` (رابط Backend D2)** مع **إعادة استخدام رمز ورسالة `FIREBASE_NOT_CONFIGURED` القديمة لخطأ Backend**؛ ولا تمنع هذه الرسالة اختبار **Firebase Auth** في تبويب «الإعدادات» (تسجيل الدخول / إنشاء حساب طالب / استعادة كلمة المرور / دور المالك).
+- **الإصلاح المحدود المقترح (لم يُنفَّذ بعد بانتظار الاعتماد):** فصل رمز خطأ عدم تهيئة الـ Backend (`BACKEND_NOT_CONFIGURED`) في `CatalogFailure.kt` و`BackendCatalogDataSource.kt` و`CatalogStateViews.kt` و`strings.xml` ليعرض رسالة دقيقة تخص رابط الـ Backend بدلاً من الإشارة إلى `google-services.json`.
+
+---
+
+## 2.9. تنفيذ الإصلاح المحدود لفصل `BACKEND_NOT_CONFIGURED` عن `FIREBASE_NOT_CONFIGURED`
+
+- **الملفات المعدّلة والمضافة (دون تغيير `FirebaseClientProvider` أو `google-services.json` أو سلوك `Fail-Closed`):**
+  1. `android/app/src/main/java/com/studentlearning/platform2026/domain/model/CatalogFailure.kt`: إضافة `BACKEND_NOT_CONFIGURED` إلى `CatalogFailureReason`.
+  2. `android/app/src/main/java/com/studentlearning/platform2026/data/remote/backend/BackendCatalogDataSource.kt`: استخدام `CatalogFailureReason.BACKEND_NOT_CONFIGURED` في `executeCatalogHttpCall` عند `!httpClient.isConfigured` أو `BackendNotConfiguredException` بدلاً من `FIREBASE_NOT_CONFIGURED`.
+  3. `android/app/src/main/res/values/strings.xml` و`android/app/src/main/res/values-ar/strings.xml`: إضافة `catalog_error_backend_not_configured` بالرسالتين الإنجليزية والعربية لتوضيح أن خدمة الكتالوج (`Backend D2`) غير مربوطة بعد وأن ذلك لا يعني وجود خلل في إعداد Firebase.
+  4. `android/app/src/main/java/com/studentlearning/platform2026/presentation/library/CatalogStateViews.kt`: معالجة `CatalogFailureReason.BACKEND_NOT_CONFIGURED` في تعبيرَي `when` للأيقونة والرسالة (`R.string.catalog_error_backend_not_configured`).
+  5. `android/app/src/test/java/com/studentlearning/platform2026/data/remote/backend/BackendCatalogDataSourceTest.kt` (ملف اختبار جديد محدود): إثبات أن غياب `Backend URL` أو رفض رابط `http://` غير المشفر ينتج `CatalogFailureReason.BACKEND_NOT_CONFIGURED` وليس `FIREBASE_NOT_CONFIGURED`.
+- **نتائج الاختبارات والبناء الفعلية:**
+  - `sh ./android/gradlew -p android :app:compileDebugKotlin :app:assembleDebug --no-daemon`: **نجح (`BUILD SUCCESSFUL in 58s`)**.
+  - **ملف Debug APK الجديد:** `android/app/build/outputs/apk/debug/app-debug.apk`
+    - الحجم: **`33,661,462` بايت** (`2026-11-21 19:56:44 UTC`)
+    - البصمة **`SHA-256`**: `d5d7725101effebcda0a33d0aea5bab840c3765aa0821f322209d1bf221c17d4`
+    - التحقق بـ `aapt2 dump strings` و`curl -I http://127.0.0.1:3000/download/app-debug.apk`: الرسالتان الجديدة العربية والإنجليزية وموارد `student-learning-platform-2026` مضمّنة في APK، وخادم التطوير يقدمه بـ `HTTP 200 OK` و`Content-Type: application/vnd.android.package-archive` و`Content-Length: 33661462`.
+  - `sh ./android/gradlew -p android :app:testDebugUnitTest --tests "com.studentlearning.platform2026.data.remote.backend.BackendCatalogDataSourceTest" --no-daemon`: **توقّف في مهمة `:app:compileDebugUnitTestKotlin` (`BUILD FAILED`)** بسبب أخطاء التصنيف المسبقة والمستقلة في ملفات الاختبار الأخرى الموثقة في القسم `2` (والتي لم تُمس التزاماً بعدم إصلاح مشكلات جانبية غير مرتبطة)، دون تسجيل أي خطأ تصنيف في `BackendCatalogDataSourceTest.kt`.
+- **حالة المرحلة:** تبقى **المرحلة الثامنة مفتوحة** ولم تبدأ المرحلة التاسعة.
 
 ---
 
