@@ -5,6 +5,8 @@ import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.remote.firebase.AdminCatalogRemoteDataSource
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogMapper
 import com.studentlearning.platform2026.domain.model.AdminException
+import com.studentlearning.platform2026.domain.model.AdminFailureReason
+import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -12,6 +14,8 @@ import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
+import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker
 import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
@@ -19,7 +23,8 @@ import kotlinx.coroutines.withContext
 class AdminCatalogRepositoryImpl(
     private val authRepository: AuthRepository,
     private val remoteDataSource: AdminCatalogRemoteDataSource,
-    private val dispatcherProvider: DispatcherProvider
+    private val dispatcherProvider: DispatcherProvider,
+    private val pdfVersionStorageBroker: PdfVersionStorageBroker
 ) : AdminCatalogRepository {
 
     override suspend fun getAllBranches(): AppResult<List<StudyBranch>> = executeAuthorized {
@@ -238,28 +243,35 @@ class AdminCatalogRepositoryImpl(
         }
 
     override suspend fun createStudyFileVersion(
-        customId: String?,
         fileId: String,
         versionNumber: Int,
         versionLabel: String,
         versionNotes: String?,
-        publishImmediately: Boolean
+        publishAsActive: Boolean,
+        customVersionId: String?
     ): AppResult<StudyFileVersionMetadata> = executeAuthorized { actorUid ->
         val validated = AdminCatalogValidator.validateStudyFileVersionCreate(
-            customId = customId,
             fileId = fileId,
             versionNumber = versionNumber,
             versionLabel = versionLabel,
-            versionNotes = versionNotes
+            versionNotes = versionNotes,
+            customVersionId = customVersionId
         )
+        if (publishAsActive) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Cannot publish an active version before uploading and verifying its PDF file on Cloudflare R2."
+            )
+        }
         remoteDataSource.createStudyFileVersion(
-            customId = validated.customId,
             fileId = validated.fileId,
             versionNumber = validated.versionNumber,
             versionLabel = validated.versionLabel,
             versionNotes = validated.versionNotes,
-            publishImmediately = publishImmediately,
-            actorUid = actorUid
+            publishAsActive = false,
+            actorUid = actorUid,
+            customVersionId = validated.customVersionId
         )
     }
 
@@ -290,6 +302,13 @@ class AdminCatalogRepositoryImpl(
     ): AppResult<Unit> = executeAuthorized { actorUid ->
         val validFileId = AdminCatalogValidator.validateRequiredDocumentId(fileId)
         val validVersionId = AdminCatalogValidator.validateRequiredDocumentId(versionId)
+        if (pdfVersionStorageBroker.getBrokerStatus() != PdfBrokerConfigurationStatus.CONFIGURED) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Cloudflare R2 upload broker is not configured; cannot publish version without verified PDF accessibility."
+            )
+        }
         remoteDataSource.publishStudyFileVersion(
             fileId = validFileId,
             versionId = validVersionId,
@@ -355,7 +374,13 @@ class AdminCatalogRepositoryImpl(
         return withContext(dispatcherProvider.io) {
             try {
                 val session = authRepository.requireAuthorizedAdminSession()
-                val actorUid = session.uid.orEmpty()
+                val actorUid = session.uid?.trim().orEmpty()
+                if (actorUid.isEmpty()) {
+                    throw AdminException(
+                        reason = AdminFailureReason.UNAUTHENTICATED,
+                        message = "Authenticated admin UID is required."
+                    )
+                }
                 AppResult.Success(block(actorUid))
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -56,6 +56,7 @@ import java.util.Locale
 internal fun AdminEditorDialogHost(
     dialogState: AdminEditorDialogState,
     isSubmitting: Boolean,
+    r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
     onDismiss: () -> Unit,
     onSaveBranch: (customId: String?, name: String, order: Int, isPublished: Boolean) -> Unit,
     onSaveSubject: (branchId: String, customId: String?, name: String, order: Int, isPublished: Boolean) -> Unit,
@@ -70,11 +71,11 @@ internal fun AdminEditorDialogHost(
     ) -> Unit,
     onSaveStudyFileVersion: (
         fileId: String,
-        customId: String?,
+        customVersionId: String?,
         versionNumber: Int,
         versionLabel: String,
         versionNotes: String?,
-        publishImmediately: Boolean
+        publishAsActive: Boolean
     ) -> Unit = { _, _, _, _, _, _ -> }
 ) {
     when (dialogState) {
@@ -157,15 +158,16 @@ internal fun AdminEditorDialogHost(
             StudyFileVersionEditorDialog(
                 dialogState = dialogState,
                 isSubmitting = isSubmitting,
+                r2BrokerStatus = r2BrokerStatus,
                 onDismiss = onDismiss,
-                onConfirm = { customId, versionNumber, versionLabel, versionNotes, publishImmediately ->
+                onConfirm = { customVersionId, versionNumber, versionLabel, versionNotes, publishAsActive ->
                     onSaveStudyFileVersion(
                         dialogState.file.id,
-                        customId,
+                        customVersionId,
                         versionNumber,
                         versionLabel,
                         versionNotes,
-                        publishImmediately
+                        publishAsActive
                     )
                 }
             )
@@ -576,8 +578,14 @@ internal fun AdminFileVersionsDialog(
                     else -> {
                         versions.forEach { version ->
                             val isActivePublished = version.isPublished &&
-                                version.versionId == file.activeVersionId
+                                version.id == file.activeVersionId
+                            val canPublishVersion = canMutate &&
+                                !file.isArchived &&
+                                !version.isArchived &&
+                                version.hasUploadedPdfBinary &&
+                                r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED
                             val statusLabelRes = when {
+                                version.isArchived -> R.string.admin_status_archived
                                 isActivePublished -> R.string.admin_version_status_active_published
                                 version.publishedAtEpochMillis != null ->
                                     R.string.admin_version_status_archived_history
@@ -656,6 +664,14 @@ internal fun AdminFileVersionsDialog(
                                         )
                                     }
 
+                                    if (!isActivePublished && !canPublishVersion) {
+                                        Text(
+                                            text = stringResource(R.string.admin_version_requires_pdf_notice),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
                                     FlowRow(
                                         horizontalArrangement = Arrangement.spacedBy(spacing.xs),
                                         verticalArrangement = Arrangement.spacedBy(spacing.xs)
@@ -675,7 +691,7 @@ internal fun AdminFileVersionsDialog(
                                         if (!isActivePublished) {
                                             Button(
                                                 onClick = { onPublishVersion(version) },
-                                                enabled = canMutate
+                                                enabled = canPublishVersion
                                             ) {
                                                 Text(
                                                     text = stringResource(
@@ -704,18 +720,21 @@ internal fun AdminFileVersionsDialog(
 private fun StudyFileVersionEditorDialog(
     dialogState: AdminEditorDialogState.StudyFileVersionEditor,
     isSubmitting: Boolean,
+    r2BrokerStatus: PdfBrokerConfigurationStatus,
     onDismiss: () -> Unit,
     onConfirm: (
-        customId: String?,
+        customVersionId: String?,
         versionNumber: Int,
         versionLabel: String,
         versionNotes: String?,
-        publishImmediately: Boolean
+        publishAsActive: Boolean
     ) -> Unit
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     val editing = dialogState.editing
-    var customId by remember(editing) { mutableStateOf("") }
+    val canPublishImmediately = r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED &&
+        !dialogState.file.isArchived
+    var customVersionId by remember(editing) { mutableStateOf("") }
     var versionNumberText by remember(editing, dialogState.suggestedVersionNumber) {
         mutableStateOf((editing?.versionNumber ?: dialogState.suggestedVersionNumber).toString())
     }
@@ -725,7 +744,7 @@ private fun StudyFileVersionEditorDialog(
         )
     }
     var versionNotes by remember(editing) { mutableStateOf(editing?.versionNotes.orEmpty()) }
-    var publishImmediately by remember(editing) { mutableStateOf(editing == null) }
+    var publishAsActive by remember(editing, canPublishImmediately) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
@@ -749,10 +768,18 @@ private fun StudyFileVersionEditorDialog(
                     color = MaterialTheme.colorScheme.primary
                 )
 
+                if (editing == null && !canPublishImmediately) {
+                    Text(
+                        text = stringResource(R.string.admin_version_create_draft_only_notice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 if (editing == null) {
                     OutlinedTextField(
-                        value = customId,
-                        onValueChange = { customId = it },
+                        value = customVersionId,
+                        onValueChange = { customVersionId = it },
                         label = { Text(stringResource(R.string.admin_field_custom_id)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -798,8 +825,9 @@ private fun StudyFileVersionEditorDialog(
                             modifier = Modifier.weight(1f)
                         )
                         Switch(
-                            checked = publishImmediately,
-                            onCheckedChange = { publishImmediately = it }
+                            checked = publishAsActive && canPublishImmediately,
+                            enabled = canPublishImmediately,
+                            onCheckedChange = { publishAsActive = it }
                         )
                     }
                 }
@@ -811,11 +839,11 @@ private fun StudyFileVersionEditorDialog(
                 onClick = {
                     val parsedNumber = versionNumberText.toIntOrNull() ?: 0
                     onConfirm(
-                        customId.ifBlank { null },
+                        customVersionId.ifBlank { null },
                         parsedNumber,
                         versionLabel,
                         versionNotes.ifBlank { null },
-                        publishImmediately
+                        publishAsActive && canPublishImmediately
                     )
                 }
             ) {

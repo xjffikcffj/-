@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.LockOutline
 import androidx.compose.material.icons.rounded.OfflinePin
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,8 +26,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -48,6 +53,7 @@ fun DownloadsScreen(
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onOpenLocalVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit = { _, _, _ -> },
+    onOpenLocalVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -58,6 +64,7 @@ fun DownloadsScreen(
         onNavigateToSignUp = onNavigateToSignUp,
         onOpenLocalVersion = onOpenLocalVersion,
         onDeleteLocalVersion = viewModel::deleteLocalVersion,
+        onOpenLocalVersionWithLabel = onOpenLocalVersionWithLabel,
         modifier = modifier
     )
 }
@@ -69,9 +76,56 @@ fun DownloadsScreenContent(
     onNavigateToSignUp: () -> Unit = {},
     onOpenLocalVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit = { _, _, _ -> },
     onDeleteLocalVersion: (fileId: String, versionId: String) -> Unit = { _, _ -> },
+    onOpenLocalVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val spacing = HaqibatiThemeTokens.spacing
+    var pendingDeleteVersion by remember { mutableStateOf<LocalDownloadedFileVersion?>(null) }
+    val openLocalVersion: (LocalDownloadedFileVersion) -> Unit = { saved ->
+        val resolvedLabel = saved.versionLabel?.takeIf { it.isNotBlank() }
+            ?: saved.versionNumber?.let { "v$it" }
+        if (onOpenLocalVersionWithLabel != null) {
+            onOpenLocalVersionWithLabel(saved.fileId, saved.fileTitle, saved.versionId, resolvedLabel)
+        } else {
+            onOpenLocalVersion(saved.fileId, saved.fileTitle, saved.versionId)
+        }
+    }
+
+    pendingDeleteVersion?.let { target ->
+        val targetVersionLabel = target.versionLabel?.takeIf { it.isNotBlank() }
+            ?: target.versionNumber?.let { "v$it" }
+            ?: target.versionId
+        AlertDialog(
+            onDismissRequest = { pendingDeleteVersion = null },
+            title = {
+                Text(text = stringResource(R.string.downloads_delete_confirm_title))
+            },
+            text = {
+                Text(
+                    text = stringResource(
+                        R.string.downloads_delete_confirm_message,
+                        target.fileTitle,
+                        targetVersionLabel
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteLocalVersion(target.fileId, target.versionId)
+                        pendingDeleteVersion = null
+                    }
+                ) {
+                    Text(text = stringResource(R.string.downloads_delete_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteVersion = null }) {
+                    Text(text = stringResource(R.string.admin_action_cancel))
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -136,12 +190,8 @@ fun DownloadsScreenContent(
             ) { saved ->
                 SavedDownloadedVersionCard(
                     savedVersion = saved,
-                    onOpen = {
-                        onOpenLocalVersion(saved.fileId, saved.fileTitle, saved.versionId)
-                    },
-                    onDelete = {
-                        onDeleteLocalVersion(saved.fileId, saved.versionId)
-                    }
+                    onOpen = { openLocalVersion(saved) },
+                    onDelete = { pendingDeleteVersion = saved }
                 )
             }
         } else if (!uiState.hasSavedFiles) {

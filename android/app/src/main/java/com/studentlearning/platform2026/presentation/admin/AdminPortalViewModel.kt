@@ -581,28 +581,28 @@ class AdminPortalViewModel(
     fun saveStudyFileVersion(
         fileId: String,
         editing: StudyFileVersionMetadata?,
-        customId: String?,
+        customVersionId: String?,
         versionNumber: Int,
         versionLabel: String,
         versionNotes: String?,
-        publishImmediately: Boolean
+        publishAsActive: Boolean
     ) {
         if (!ensureCanPerformAdminWrite()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, feedback = null) }
             val result = if (editing == null) {
                 adminCatalogRepository.createStudyFileVersion(
-                    customId = customId,
                     fileId = fileId,
                     versionNumber = versionNumber,
                     versionLabel = versionLabel,
                     versionNotes = versionNotes,
-                    publishImmediately = publishImmediately
+                    publishAsActive = publishAsActive,
+                    customVersionId = customVersionId
                 )
             } else {
                 adminCatalogRepository.updateStudyFileVersionMetadata(
                     fileId = fileId,
-                    versionId = editing.versionId,
+                    versionId = editing.id,
                     versionLabel = versionLabel,
                     versionNotes = versionNotes
                 )
@@ -709,7 +709,7 @@ class AdminPortalViewModel(
             is AdminConfirmationAction.ArchiveStudyFile ->
                 executeSetStudyFileArchived(pending.file.id, isArchived = true)
             is AdminConfirmationAction.PublishStudyFileVersion ->
-                executePublishStudyFileVersion(pending.file.id, pending.version.versionId)
+                executePublishStudyFileVersion(pending.file.id, pending.version.id)
         }
     }
 

@@ -5,8 +5,11 @@ import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
@@ -264,5 +267,154 @@ class AdminPortalViewModelTest {
         assertFalse(viewModel.uiState.value.isSubmitting)
         assertEquals(true, viewModel.uiState.value.feedback?.isError)
         assertEquals(AdminFailureReason.PERMISSION_DENIED, viewModel.uiState.value.feedback?.failureReason)
+    }
+
+    @Test
+    fun `version manager creates draft updates metadata and requires PDF proof before publish`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-1",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val file = StudyFileMetadata(
+            id = "file-1",
+            sectionId = "sec-1",
+            title = "ملزمة الأحياء",
+            order = 1,
+            isPublished = true,
+            isArchived = false
+        )
+        val v1WithPdf = StudyFileVersionMetadata(
+            id = "v1",
+            fileId = "file-1",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            r2ObjectKey = "study-files/file-1/versions/v1/bio.pdf",
+            fileSizeBytes = 10_240L,
+            isPublished = false
+        )
+        val catalogRepository = FakeAdminCatalogRepository().apply {
+            studyFiles.add(file)
+            versions.add(v1WithPdf)
+            brokerStatus = PdfBrokerConfigurationStatus.CONFIGURED
+        }
+        val viewModel = AdminPortalViewModel(
+            authRepository = authRepository,
+            adminCatalogRepository = catalogRepository,
+            r2BrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED
+        )
+        advanceUntilIdle()
+
+        // Open version manager and verify suggested next version number = 2.
+        viewModel.openFileVersionsManager(file)
+        advanceUntilIdle()
+        assertEquals("file-1", viewModel.uiState.value.versionsDialogFile?.id)
+        assertEquals(listOf("v1"), viewModel.uiState.value.fileVersions.map { it.id })
+
+        viewModel.openCreateVersionDialog()
+        val editor = viewModel.uiState.value.editorDialog as AdminEditorDialogState.StudyFileVersionEditor
+        assertEquals(2, editor.suggestedVersionNumber)
+
+        // Create v2 draft.
+        viewModel.saveStudyFileVersion(
+            fileId = "file-1",
+            editing = null,
+            customVersionId = "v2",
+            versionNumber = 2,
+            versionLabel = "2.0",
+            versionNotes = "إصلاح المسائل",
+            publishAsActive = false
+        )
+        advanceUntilIdle()
+        assertEquals(AdminSuccessMessage.VERSION_CREATED, viewModel.uiState.value.feedback?.successMessage)
+        assertEquals(listOf("v2", "v1"), viewModel.uiState.value.fileVersions.map { it.id })
+
+        // Update v2 metadata cleanly via editing.id.
+        val draftV2 = viewModel.uiState.value.fileVersions.first { it.id == "v2" }
+        viewModel.openEditVersionDialog(draftV2)
+        viewModel.saveStudyFileVersion(
+            fileId = "file-1",
+            editing = draftV2,
+            customVersionId = null,
+            versionNumber = draftV2.versionNumber,
+            versionLabel = "2.1",
+            versionNotes = "تحديث نهائي",
+            publishAsActive = false
+        )
+        advanceUntilIdle()
+        assertEquals(AdminSuccessMessage.VERSION_UPDATED, viewModel.uiState.value.feedback?.successMessage)
+        assertEquals("2.1", viewModel.uiState.value.fileVersions.first { it.id == "v2" }.versionLabel)
+
+        // Publishing v2 without an uploaded PDF binary must fail cleanly.
+        val updatedV2 = viewModel.uiState.value.fileVersions.first { it.id == "v2" }
+        viewModel.requestPublishStudyFileVersion(updatedV2)
+        assertTrue(viewModel.uiState.value.confirmationAction is AdminConfirmationAction.PublishStudyFileVersion)
+        viewModel.confirmPendingAction()
+        advanceUntilIdle()
+        assertEquals(true, viewModel.uiState.value.feedback?.isError)
+        assertEquals(
+            AdminValidationError.VERSION_PDF_BINARY_MISSING,
+            viewModel.uiState.value.feedback?.validationError
+        )
+
+        // Publishing v1 with verified PDF binary succeeds and sets active pointers while preserving v2.
+        viewModel.requestPublishStudyFileVersion(v1WithPdf)
+        viewModel.confirmPendingAction()
+        advanceUntilIdle()
+        assertEquals(AdminSuccessMessage.VERSION_PUBLISHED, viewModel.uiState.value.feedback?.successMessage)
+        assertEquals("v1", catalogRepository.studyFiles.first().activeVersionId)
+        assertEquals(2, catalogRepository.versions.count { it.fileId == "file-1" })
+    }
+
+    @Test
+    fun `archived parent study file cannot be republished until unarchived`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-1",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val archivedFile = StudyFileMetadata(
+            id = "file-archived",
+            sectionId = "sec-1",
+            title = "ملف مؤرشف",
+            order = 1,
+            isPublished = false,
+            isArchived = true
+        )
+        val catalogRepository = FakeAdminCatalogRepository().apply {
+            studyFiles.add(archivedFile)
+        }
+        val viewModel = AdminPortalViewModel(
+            authRepository = authRepository,
+            adminCatalogRepository = catalogRepository
+        )
+        advanceUntilIdle()
+
+        viewModel.requestToggleStudyFilePublished(archivedFile)
+        advanceUntilIdle()
+        assertEquals(true, viewModel.uiState.value.feedback?.isError)
+        assertEquals(
+            AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+            viewModel.uiState.value.feedback?.validationError
+        )
+        assertFalse(catalogRepository.studyFiles.first().isPublished)
+
+        viewModel.requestToggleStudyFileArchived(archivedFile)
+        advanceUntilIdle()
+        assertFalse(catalogRepository.studyFiles.first().isArchived)
+
+        viewModel.requestToggleStudyFilePublished(catalogRepository.studyFiles.first())
+        advanceUntilIdle()
+        assertTrue(catalogRepository.studyFiles.first().isPublished)
     }
 }

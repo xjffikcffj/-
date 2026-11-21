@@ -26,23 +26,33 @@ sealed class AppDestination(val route: String) {
     data object ForgotPassword : AppDestination("auth_forgot_password")
 
     data object PdfReader : AppDestination(
-        "pdf_reader/{fileId}/{fileTitle}?versionId={versionId}"
+        "pdf_reader/{fileId}/{fileTitle}?versionId={versionId}&versionLabel={versionLabel}"
     ) {
         const val ARG_FILE_ID = "fileId"
         const val ARG_FILE_TITLE = "fileTitle"
         const val ARG_VERSION_ID = "versionId"
+        const val ARG_VERSION_LABEL = "versionLabel"
 
         fun createRoute(
             fileId: String,
             fileTitle: String,
-            activeVersionId: String? = null
+            activeVersionId: String? = null,
+            versionLabel: String? = null
         ): String {
             val safeTitle = fileTitle.ifBlank { "PDF" }
             val base = "pdf_reader/${Uri.encode(fileId)}/${Uri.encode(safeTitle)}"
-            return if (activeVersionId.isNullOrBlank()) {
+            val queryParams = buildList {
+                if (!activeVersionId.isNullOrBlank()) {
+                    add("versionId=${Uri.encode(activeVersionId)}")
+                }
+                if (!versionLabel.isNullOrBlank()) {
+                    add("versionLabel=${Uri.encode(versionLabel)}")
+                }
+            }
+            return if (queryParams.isEmpty()) {
                 base
             } else {
-                "$base?versionId=${Uri.encode(activeVersionId)}"
+                "$base?${queryParams.joinToString("&")}"
             }
         }
     }

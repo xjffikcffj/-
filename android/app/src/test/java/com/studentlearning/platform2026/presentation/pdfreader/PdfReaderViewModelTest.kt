@@ -54,7 +54,7 @@ class PdfReaderViewModelTest {
             assertEquals(12, state.totalPages)
             assertEquals(1, state.currentPage)
             assertNull(state.resumedFromSavedPage)
-            assertEquals(1, progressRepo.getProgress("file-1")?.lastPageNumber)
+            assertEquals(1, progressRepo.getProgress("file-1", versionId = "v1")?.lastPageNumber)
         }
 
     @Test
@@ -64,8 +64,8 @@ class PdfReaderViewModelTest {
         )
         val progressRepo = FakeReadingProgressRepository(
             initialProgress = mapOf(
-                "file-saved" to FileReadingProgress("file-saved", lastPageNumber = 7, totalPages = 10, 100L),
-                "file-over" to FileReadingProgress("file-over", lastPageNumber = 40, totalPages = 40, 100L)
+                "file-saved::v1" to FileReadingProgress("file-saved", lastPageNumber = 7, totalPages = 10, 100L, versionId = "v1"),
+                "file-over::v2" to FileReadingProgress("file-over", lastPageNumber = 40, totalPages = 40, 100L, versionId = "v2")
             )
         )
 
@@ -89,7 +89,7 @@ class PdfReaderViewModelTest {
         )
         advanceUntilIdle()
         assertEquals(10, vmClamped.uiState.value.currentPage)
-        assertEquals(10, progressRepo.getProgress("file-over")?.lastPageNumber)
+        assertEquals(10, progressRepo.getProgress("file-over", versionId = "v2")?.lastPageNumber)
     }
 
     @Test
@@ -113,18 +113,18 @@ class PdfReaderViewModelTest {
         viewModel.nextPage()
         advanceUntilIdle()
         assertEquals(2, viewModel.uiState.value.currentPage)
-        assertEquals(2, progressRepo.getProgress("file-nav")?.lastPageNumber)
+        assertEquals(2, progressRepo.getProgress("file-nav", versionId = "v1")?.lastPageNumber)
 
         viewModel.goToPage(99)
         advanceUntilIdle()
         assertEquals(5, viewModel.uiState.value.currentPage)
-        assertEquals(5, progressRepo.getProgress("file-nav")?.lastPageNumber)
+        assertEquals(5, progressRepo.getProgress("file-nav", versionId = "v1")?.lastPageNumber)
 
         viewModel.onVisiblePageChanged(3)
         advanceTimeBy(350L)
         advanceUntilIdle()
         assertEquals(3, viewModel.uiState.value.currentPage)
-        assertEquals(3, progressRepo.getProgress("file-nav")?.lastPageNumber)
+        assertEquals(3, progressRepo.getProgress("file-nav", versionId = "v1")?.lastPageNumber)
     }
 
     @Test
@@ -183,8 +183,8 @@ class PdfReaderViewModelTest {
             )
             val progressRepo = FakeReadingProgressRepository(
                 initialProgress = mapOf(
-                    "file-a" to FileReadingProgress("file-a", 15, 20, 1L),
-                    "file-b" to FileReadingProgress("file-b", 4, 6, 1L)
+                    "file-a::v1" to FileReadingProgress("file-a", 15, 20, 1L, versionId = "v1"),
+                    "file-b::v1" to FileReadingProgress("file-b", 4, 6, 1L, versionId = "v1")
                 )
             )
 
@@ -325,7 +325,7 @@ class PdfReaderViewModelTest {
             advanceUntilIdle()
 
             assertEquals(11, viewModel.uiState.value.currentPage)
-            assertEquals(11, progressRepo.getProgress("file-race")?.lastPageNumber)
+            assertEquals(11, progressRepo.getProgress("file-race", versionId = "v1")?.lastPageNumber)
             val raceSaves = progressRepo.recordedSaves.filter { it.first == "file-race" }.map { it.second }
             assertEquals(11, raceSaves.last())
         }
@@ -357,16 +357,16 @@ class PdfReaderViewModelTest {
             viewModel.openFile("file-b", "ملف ب", "v1")
             advanceUntilIdle()
 
-            assertEquals(7, progressRepo.getProgress("file-a")?.lastPageNumber)
-            assertEquals(1, progressRepo.getProgress("file-b")?.lastPageNumber)
+            assertEquals(7, progressRepo.getProgress("file-a", versionId = "v1")?.lastPageNumber)
+            assertEquals(1, progressRepo.getProgress("file-b", versionId = "v1")?.lastPageNumber)
 
             // Scroll file-b to page 5 and exit screen immediately before 300ms debounce fires.
             viewModel.onVisiblePageChanged(5)
             store.clear()
             advanceUntilIdle()
 
-            assertEquals(5, progressRepo.getProgress("file-b")?.lastPageNumber)
-            assertEquals(7, progressRepo.getProgress("file-a")?.lastPageNumber)
+            assertEquals(5, progressRepo.getProgress("file-b", versionId = "v1")?.lastPageNumber)
+            assertEquals(7, progressRepo.getProgress("file-a", versionId = "v1")?.lastPageNumber)
             assertTrue(sessionA.isClosed)
             assertTrue(sessionB.isClosed)
         }
@@ -490,7 +490,7 @@ class PdfReaderViewModelTest {
             )
             val progressRepo = FakeReadingProgressRepository(
                 initialProgress = mapOf(
-                    "file-other" to FileReadingProgress("file-other", 3, 6, 1L)
+                    "file-other::v2" to FileReadingProgress("file-other", 3, 6, 1L, versionId = "v2")
                 )
             )
             val sharedSavedStateHandle = SavedStateHandle()
@@ -545,7 +545,7 @@ class PdfReaderViewModelTest {
                 "Recreated ViewModel must issue a fresh scrollRequestSessionId",
                 restoredState.scrollRequestSessionId != sessionIdBeforeRotation
             )
-            assertEquals(7, progressRepo.getProgress("file-proc")?.lastPageNumber)
+            assertEquals(7, progressRepo.getProgress("file-proc", versionId = "v1")?.lastPageNumber)
 
             // Immediately after restoration: Next, Previous, Jump, and Search must all advance tokens cleanly.
             vmProcess2.nextPage()
@@ -582,5 +582,67 @@ class PdfReaderViewModelTest {
             assertEquals(3, vmProcess2.uiState.value.currentPage)
             assertEquals(1.0f, vmProcess2.uiState.value.zoomScale, 0.001f)
             assertFalse(vmProcess2.uiState.value.isSearchBarVisible)
+        }
+
+    @Test
+    fun `isolates reading progress across versions of same file and preserves versionLabel`() =
+        runTest {
+            val sessionV1 = FakePdfDocumentSession(fileId = "doc-multi", pageCount = 12)
+            val sessionV2 = FakePdfDocumentSession(fileId = "doc-multi", pageCount = 18)
+            val pdfRepo = FakePdfDocumentRepository(
+                openHandler = { _, versionId ->
+                    if (versionId == "v1") AppResult.Success(sessionV1) else AppResult.Success(sessionV2)
+                }
+            )
+            val progressRepo = FakeReadingProgressRepository()
+            val savedHandle = SavedStateHandle()
+
+            val viewModel = PdfReaderViewModel(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                initialFileId = "doc-multi",
+                initialFileTitle = "ملزمة الكيمياء",
+                initialActiveVersionId = "v1",
+                savedStateHandle = savedHandle,
+                initialVersionLabel = "1.0"
+            )
+            advanceUntilIdle()
+
+            assertEquals("1.0", viewModel.uiState.value.versionLabel)
+            viewModel.onVisiblePageChanged(6) // Pending debounced save for v1.
+
+            // Switching to v2 flushes v1 progress (page 6) and opens v2 independently at page 1.
+            viewModel.openFile(
+                fileId = "doc-multi",
+                fileTitle = "ملزمة الكيمياء",
+                activeVersionId = "v2",
+                versionLabel = "2.0"
+            )
+            advanceUntilIdle()
+
+            assertTrue(sessionV1.isClosed)
+            assertEquals("v2", viewModel.uiState.value.activeVersionId)
+            assertEquals("2.0", viewModel.uiState.value.versionLabel)
+            assertEquals(1, viewModel.uiState.value.currentPage)
+            assertEquals(6, progressRepo.getProgress("doc-multi", versionId = "v1")?.lastPageNumber)
+
+            viewModel.goToPage(14)
+            advanceUntilIdle()
+            assertEquals(14, progressRepo.getProgress("doc-multi", versionId = "v2")?.lastPageNumber)
+            assertEquals(6, progressRepo.getProgress("doc-multi", versionId = "v1")?.lastPageNumber)
+
+            // Recreate from SavedStateHandle with null versionLabel param -> restores saved "2.0".
+            val recreated = PdfReaderViewModel(
+                pdfDocumentRepository = pdfRepo,
+                readingProgressRepository = progressRepo,
+                initialFileId = "doc-multi",
+                initialFileTitle = "ملزمة الكيمياء",
+                initialActiveVersionId = "v2",
+                savedStateHandle = SavedStateHandle(savedHandle.keys().associateWith { savedHandle.get<Any?>(it) }),
+                initialVersionLabel = null
+            )
+            advanceUntilIdle()
+            assertEquals(14, recreated.uiState.value.currentPage)
+            assertEquals("2.0", recreated.uiState.value.versionLabel)
         }
 }

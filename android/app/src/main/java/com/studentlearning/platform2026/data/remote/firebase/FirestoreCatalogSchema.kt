@@ -45,6 +45,7 @@ object FirestoreCatalogSchema {
         const val ACTIVE_VERSION_NUMBER = "activeVersionNumber"
         const val ACTIVE_VERSION_LABEL = "activeVersionLabel"
         const val ACTIVE_VERSION_PUBLISHED_AT = "activeVersionPublishedAt"
+        const val REGISTERED_VERSION_NUMBERS = "registeredVersionNumbers"
 
         // Version-specific fields belonging inside `study_files/{fileId}/versions/{versionId}`.
         const val FILE_ID = "fileId"

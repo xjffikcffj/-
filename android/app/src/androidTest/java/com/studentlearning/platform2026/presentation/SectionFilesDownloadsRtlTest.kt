@@ -2,6 +2,7 @@ package com.studentlearning.platform2026.presentation
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -12,6 +13,8 @@ import com.studentlearning.platform2026.domain.model.DownloadTaskState
 import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileOfflineState
+import com.studentlearning.platform2026.presentation.downloads.DownloadsScreenContent
+import com.studentlearning.platform2026.presentation.downloads.DownloadsUiState
 import com.studentlearning.platform2026.presentation.library.SectionFilesScreenContent
 import com.studentlearning.platform2026.presentation.library.SectionFilesUiState
 import com.studentlearning.platform2026.presentation.theme.HaqibatiTheme
@@ -272,5 +275,70 @@ class SectionFilesDownloadsRtlTest {
 
         composeTestRule.onNodeWithText("ملخص محفوظ").assertIsDisplayed().performClick()
         assertEquals("v1", openedOfflineVersion)
+    }
+
+    @Test
+    fun newVersionBadge_displaysOnSectionFileCardAndForwardsVersionLabel() {
+        var openedLabel: String? = null
+        val file = sampleFile(versionId = "v2", versionNumber = 2, versionLabel = "2.0")
+
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                SectionFilesScreenContent(
+                    uiState = SectionFilesUiState.Content(
+                        files = listOf(file),
+                        offlineStates = emptyMap(),
+                        canDownloadOfflineFiles = true,
+                        newVersionBadgeFileIds = setOf(file.id)
+                    ),
+                    onRetry = {},
+                    onOpenStudyVersion = { _, _, _ -> },
+                    onOpenStudyVersionWithLabel = { _, _, _, versionLabel -> openedLabel = versionLabel }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("إصدار جديد").assertIsDisplayed()
+        composeTestRule.onNodeWithText("الإصدار 2.0").assertIsDisplayed()
+        composeTestRule.onNodeWithText("تصفح").performClick()
+        assertEquals("2.0", openedLabel)
+    }
+
+    @Test
+    fun downloadsScreen_deleteIconRequiresConfirmationBeforeDeletingVersion() {
+        val deletedPairs = mutableListOf<Pair<String, String>>()
+        val savedV1 = LocalDownloadedFileVersion(
+            fileId = "file-1",
+            versionId = "v1",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            fileTitle = "ملخص الأعداد المركبة",
+            sectionId = "sec-1",
+            localFilePath = "/data/user/0/app/files/v1.pdf",
+            fileSizeBytes = 10_240L,
+            checksumSha256 = "sha",
+            downloadedAtEpochMillis = 1_700_000_000_000L
+        )
+
+        composeTestRule.setContent {
+            HaqibatiTheme {
+                DownloadsScreenContent(
+                    uiState = DownloadsUiState(
+                        canDownloadOfflineFiles = true,
+                        savedVersions = listOf(savedV1)
+                    ),
+                    onDeleteLocalVersion = { fileId, versionId ->
+                        deletedPairs.add(fileId to versionId)
+                    }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("حذف النسخة المحفوظة محلياً").performClick()
+        composeTestRule.onNodeWithText("تأكيد حذف النسخة المحلية").assertIsDisplayed()
+        assertTrue(deletedPairs.isEmpty())
+
+        composeTestRule.onNodeWithText("حذف").performClick()
+        assertEquals(listOf("file-1" to "v1"), deletedPairs)
     }
 }

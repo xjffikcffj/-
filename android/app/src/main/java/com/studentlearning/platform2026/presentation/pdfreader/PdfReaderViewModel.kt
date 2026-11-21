@@ -37,7 +37,8 @@ class PdfReaderViewModel(
     initialFileTitle: String = "",
     initialActiveVersionId: String? = null,
     autoOpen: Boolean = true,
-    private val savedStateHandle: SavedStateHandle = SavedStateHandle()
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    initialVersionLabel: String? = null
 ) : ViewModel() {
 
     private val instanceScrollSessionId: String = UUID.randomUUID().toString()
@@ -47,6 +48,7 @@ class PdfReaderViewModel(
             fileId = initialFileId,
             fileTitle = initialFileTitle,
             activeVersionId = initialActiveVersionId,
+            versionLabel = normalizeOptionalText(initialVersionLabel),
             isLoading = initialFileId.isNotBlank() && autoOpen,
             scrollRequestSessionId = instanceScrollSessionId
         )
@@ -78,7 +80,8 @@ class PdfReaderViewModel(
             openFile(
                 fileId = initialFileId,
                 fileTitle = initialFileTitle,
-                activeVersionId = initialActiveVersionId
+                activeVersionId = initialActiveVersionId,
+                versionLabel = initialVersionLabel
             )
         }
     }
@@ -86,9 +89,11 @@ class PdfReaderViewModel(
     fun openFile(
         fileId: String,
         fileTitle: String,
-        activeVersionId: String? = null
+        activeVersionId: String? = null,
+        versionLabel: String? = null
     ) {
         val normalizedVersionId = normalizeVersionId(activeVersionId)
+        val normalizedVersionLabel = normalizeOptionalText(versionLabel)
         val current = _uiState.value
         val currentNormalizedVersionId = normalizeVersionId(current.activeVersionId)
         val sameTargetOpen = activeSession != null &&
@@ -96,8 +101,15 @@ class PdfReaderViewModel(
             currentNormalizedVersionId == normalizedVersionId &&
             current.errorReason == null
         if (sameTargetOpen) {
-            if (current.fileTitle != fileTitle) {
-                _uiState.update { it.copy(fileTitle = fileTitle) }
+            val resolvedLabel = normalizedVersionLabel ?: current.versionLabel
+            if (current.fileTitle != fileTitle || current.versionLabel != resolvedLabel) {
+                savedStateHandle[STATE_VERSION_LABEL] = resolvedLabel
+                _uiState.update {
+                    it.copy(
+                        fileTitle = fileTitle,
+                        versionLabel = resolvedLabel
+                    )
+                }
             }
             return
         }
@@ -147,13 +159,23 @@ class PdfReaderViewModel(
             ""
         }
 
+        val restoredVersionLabel = normalizedVersionLabel
+            ?: if (hasSavedStateForVersion) {
+                normalizeOptionalText(savedStateHandle.get<String>(STATE_VERSION_LABEL))
+            } else {
+                null
+            }
+
         if (!hasSavedStateForVersion) {
             savedStateHandle[STATE_FILE_ID] = fileId
             savedStateHandle[STATE_VERSION_ID] = normalizedVersionId
+            savedStateHandle[STATE_VERSION_LABEL] = restoredVersionLabel
             savedStateHandle.remove<Int>(STATE_CURRENT_PAGE)
             savedStateHandle[STATE_ZOOM_SCALE] = 1.0f
             savedStateHandle[STATE_SEARCH_VISIBLE] = false
             savedStateHandle[STATE_SEARCH_QUERY] = ""
+        } else if (restoredVersionLabel != null) {
+            savedStateHandle[STATE_VERSION_LABEL] = restoredVersionLabel
         }
 
         _uiState.update { state ->
@@ -161,6 +183,7 @@ class PdfReaderViewModel(
                 fileId = fileId,
                 fileTitle = fileTitle,
                 activeVersionId = normalizedVersionId,
+                versionLabel = restoredVersionLabel,
                 isLoading = true,
                 errorReason = null,
                 documentSession = null,
@@ -300,17 +323,24 @@ class PdfReaderViewModel(
         openFileForce(
             fileId = current.fileId,
             fileTitle = current.fileTitle,
-            activeVersionId = current.activeVersionId
+            activeVersionId = current.activeVersionId,
+            versionLabel = current.versionLabel
         )
     }
 
     private fun openFileForce(
         fileId: String,
         fileTitle: String,
-        activeVersionId: String?
+        activeVersionId: String?,
+        versionLabel: String? = null
     ) {
         _uiState.update { it.copy(documentSession = null, errorReason = null) }
-        openFile(fileId = fileId, fileTitle = fileTitle, activeVersionId = activeVersionId)
+        openFile(
+            fileId = fileId,
+            fileTitle = fileTitle,
+            activeVersionId = activeVersionId,
+            versionLabel = versionLabel
+        )
     }
 
     fun onVisiblePageChanged(pageNumberOneBased: Int) {
@@ -614,7 +644,11 @@ class PdfReaderViewModel(
     }
 
     private fun normalizeVersionId(versionId: String?): String? {
-        return versionId?.trim()?.takeIf { it.isNotEmpty() }
+        return normalizeOptionalText(versionId)
+    }
+
+    private fun normalizeOptionalText(value: String?): String? {
+        return value?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun progressScopeKey(fileId: String, versionId: String?): String {
@@ -643,6 +677,7 @@ class PdfReaderViewModel(
         private const val PROGRESS_SAVE_DEBOUNCE_MS = 300L
         private const val STATE_FILE_ID = "pdf_reader_file_id"
         private const val STATE_VERSION_ID = "pdf_reader_version_id"
+        private const val STATE_VERSION_LABEL = "pdf_reader_version_label"
         private const val STATE_CURRENT_PAGE = "pdf_reader_current_page"
         private const val STATE_ZOOM_SCALE = "pdf_reader_zoom_scale"
         private const val STATE_NIGHT_MODE = "pdf_reader_night_mode"
@@ -655,7 +690,8 @@ class PdfReaderViewModel(
             readingProgressRepository: ReadingProgressRepository,
             fileId: String,
             fileTitle: String,
-            activeVersionId: String?
+            activeVersionId: String?,
+            versionLabel: String? = null
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
@@ -668,7 +704,8 @@ class PdfReaderViewModel(
                     initialFileTitle = fileTitle,
                     initialActiveVersionId = activeVersionId,
                     autoOpen = true,
-                    savedStateHandle = savedStateHandle
+                    savedStateHandle = savedStateHandle,
+                    initialVersionLabel = versionLabel
                 ) as T
             }
 
@@ -681,7 +718,8 @@ class PdfReaderViewModel(
                     initialFileTitle = fileTitle,
                     initialActiveVersionId = activeVersionId,
                     autoOpen = true,
-                    savedStateHandle = SavedStateHandle()
+                    savedStateHandle = SavedStateHandle(),
+                    initialVersionLabel = versionLabel
                 ) as T
             }
         }

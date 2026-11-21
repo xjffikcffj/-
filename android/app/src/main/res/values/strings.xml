@@ -159,8 +159,10 @@
     <string name="admin_reference_badge">المرجع: %1$s</string>
     <string name="admin_version_badge">الإصدار الفعّال %1$s (رقم %2$d)</string>
     <string name="admin_no_active_version_badge">بانتظار إضافة إصدار PDF</string>
-    <string name="admin_r2_pending_badge">سجل الإصدارات ورفع PDF إلى Cloudflare R2 مؤجلان لمراحل لاحقة (لا يوجد ملف أو رابط بعد)</string>
-    <string name="admin_r2_deferred_notice">تنبيه: هذه المرحلة تعدّ هوية الملف الأساسية (study_files) فقط، بينما تُحفظ الإصدارات وملفات PDF وروابط R2 لاحقاً في سجل إصدارات مستقل دون استبدال البيانات السابقة.</string>
+    <string name="admin_r2_pending_badge">سجل الإصدارات مفعّل (مسودات)؛ رفع ملفات PDF إلى Cloudflare R2 بانتظار وسيط التوقيع الآمن</string>
+    <string name="admin_r2_configured_badge">وسيط Cloudflare R2 مهيّأ؛ النشر متاح فقط للإصدارات ذات سجل PDF موثّق (تدفق الرفع والتحقق لم يُفعّل في الواجهة بعد)</string>
+    <string name="admin_r2_deferred_notice">تنبيه: يُمكنك إعداد هوية الملف وسجلات الإصدارات كمسودات، بينما يتطلب تفعيل أي إصدار للطلاب رفع ملف PDF الفعلي عبر وسيط Cloudflare R2 عند تفعيله.</string>
+    <string name="admin_r2_configured_notice">تنبيه: تشير الحالة إلى تهيئة وسيط Cloudflare R2، غير أن تدفق رفع ملفات PDF والتحقق الخادمي غير مفعّل في الواجهة بعد؛ يتطلب النشر وجود سجل PDF موثّق مسبقاً.</string>
     <string name="admin_file_edit_preserves_versions_notice">يعدّل هذا النموذج هوية الملف الأساسية فقط (العنوان، الوصف، الترتيب) ولا يمسّ رقم الإصدار أو ملفات PDF في سجل الإصدارات.</string>
     <string name="admin_active_version_readonly">مؤشر الإصدار الفعّال (للقراءة فقط): %1$s (رقم %2$d)</string>
 
@@ -363,6 +365,9 @@
     <!-- Phase 8: Study File Version Management & Updates -->
     <string name="library_file_new_version_badge">إصدار جديد</string>
     <string name="downloads_delete_local_version">حذف النسخة المحفوظة محلياً</string>
+    <string name="downloads_delete_confirm_title">تأكيد حذف النسخة المحلية</string>
+    <string name="downloads_delete_confirm_message">هل تريد حذف النسخة المحفوظة محلياً من «%1$s» (%2$s)؟ لن يؤثر ذلك على تقدم القراءة أو النسخ المحفوظة لإصدارات أخرى.</string>
+    <string name="downloads_delete_confirm_action">حذف</string>
 
     <string name="admin_manage_versions">إدارة الإصدارات</string>
     <string name="admin_versions_dialog_title">إدارة إصدارات: %1$s</string>
@@ -386,7 +391,9 @@
     <string name="admin_field_publish_version_immediately">تفعيل ونشر هذا الإصدار فوراً كأحدث إصدار للطلاب</string>
 
     <string name="admin_r2_upload_broker_pending_notice">رفع ملفات PDF الفعلية إلى Cloudflare R2 بانتظار تفعيل وسيط التوقيع الآمن على الخادم؛ لا تُستخدم أي مفاتيح أو روابط وهمية.</string>
-    <string name="admin_r2_upload_broker_configured_notice">وسيط الرفع الآمن لـ Cloudflare R2 مفعّل على الخادم.</string>
+    <string name="admin_r2_upload_broker_configured_notice">وسيط Cloudflare R2 مهيّأ على مستوى الإعدادات؛ تدفق رفع ملفات PDF والتحقق منها من الواجهة غير مكتمل بعد، ويُشترط سجل PDF موثّق قبل النشر.</string>
+    <string name="admin_version_requires_pdf_notice">يتطلب النشر والتفعيل توفر ملف PDF مرفوعاً عبر وسيط R2، وألا يكون الملف أو الإصدار مؤرشفاً.</string>
+    <string name="admin_version_create_draft_only_notice">بانتظار ربط وسيط رفع Cloudflare R2، ستُحفظ الإصدارات الجديدة كمسودات فقط ولن تُفعّل للطلاب حتى يُرفع ملف PDF الخاص بها.</string>
 
     <string name="admin_confirm_publish_version_title">تأكيد تفعيل ونشر الإصدار</string>
     <string name="admin_confirm_publish_version_message">هل تريد تفعيل الإصدار «%1$s» ليصبح الإصدار الفعّال الوحيد لملف «%2$s»؟ ستبقى الإصدارات السابقة محفوظة في Cloudflare R2 دون حذف.</string>
@@ -397,6 +404,9 @@
 
     <string name="admin_validation_invalid_version_number">يجب أن يكون رقم الإصدار عدداً صحيحاً موجباً (1 أو أكبر) وغير مكرر لهذا الملف.</string>
     <string name="admin_validation_empty_version_label">يرجى إدخال تسمية الإصدار (مثل 1.0 أو 2.0).</string>
-    <string name="admin_validation_version_label_too_long">تسمية الإصدار طويلة جداً (الحد الأقصى 40 حرفاً).</string>
+    <string name="admin_validation_version_label_too_long">تسمية الإصدار طويلة جداً (الحد الأقصى 64 حرفاً).</string>
     <string name="admin_validation_version_notes_too_long">ملاحظات الإصدار طويلة جداً (الحد الأقصى 500 حرف).</string>
+    <string name="admin_validation_file_archived_publish">لا يمكن نشر ملف مؤرشف أو تفعيل إصدار له؛ قم بإلغاء أرشفة الملف أولاً.</string>
+    <string name="admin_validation_version_archived_publish">لا يمكن نشر أو تفعيل إصدار مؤرشف.</string>
+    <string name="admin_validation_version_pdf_missing">لا يمكن نشر وتفعيل الإصدار قبل رفع ملف PDF الخاص به والتحقق من جاهزيته عبر وسيط Cloudflare R2 الآمن.</string>
 </resources>

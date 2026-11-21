@@ -29,6 +29,9 @@ fun resolveAuthErrorText(
             AdminValidationError.EMPTY_VERSION_LABEL -> R.string.admin_validation_empty_version_label
             AdminValidationError.VERSION_LABEL_TOO_LONG -> R.string.admin_validation_version_label_too_long
             AdminValidationError.VERSION_NOTES_TOO_LONG -> R.string.admin_validation_version_notes_too_long
+            AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION -> R.string.admin_validation_file_archived_publish
+            AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH -> R.string.admin_validation_version_archived_publish
+            AdminValidationError.VERSION_PDF_BINARY_MISSING -> R.string.admin_validation_version_pdf_missing
         }
         return stringResource(validationRes)
     }

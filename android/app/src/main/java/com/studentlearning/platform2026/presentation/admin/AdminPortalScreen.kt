@@ -65,6 +65,7 @@ import com.studentlearning.platform2026.R
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.presentation.account.resolveAuthErrorText
 import com.studentlearning.platform2026.presentation.components.HaqibatiSurfaceCard
 import com.studentlearning.platform2026.presentation.components.HaqibatiTopBar
@@ -137,15 +138,15 @@ fun AdminPortalScreen(
                 isPublished = pub
             )
         },
-        onSaveStudyFileVersion = { fileId, editing, customId, versionNumber, label, notes, pub ->
+        onSaveStudyFileVersion = { fileId, editing, customVersionId, versionNumber, label, notes, pub ->
             viewModel.saveStudyFileVersion(
                 fileId = fileId,
                 editing = editing,
-                customId = customId,
+                customVersionId = customVersionId,
                 versionNumber = versionNumber,
                 versionLabel = label,
                 versionNotes = notes,
-                publishImmediately = pub
+                publishAsActive = pub
             )
         },
         onConfirmAction = viewModel::confirmPendingAction,
@@ -321,6 +322,7 @@ fun AdminPortalScreenContent(
             AdminEditorDialogHost(
                 dialogState = dialog,
                 isSubmitting = uiState.isSubmitting,
+                r2BrokerStatus = uiState.r2BrokerStatus,
                 onDismiss = onDismissEditor,
                 onSaveBranch = { customId, name, order, isPublished ->
                     val editing = (dialog as? AdminEditorDialogState.BranchEditor)?.editing
@@ -346,12 +348,12 @@ fun AdminPortalScreenContent(
                         pub
                     )
                 },
-                onSaveStudyFileVersion = { fileId, customId, versionNumber, label, notes, pub ->
+                onSaveStudyFileVersion = { fileId, customVersionId, versionNumber, label, notes, pub ->
                     val editing = (dialog as? AdminEditorDialogState.StudyFileVersionEditor)?.editing
                     onSaveStudyFileVersion(
                         fileId,
                         editing,
-                        customId,
+                        customVersionId,
                         versionNumber,
                         label,
                         notes,
@@ -913,13 +915,18 @@ private fun AdminDashboardContent(
                             )
                         }
                         item {
+                            val r2NoticeRes = if (uiState.r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED) {
+                                R.string.admin_r2_configured_notice
+                            } else {
+                                R.string.admin_r2_deferred_notice
+                            }
                             Surface(
                                 color = MaterialTheme.colorScheme.secondaryContainer,
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = stringResource(R.string.admin_r2_deferred_notice),
+                                    text = stringResource(r2NoticeRes),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.padding(spacing.sm)
@@ -938,6 +945,7 @@ private fun AdminDashboardContent(
                                 itemsIndexed(uiState.studyFiles, key = { _, item -> item.id }) { index, file ->
                                     AdminStudyFileCard(
                                         file = file,
+                                        r2BrokerStatus = uiState.r2BrokerStatus,
                                         canMoveUp = index > 0 && canMutate,
                                         canMoveDown = index < uiState.studyFiles.lastIndex && canMutate,
                                         isSubmitting = !canMutate,
@@ -1173,6 +1181,7 @@ private fun AdminCatalogItemCard(
 @Composable
 private fun AdminStudyFileCard(
     file: com.studentlearning.platform2026.domain.model.StudyFileMetadata,
+    r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     isSubmitting: Boolean,
@@ -1255,8 +1264,13 @@ private fun AdminStudyFileCard(
                 }
             }
 
+            val r2BadgeRes = if (r2BrokerStatus == PdfBrokerConfigurationStatus.CONFIGURED) {
+                R.string.admin_r2_configured_badge
+            } else {
+                R.string.admin_r2_pending_badge
+            }
             Text(
-                text = stringResource(R.string.admin_r2_pending_badge),
+                text = stringResource(r2BadgeRes),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -68,7 +68,8 @@ class PdfReaderRtlTest {
                 status = PdfSearchStatus.FOUND,
                 matches = listOf(PdfSearchMatch(pageNumber = 3, matchIndexInDocument = 0, snippet = "المعادلة الكيميائية"))
             ),
-            activeMatchCursor = 0
+            activeMatchCursor = 0,
+            versionLabel = "1.0"
         )
 
         composeTestRule.setContent {
@@ -100,6 +101,7 @@ class PdfReaderRtlTest {
         }
 
         composeTestRule.onNodeWithText("ملزمة الكيمياء - الفصل الأول").assertIsDisplayed()
+        composeTestRule.onNodeWithText("الإصدار 1.0").assertIsDisplayed()
         composeTestRule.onNodeWithText("صفحة 3 من 10").assertIsDisplayed().performClick()
         assertTrue(pageJumpClicked)
 

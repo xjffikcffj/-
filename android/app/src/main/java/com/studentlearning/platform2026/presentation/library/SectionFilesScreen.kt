@@ -35,11 +35,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.studentlearning.platform2026.R
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
@@ -57,9 +61,22 @@ fun SectionFilesScreen(
     onOpenStudyVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit,
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
+    onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onForegroundResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     SectionFilesScreenContent(
         uiState = uiState,
@@ -78,6 +95,7 @@ fun SectionFilesScreen(
             viewModel.dismissGuestDownloadPrompt()
             onNavigateToSignUp()
         },
+        onOpenStudyVersionWithLabel = onOpenStudyVersionWithLabel,
         modifier = modifier
     )
 }
@@ -94,9 +112,17 @@ fun SectionFilesScreenContent(
     onDismissTransientError: () -> Unit = {},
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
+    onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val spacing = HaqibatiThemeTokens.spacing
+    val openVersion: (String, String, String?, String?) -> Unit = { fileId, fileTitle, versionId, versionLabel ->
+        if (onOpenStudyVersionWithLabel != null) {
+            onOpenStudyVersionWithLabel(fileId, fileTitle, versionId, versionLabel)
+        } else {
+            onOpenStudyVersion(fileId, fileTitle, versionId)
+        }
+    }
 
     if (uiState is SectionFilesUiState.Content && !uiState.guestDownloadPromptFileTitle.isNullOrBlank()) {
         AlertDialog(
@@ -190,16 +216,22 @@ fun SectionFilesScreenContent(
                         offlineState = offlineState,
                         showNewVersionBadge = showNewVersionBadge,
                         onBrowseOnline = {
-                            onOpenStudyVersion(file.id, file.title, file.activeVersionId)
+                            openVersion(
+                                file.id,
+                                file.title,
+                                file.activeVersionId,
+                                file.activeVersionLabel
+                            )
                         },
                         onStartDownload = { onStartDownload(file) },
                         onCancelDownload = { onCancelDownload(file) },
                         onRetryDownload = { onRetryDownload(file) },
                         onOpenLocalVersion = { savedVersion ->
-                            onOpenStudyVersion(
+                            openVersion(
                                 savedVersion.fileId,
                                 savedVersion.fileTitle.ifBlank { file.title },
-                                savedVersion.versionId
+                                savedVersion.versionId,
+                                savedVersion.displayVersionLabel()
                             )
                         }
                     )
@@ -247,10 +279,11 @@ fun SectionFilesScreenContent(
                         OfflineSavedFallbackCard(
                             savedVersion = saved,
                             onClick = {
-                                onOpenStudyVersion(
+                                openVersion(
                                     saved.fileId,
                                     saved.fileTitle,
-                                    saved.versionId
+                                    saved.versionId,
+                                    saved.displayVersionLabel()
                                 )
                             }
                         )

@@ -59,4 +59,11 @@ class AppDestinationTest {
             assert(route.isNotBlank())
         }
     }
+
+    @Test
+    fun `pdf reader destination route exposes optional versionId and versionLabel arguments`() {
+        val route = AppDestination.PdfReader.route
+        assert(route.contains("${AppDestination.PdfReader.ARG_VERSION_ID}={${AppDestination.PdfReader.ARG_VERSION_ID}}"))
+        assert(route.contains("${AppDestination.PdfReader.ARG_VERSION_LABEL}={${AppDestination.PdfReader.ARG_VERSION_LABEL}}"))
+    }
 }

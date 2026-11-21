@@ -156,4 +156,36 @@ class ReadingProgressRepositoryImplTest {
         assertEquals(17, progress?.lastPageNumber)
         assertEquals(50, progress?.totalPages)
     }
+
+    @Test
+    fun `isolates reading progress per versionId for the same fileId without UID dependency`() = runTest {
+        val prefsFile = File(tempFolder.newFolder(), "versions.preferences_pb")
+        val repository = createRepository(prefsFile, this)
+
+        repository.saveLastPage(fileId = "physics-ch1", pageNumber = 5, totalPages = 30, versionId = "v1")
+        repository.saveLastPage(fileId = "physics-ch1", pageNumber = 19, totalPages = 40, versionId = "v2")
+        repository.saveLastPage(fileId = "physics-ch1", pageNumber = 2, totalPages = 10, versionId = null)
+
+        val v1 = repository.getProgress("physics-ch1", versionId = "v1")
+        val v2 = repository.getProgress("physics-ch1", versionId = "v2")
+        val defaultScope = repository.getProgress("physics-ch1", versionId = null)
+
+        assertEquals(5, v1?.lastPageNumber)
+        assertEquals("v1", v1?.versionId)
+        assertEquals(19, v2?.lastPageNumber)
+        assertEquals("v2", v2?.versionId)
+        assertEquals(2, defaultScope?.lastPageNumber)
+        assertNull(defaultScope?.versionId)
+        assertEquals(19, repository.observeProgress("physics-ch1", versionId = "v2").first()?.lastPageNumber)
+
+        // Clearing v1 leaves v2 and null scopes completely untouched.
+        repository.clearProgress("physics-ch1", versionId = "v1")
+        assertNull(repository.getProgress("physics-ch1", versionId = "v1"))
+        assertEquals(19, repository.getProgress("physics-ch1", versionId = "v2")?.lastPageNumber)
+        assertEquals(2, repository.getProgress("physics-ch1", versionId = null)?.lastPageNumber)
+
+        // Re-creating repository preserves isolated version progress across restarts/account switches.
+        val recreated = createRepository(prefsFile, this)
+        assertEquals(19, recreated.getProgress("physics-ch1", versionId = "v2")?.lastPageNumber)
+    }
 }

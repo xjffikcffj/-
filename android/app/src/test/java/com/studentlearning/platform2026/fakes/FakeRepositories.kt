@@ -1,9 +1,11 @@
 package com.studentlearning.platform2026.fakes
 
 import com.studentlearning.platform2026.core.common.AppResult
+import com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogMapper
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
+import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.DownloadException
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
@@ -17,6 +19,7 @@ import com.studentlearning.platform2026.domain.model.PdfSearchResult
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileOfflineState
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.model.UserPreferences
@@ -31,6 +34,7 @@ import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
 import com.studentlearning.platform2026.domain.repository.PreferencesRepository
 import com.studentlearning.platform2026.domain.repository.ReadingProgressRepository
 import com.studentlearning.platform2026.domain.repository.SystemStatusRepository
+import com.studentlearning.platform2026.domain.validation.AdminCatalogValidator
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -201,12 +205,14 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
     var subjects = mutableListOf<StudySubject>()
     var sections = mutableListOf<StudySection>()
     var studyFiles = mutableListOf<StudyFileMetadata>()
+    var versions = mutableListOf<StudyFileVersionMetadata>()
 
     var fetchBranchesCalls = 0
     var writeAttemptCount = 0
     var lastPublishToggle: Pair<String, Boolean>? = null
     var lastArchiveToggle: Pair<String, Boolean>? = null
     var reorderFailure: AdminException? = null
+    var brokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.CONFIGURED
 
     override suspend fun getAllBranches(): AppResult<List<StudyBranch>> {
         fetchBranchesCalls++
@@ -381,9 +387,19 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
         writeAttemptCount++
         lastPublishToggle = fileId to isPublished
         val index = studyFiles.indexOfFirst { it.id == fileId }
-        if (index >= 0) {
-            studyFiles[index] = studyFiles[index].copy(isPublished = isPublished)
+        if (index < 0) {
+            return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
         }
+        val file = studyFiles[index]
+        if (isPublished && file.isArchived) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+                message = "Cannot publish archived study file '$fileId'; unarchive it first."
+            )
+            return AppResult.Error(ex.message ?: "File is archived", ex)
+        }
+        studyFiles[index] = file.copy(isPublished = isPublished)
         return AppResult.Success(Unit)
     }
 
@@ -394,6 +410,180 @@ class FakeAdminCatalogRepository : AdminCatalogRepository {
         if (index >= 0) {
             studyFiles[index] = studyFiles[index].copy(isArchived = isArchived)
         }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun getStudyFileVersions(fileId: String): AppResult<List<StudyFileVersionMetadata>> {
+        val list = versions
+            .filter { it.fileId == fileId }
+            .sortedWith(
+                compareByDescending<StudyFileVersionMetadata> { it.versionNumber }
+                    .thenByDescending { it.publishedAtEpochMillis ?: 0L }
+                    .thenByDescending { it.createdAtEpochMillis ?: 0L }
+            )
+        return AppResult.Success(list)
+    }
+
+    override suspend fun createStudyFileVersion(
+        fileId: String,
+        versionNumber: Int,
+        versionLabel: String,
+        versionNotes: String?,
+        publishAsActive: Boolean,
+        customVersionId: String?
+    ): AppResult<StudyFileVersionMetadata> {
+        writeAttemptCount++
+        val validated = try {
+            AdminCatalogValidator.validateStudyFileVersionCreate(
+                fileId = fileId,
+                versionNumber = versionNumber,
+                versionLabel = versionLabel,
+                versionNotes = versionNotes,
+                customVersionId = customVersionId
+            )
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Validation failed", ex)
+        }
+        if (publishAsActive) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING
+            )
+            return AppResult.Error("Cannot publish before uploading PDF", ex)
+        }
+        if (studyFiles.none { it.id == validated.fileId }) {
+            return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
+        }
+        if (versions.any { it.fileId == validated.fileId && it.versionNumber == validated.versionNumber }) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.INVALID_VERSION_NUMBER
+            )
+            return AppResult.Error("Duplicate version number", ex)
+        }
+        val targetId = validated.customVersionId ?: "ver_${versions.size + 1}"
+        if (versions.any { it.fileId == validated.fileId && it.id == targetId }) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.INVALID_DOCUMENT_ID
+            )
+            return AppResult.Error("Duplicate version ID", ex)
+        }
+        val created = StudyFileVersionMetadata(
+            id = targetId,
+            fileId = validated.fileId,
+            versionNumber = validated.versionNumber,
+            versionLabel = validated.versionLabel,
+            versionNotes = validated.versionNotes,
+            isPublished = false,
+            createdAtEpochMillis = 1_700_000_000_000L + versions.size
+        )
+        versions.add(created)
+        return AppResult.Success(created)
+    }
+
+    override suspend fun updateStudyFileVersionMetadata(
+        fileId: String,
+        versionId: String,
+        versionLabel: String,
+        versionNotes: String?
+    ): AppResult<Unit> {
+        writeAttemptCount++
+        val validated = try {
+            AdminCatalogValidator.validateStudyFileVersionUpdate(
+                fileId = fileId,
+                versionId = versionId,
+                versionLabel = versionLabel,
+                versionNotes = versionNotes
+            )
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Validation failed", ex)
+        }
+        val index = versions.indexOfFirst { it.fileId == validated.fileId && it.id == validated.versionId }
+        if (index < 0) {
+            return AppResult.Error("Version not found", AdminException(AdminFailureReason.NOT_FOUND))
+        }
+        val current = versions[index]
+        versions[index] = current.copy(
+            versionLabel = validated.versionLabel,
+            versionNotes = validated.versionNotes
+        )
+        val fileIndex = studyFiles.indexOfFirst {
+            it.id == validated.fileId && it.activeVersionId == validated.versionId
+        }
+        if (fileIndex >= 0) {
+            studyFiles[fileIndex] = studyFiles[fileIndex].copy(activeVersionLabel = validated.versionLabel)
+        }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun publishStudyFileVersion(
+        fileId: String,
+        versionId: String
+    ): AppResult<Unit> {
+        writeAttemptCount++
+        if (brokerStatus != PdfBrokerConfigurationStatus.CONFIGURED) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING
+            )
+            return AppResult.Error("Broker not configured", ex)
+        }
+        val fileIndex = studyFiles.indexOfFirst { it.id == fileId }
+        if (fileIndex < 0) {
+            return AppResult.Error("File not found", AdminException(AdminFailureReason.NOT_FOUND))
+        }
+        val file = studyFiles[fileIndex]
+        if (file.isArchived) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION
+            )
+            return AppResult.Error("Parent file is archived", ex)
+        }
+        val versionIndex = versions.indexOfFirst { it.fileId == fileId && it.id == versionId }
+        if (versionIndex < 0) {
+            return AppResult.Error("Version not found", AdminException(AdminFailureReason.NOT_FOUND))
+        }
+        val target = versions[versionIndex]
+        if (target.isArchived) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH
+            )
+            return AppResult.Error("Target version is archived", ex)
+        }
+        val hasProof = FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+            fileId = fileId,
+            versionId = target.id,
+            r2ObjectKey = target.r2ObjectKey,
+            fileSizeBytes = target.fileSizeBytes,
+            checksumSha256 = target.checksumSha256
+        )
+        if (!hasProof) {
+            val ex = AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING
+            )
+            return AppResult.Error("PDF upload missing", ex)
+        }
+        val publishedAt = 1_700_000_100_000L
+        for (i in versions.indices) {
+            val v = versions[i]
+            if (v.fileId == fileId) {
+                versions[i] = if (v.id == target.id) {
+                    v.copy(isPublished = true, publishedAtEpochMillis = publishedAt)
+                } else {
+                    v.copy(isPublished = false)
+                }
+            }
+        }
+        studyFiles[fileIndex] = file.copy(
+            activeVersionId = target.id,
+            activeVersionNumber = target.versionNumber,
+            activeVersionLabel = target.versionLabel,
+            activeVersionPublishedAtEpochMillis = publishedAt
+        )
         return AppResult.Success(Unit)
     }
 
@@ -472,41 +662,62 @@ class FakeReadingProgressRepository(
     var saveDelayMs: Long = 0L
 ) : ReadingProgressRepository {
 
-    private val progressMap = MutableStateFlow(initialProgress)
+    private val progressMap = MutableStateFlow(
+        initialProgress.values.associateBy { progressKey(it.fileId, it.versionId) }
+    )
     var saveCalls: Int = 0
         private set
     val recordedSaves = mutableListOf<Pair<String, Int>>()
+    val recordedVersionSaves = mutableListOf<Triple<String, String?, Int>>()
 
-    override fun observeProgress(fileId: String): Flow<FileReadingProgress?> =
-        progressMap.map { it[fileId] }
+    override fun observeProgress(fileId: String, versionId: String?): Flow<FileReadingProgress?> =
+        progressMap.map { it[progressKey(fileId, versionId)] }
 
-    override suspend fun getProgress(fileId: String): FileReadingProgress? =
-        progressMap.value[fileId]
+    override suspend fun getProgress(fileId: String, versionId: String?): FileReadingProgress? =
+        progressMap.value[progressKey(fileId, versionId)]
 
-    override suspend fun saveLastPage(fileId: String, pageNumber: Int, totalPages: Int) {
+    override suspend fun saveLastPage(
+        fileId: String,
+        pageNumber: Int,
+        totalPages: Int,
+        versionId: String?
+    ) {
         if (fileId.isBlank() || totalPages <= 0) return
         if (saveDelayMs > 0L) {
             delay(saveDelayMs)
         }
+        val normalizedVersionId = normalizeVersionId(versionId)
         saveCalls++
         val safePage = pageNumber.coerceIn(1, totalPages)
         synchronized(recordedSaves) {
             recordedSaves.add(fileId to safePage)
+            recordedVersionSaves.add(Triple(fileId, normalizedVersionId, safePage))
         }
+        val key = progressKey(fileId, normalizedVersionId)
         progressMap.update { current ->
             current + (
-                fileId to FileReadingProgress(
+                key to FileReadingProgress(
                     fileId = fileId,
                     lastPageNumber = safePage,
                     totalPages = totalPages,
-                    updatedAtEpochMillis = clockEpochMillis()
+                    updatedAtEpochMillis = clockEpochMillis(),
+                    versionId = normalizedVersionId
                 )
             )
         }
     }
 
-    override suspend fun clearProgress(fileId: String) {
-        progressMap.update { current -> current - fileId }
+    override suspend fun clearProgress(fileId: String, versionId: String?) {
+        val key = progressKey(fileId, versionId)
+        progressMap.update { current -> current - key }
+    }
+
+    private fun normalizeVersionId(versionId: String?): String? {
+        return versionId?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun progressKey(fileId: String, versionId: String?): String {
+        return "${fileId}::${normalizeVersionId(versionId).orEmpty()}"
     }
 }
 

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -203,6 +204,7 @@ fun PdfReaderScreenContent(
                         title = uiState.fileTitle.ifBlank {
                             stringResource(R.string.pdf_reader_default_title)
                         },
+                        versionLabel = uiState.versionLabel,
                         hasDocumentLoaded = uiState.documentSession != null,
                         isNightModeEnabled = uiState.isNightModeEnabled,
                         containerColor = chromeContainerColor,
@@ -294,6 +296,7 @@ fun PdfReaderScreenContent(
 @Composable
 private fun PdfReaderTopBar(
     title: String,
+    versionLabel: String?,
     hasDocumentLoaded: Boolean,
     isNightModeEnabled: Boolean,
     containerColor: Color,
@@ -312,8 +315,8 @@ private fun PdfReaderTopBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .height(56.dp)
-                    .padding(horizontal = 4.dp),
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onNavigateBack) {
@@ -323,14 +326,27 @@ private fun PdfReaderTopBar(
                     )
                 }
 
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (!versionLabel.isNullOrBlank()) {
+                        Text(
+                            text = stringResource(R.string.library_file_version_badge, versionLabel),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = contentColor.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
 
                 if (hasDocumentLoaded) {
                     IconButton(onClick = onToggleSearch) {

@@ -55,6 +55,7 @@ fun MainShellScreen(
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onNavigateToPdfReader: (fileId: String, fileTitle: String, activeVersionId: String?) -> Unit = { _, _, _ -> },
+    onNavigateToPdfReaderWithLabel: ((fileId: String, fileTitle: String, activeVersionId: String?, versionLabel: String?) -> Unit)? = null,
     modifier: Modifier = Modifier,
     tabNavController: NavHostController = rememberNavController()
 ) {
@@ -286,7 +287,14 @@ fun MainShellScreen(
                             )
                         },
                         onNavigateToSignIn = onNavigateToSignIn,
-                        onNavigateToSignUp = onNavigateToSignUp
+                        onNavigateToSignUp = onNavigateToSignUp,
+                        onOpenStudyVersionWithLabel = { fileId, fileTitle, versionId, versionLabel ->
+                            if (onNavigateToPdfReaderWithLabel != null) {
+                                onNavigateToPdfReaderWithLabel(fileId, fileTitle, versionId, versionLabel)
+                            } else {
+                                onNavigateToPdfReader(fileId, fileTitle, versionId)
+                            }
+                        }
                     )
                 }
             }
@@ -302,7 +310,14 @@ fun MainShellScreen(
                     viewModel = downloadsViewModel,
                     onNavigateToSignIn = onNavigateToSignIn,
                     onNavigateToSignUp = onNavigateToSignUp,
-                    onOpenLocalVersion = onNavigateToPdfReader
+                    onOpenLocalVersion = onNavigateToPdfReader,
+                    onOpenLocalVersionWithLabel = { fileId, fileTitle, versionId, versionLabel ->
+                        if (onNavigateToPdfReaderWithLabel != null) {
+                            onNavigateToPdfReaderWithLabel(fileId, fileTitle, versionId, versionLabel)
+                        } else {
+                            onNavigateToPdfReader(fileId, fileTitle, versionId)
+                        }
+                    }
                 )
             }
 

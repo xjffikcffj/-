@@ -29,7 +29,8 @@ data class PdfReaderUiState(
         status = PdfSearchStatus.IDLE
     ),
     val activeMatchCursor: Int = -1,
-    val isPageJumpDialogVisible: Boolean = false
+    val isPageJumpDialogVisible: Boolean = false,
+    val versionLabel: String? = null
 ) {
     val activeMatch: PdfSearchMatch?
         get() = searchResult.matches.getOrNull(activeMatchCursor)

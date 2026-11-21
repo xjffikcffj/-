@@ -65,5 +65,11 @@ data class StudyFileVersionMetadata(
     val isArchived: Boolean = false
 ) {
     val hasUploadedPdfBinary: Boolean
-        get() = !r2ObjectKey.isNullOrBlank()
+        get() {
+            val key = r2ObjectKey?.trim().orEmpty()
+            return key.isNotEmpty() &&
+                (fileSizeBytes ?: 0L) > 0L &&
+                !key.contains("://") &&
+                !key.contains("..")
+        }
 }

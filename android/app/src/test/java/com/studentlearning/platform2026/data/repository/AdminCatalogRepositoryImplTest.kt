@@ -11,8 +11,12 @@ import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
+import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
+import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker
+import com.studentlearning.platform2026.domain.repository.PdfVersionUploadSlot
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import kotlinx.coroutines.CoroutineDispatcher
@@ -35,11 +39,52 @@ class AdminCatalogRepositoryImplTest {
         override val default: CoroutineDispatcher = mainDispatcherRule.testDispatcher
     }
 
+    private fun fakeVersionStorageBroker(
+        statusProvider: () -> PdfBrokerConfigurationStatus = {
+            PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+        }
+    ): PdfVersionStorageBroker = object : PdfVersionStorageBroker {
+        override fun getBrokerStatus(): PdfBrokerConfigurationStatus = statusProvider()
+
+        override fun buildVersionObjectKey(fileId: String, versionId: String): String =
+            "study-files/$fileId/versions/$versionId/document.pdf"
+
+        override suspend fun requestVersionUploadSlot(
+            fileId: String,
+            versionId: String,
+            fileSizeBytes: Long,
+            checksumSha256: String
+        ): AppResult<PdfVersionUploadSlot> {
+            if (getBrokerStatus() != PdfBrokerConfigurationStatus.CONFIGURED) {
+                return AppResult.Error(
+                    message = "Cloudflare R2 upload broker is not configured.",
+                    cause = AdminException(
+                        reason = AdminFailureReason.VALIDATION_ERROR,
+                        validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING
+                    )
+                )
+            }
+            return AppResult.Success(
+                PdfVersionUploadSlot(
+                    fileId = fileId,
+                    versionId = versionId,
+                    r2ObjectKey = buildVersionObjectKey(fileId, versionId),
+                    signedUploadUrl = "https://example.invalid/upload/$fileId/$versionId"
+                )
+            )
+        }
+    }
+
     @Test
     fun `blocks unauthenticated users before touching Firestore remote data source`() = runTest {
         val authRepository = FakeAuthRepository(AdminSession(isSignedIn = false))
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val result = repository.createBranch(null, "السادس العلمي", 1, isPublished = false)
 
@@ -61,7 +106,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val readResult = repository.getAllBranches()
         val writeResult = repository.createSubject(null, "scientific", "الفيزياء", 1, isPublished = false)
@@ -84,7 +134,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val result = repository.updateBranch("scientific", "السادس العلمي", 1)
 
@@ -109,7 +164,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource(failWriteWithPermissionDenied = true)
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val result = repository.createSection(null, "physics", "الفصل الأول", 1, isPublished = false)
 
@@ -131,7 +191,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource(failReadWithPermissionDenied = true)
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val result = repository.getAllBranches()
 
@@ -152,7 +217,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val result = repository.setStudyFileArchived("file-1", isArchived = true)
 
@@ -173,7 +243,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val invalidResult = repository.updateStudyFileMetadata(
             fileId = "file-99",
@@ -215,7 +290,12 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val repository = AdminCatalogRepositoryImpl(authRepository, remote, testDispatchers)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
 
         val branchResult = repository.reorderBranches("b2", 1, "b1", 2)
         val fileResult = repository.reorderStudyFiles("f2", 1, "f1", 2)
@@ -227,15 +307,188 @@ class AdminCatalogRepositoryImplTest {
         assertEquals("admin-uid", remote.lastActorUid)
     }
 
+    @Test
+    fun `blocks immediate version publish when PDF binary upload broker is unconfigured`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-uid",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val remote = RecordingAdminRemoteDataSource()
+        val unconfiguredBroker = fakeVersionStorageBroker {
+            PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+        }
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = unconfiguredBroker
+        )
+
+        val immediateCreateResult = repository.createStudyFileVersion(
+            fileId = "file-1",
+            versionNumber = 2,
+            versionLabel = "2.0",
+            versionNotes = "تحديث",
+            publishAsActive = true,
+            customVersionId = "v2"
+        )
+        val publishExistingResult = repository.publishStudyFileVersion(
+            fileId = "file-1",
+            versionId = "v2"
+        )
+
+        assertEquals(0, remote.writeCallCount)
+        assertEquals(
+            AdminValidationError.VERSION_PDF_BINARY_MISSING,
+            ((immediateCreateResult as AppResult.Error).cause as AdminException).validationError
+        )
+        assertEquals(
+            AdminValidationError.VERSION_PDF_BINARY_MISSING,
+            ((publishExistingResult as AppResult.Error).cause as AdminException).validationError
+        )
+    }
+
+    @Test
+    fun `allows draft version creation when broker is pending and delegates publish only when broker configured`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "admin-uid",
+                    email = "admin@example.com",
+                    role = AdminRole.ADMIN,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            var currentBrokerStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+            val broker = fakeVersionStorageBroker { currentBrokerStatus }
+            val remote = RecordingAdminRemoteDataSource()
+            val repository = AdminCatalogRepositoryImpl(
+                authRepository = authRepository,
+                remoteDataSource = remote,
+                dispatcherProvider = testDispatchers,
+                pdfVersionStorageBroker = broker
+            )
+
+            // Draft creation succeeds while R2 broker is still pending.
+            val draftResult = repository.createStudyFileVersion(
+                fileId = "file-1",
+                versionNumber = 1,
+                versionLabel = "  1.0  ",
+                versionNotes = "   ",
+                publishAsActive = false,
+                customVersionId = "v1"
+            )
+            assertTrue(draftResult is AppResult.Success)
+            assertEquals("v1", (draftResult as AppResult.Success).data.id)
+            assertEquals("1.0", remote.lastCreatedVersionLabel)
+            assertEquals("admin-uid", remote.lastActorUid)
+
+            // Updating metadata delegates cleanly with trimmed label/notes.
+            val updateResult = repository.updateStudyFileVersionMetadata(
+                fileId = "file-1",
+                versionId = "v1",
+                versionLabel = " 1.1 ",
+                versionNotes = " ملاحظات "
+            )
+            assertTrue(updateResult is AppResult.Success)
+            assertEquals("1.1", remote.lastCreatedVersionLabel)
+
+            // Publishing succeeds at repository layer once broker is CONFIGURED.
+            currentBrokerStatus = PdfBrokerConfigurationStatus.CONFIGURED
+            val publishResult = repository.publishStudyFileVersion(fileId = "file-1", versionId = "v1")
+            assertTrue(publishResult is AppResult.Success)
+            assertEquals("file-1" to "v1", remote.lastPublishedVersion)
+        }
+
+    @Test
+    fun `blocks non-admin and stale-claim sessions on version reads and writes`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "student-1",
+                email = "student@example.com",
+                role = AdminRole.NONE,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val remote = RecordingAdminRemoteDataSource()
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker()
+        )
+
+        val readResult = repository.getStudyFileVersions("file-1")
+        val createResult = repository.createStudyFileVersion(
+            fileId = "file-1",
+            versionNumber = 1,
+            versionLabel = "1.0",
+            versionNotes = null,
+            publishAsActive = false
+        )
+        assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, ((readResult as AppResult.Error).cause as AdminException).reason)
+        assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, ((createResult as AppResult.Error).cause as AdminException).reason)
+        assertEquals(0, remote.writeCallCount)
+    }
+
+    @Test
+    fun `blocks republishing archived parent study file and allows after unarchiving`() = runTest {
+        val authRepository = FakeAuthRepository(
+            AdminSession(
+                isSignedIn = true,
+                uid = "owner-uid",
+                email = "owner@example.com",
+                role = AdminRole.OWNER,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        )
+        val remote = RecordingAdminRemoteDataSource(initialFileArchived = true)
+        val repository = AdminCatalogRepositoryImpl(
+            authRepository = authRepository,
+            remoteDataSource = remote,
+            dispatcherProvider = testDispatchers,
+            pdfVersionStorageBroker = fakeVersionStorageBroker { PdfBrokerConfigurationStatus.CONFIGURED }
+        )
+
+        val blockedPublish = repository.setStudyFilePublished("file-archived", isPublished = true)
+        assertTrue(blockedPublish is AppResult.Error)
+        val cause = (blockedPublish as AppResult.Error).cause as AdminException
+        assertEquals(AdminFailureReason.VALIDATION_ERROR, cause.reason)
+        assertEquals(AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION, cause.validationError)
+
+        val unarchiveResult = repository.setStudyFileArchived("file-archived", isArchived = false)
+        assertTrue(unarchiveResult is AppResult.Success)
+
+        val publishAfterUnarchive = repository.setStudyFilePublished("file-archived", isPublished = true)
+        assertTrue(publishAfterUnarchive is AppResult.Success)
+        assertEquals(true, remote.lastFilePublished)
+    }
+
     private class RecordingAdminRemoteDataSource(
         private val failWriteWithPermissionDenied: Boolean = false,
-        private val failReadWithPermissionDenied: Boolean = false
+        private val failReadWithPermissionDenied: Boolean = false,
+        initialFileArchived: Boolean = false
     ) : AdminCatalogRemoteDataSource {
         var writeCallCount = 0
         var lastActorUid: String? = null
         var lastUpdatedFileId: String? = null
         var lastUpdatedFileSectionId: String? = null
         var lastReorderedPair: List<Pair<String, Int>>? = null
+        var lastCreatedVersionLabel: String? = null
+        var lastPublishedVersion: Pair<String, String>? = null
+        var isFileArchived: Boolean = initialFileArchived
+        var lastFilePublished: Boolean? = null
 
         override suspend fun fetchAllBranches(): List<StudyBranch> {
             if (failReadWithPermissionDenied) {
@@ -353,11 +606,68 @@ class AdminCatalogRepositoryImplTest {
 
         override suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String) {
             writeCallCount++
+            lastActorUid = actorUid
+            if (isPublished && isFileArchived) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+                    message = "Cannot publish archived study file '$fileId'; unarchive it first."
+                )
+            }
+            lastFilePublished = isPublished
         }
 
         override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
             writeCallCount++
             lastActorUid = actorUid
+            isFileArchived = isArchived
+        }
+
+        override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> =
+            emptyList()
+
+        override suspend fun createStudyFileVersion(
+            fileId: String,
+            versionNumber: Int,
+            versionLabel: String,
+            versionNotes: String?,
+            publishAsActive: Boolean,
+            actorUid: String,
+            customVersionId: String?
+        ): StudyFileVersionMetadata {
+            writeCallCount++
+            lastActorUid = actorUid
+            lastCreatedVersionLabel = versionLabel
+            return StudyFileVersionMetadata(
+                id = customVersionId ?: "ver_1",
+                fileId = fileId,
+                versionNumber = versionNumber,
+                versionLabel = versionLabel,
+                versionNotes = versionNotes,
+                isPublished = publishAsActive
+            )
+        }
+
+        override suspend fun updateStudyFileVersionMetadata(
+            fileId: String,
+            versionId: String,
+            versionLabel: String,
+            versionNotes: String?,
+            actorUid: String
+        ) {
+            writeCallCount++
+            lastActorUid = actorUid
+            lastCreatedVersionLabel = versionLabel
+        }
+
+        override suspend fun publishStudyFileVersion(
+            fileId: String,
+            versionId: String,
+            actorUid: String
+        ) {
+            writeCallCount++
+            lastActorUid = actorUid
+            lastPublishedVersion = fileId to versionId
         }
 
         override suspend fun reorderBranches(

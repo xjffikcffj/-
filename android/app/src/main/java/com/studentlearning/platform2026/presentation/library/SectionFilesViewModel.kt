@@ -1,5 +1,6 @@
 package com.studentlearning.platform2026.presentation.library
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -15,6 +16,8 @@ import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
 import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +34,8 @@ class SectionFilesViewModel(
     private val catalogRepository: CatalogRepository,
     private val authRepository: AuthRepository? = null,
     private val offlineDownloadsRepository: OfflineDownloadsRepository? = null,
-    private val clockEpochMillis: () -> Long = { System.currentTimeMillis() }
+    private val clockEpochMillis: () -> Long = { System.currentTimeMillis() },
+    private val monotonicElapsedMillis: (() -> Long)? = null
 ) : ViewModel() {
 
     private sealed interface CatalogSnapshot {
@@ -47,6 +51,12 @@ class SectionFilesViewModel(
     private val catalogSnapshot = MutableStateFlow<CatalogSnapshot>(CatalogSnapshot.Loading)
     private val guestPromptFileTitle = MutableStateFlow<String?>(null)
     private val transientActionErrorReason = MutableStateFlow<DownloadFailureReason?>(null)
+    private val badgeExpiryTrigger = MutableStateFlow(0L)
+
+    private var badgeExpiryJob: Job? = null
+    private var scheduledExpiryTargetEpochMillis: Long? = null
+    private var anchorWallEpochMillis: Long? = null
+    private var anchorMonotonicMillis: Long? = null
 
     private val _uiState = MutableStateFlow<SectionFilesUiState>(SectionFilesUiState.Loading)
     val uiState: StateFlow<SectionFilesUiState> = _uiState.asStateFlow()
@@ -58,6 +68,11 @@ class SectionFilesViewModel(
 
     fun retry() {
         loadFiles()
+    }
+
+    fun onForegroundResumed() {
+        cancelBadgeExpiryJob()
+        badgeExpiryTrigger.value = badgeExpiryTrigger.value + 1L
     }
 
     fun startDownload(file: StudyFileMetadata) {
@@ -141,19 +156,27 @@ class SectionFilesViewModel(
             ?.map { it.canDownloadOfflineFiles }
             ?: flowOf(false)
 
+        val transientUiFlow = combine(
+            guestPromptFileTitle,
+            transientActionErrorReason
+        ) { guestPrompt, transientError ->
+            guestPrompt to transientError
+        }
+
         viewModelScope.launch {
             combine(
                 catalogSnapshot,
                 offlineStatesFlow,
                 canDownloadFlow,
-                guestPromptFileTitle,
-                transientActionErrorReason
-            ) { snapshot, offlineStates, canDownload, guestPrompt, transientError ->
+                transientUiFlow,
+                badgeExpiryTrigger
+            ) { snapshot, offlineStates, canDownload, transientUi, _ ->
+                val (guestPrompt, transientError) = transientUi
                 when (snapshot) {
                     CatalogSnapshot.Loading -> SectionFilesUiState.Loading
                     CatalogSnapshot.Empty -> SectionFilesUiState.Empty
                     is CatalogSnapshot.Loaded -> {
-                        val nowEpochMillis = clockEpochMillis()
+                        val nowEpochMillis = resolveCurrentNowEpochMillis()
                         val newVersionBadgeFileIds = snapshot.files
                             .filter { file ->
                                 NewVersionBadgePolicy.shouldShowNewVersionBadge(
@@ -179,8 +202,102 @@ class SectionFilesViewModel(
                 }
             }.collect { combinedState ->
                 _uiState.value = combinedState
+                if (combinedState is SectionFilesUiState.Content) {
+                    scheduleNextBadgeExpiry(
+                        files = combinedState.files,
+                        offlineStates = combinedState.offlineStates,
+                        nowEpochMillis = resolveCurrentNowEpochMillis()
+                    )
+                } else {
+                    cancelBadgeExpiryJob()
+                }
             }
         }
+    }
+
+    private fun scheduleNextBadgeExpiry(
+        files: List<StudyFileMetadata>,
+        offlineStates: Map<String, StudyFileOfflineState>,
+        nowEpochMillis: Long
+    ) {
+        var nextExpiryEpochMillis: Long? = null
+        for (file in files) {
+            if (!NewVersionBadgePolicy.shouldShowNewVersionBadge(
+                    file = file,
+                    offlineState = offlineStates[file.id],
+                    nowEpochMillis = nowEpochMillis
+                )
+            ) {
+                continue
+            }
+            val publishedAt = file.activeVersionPublishedAtEpochMillis ?: continue
+            val expiryEpochMillis = publishedAt + NewVersionBadgePolicy.ONE_MONTH_WINDOW_MILLIS
+            if (expiryEpochMillis > nowEpochMillis) {
+                nextExpiryEpochMillis = if (nextExpiryEpochMillis == null) {
+                    expiryEpochMillis
+                } else {
+                    minOf(nextExpiryEpochMillis, expiryEpochMillis)
+                }
+            }
+        }
+
+        if (nextExpiryEpochMillis == null) {
+            cancelBadgeExpiryJob()
+            return
+        }
+
+        if (scheduledExpiryTargetEpochMillis == nextExpiryEpochMillis && badgeExpiryJob?.isActive == true) {
+            return
+        }
+
+        badgeExpiryJob?.cancel()
+        scheduledExpiryTargetEpochMillis = nextExpiryEpochMillis
+        val waitMillis = (nextExpiryEpochMillis - nowEpochMillis).coerceAtLeast(1L)
+        badgeExpiryJob = viewModelScope.launch {
+            delay(waitMillis)
+            scheduledExpiryTargetEpochMillis = null
+            badgeExpiryTrigger.value = badgeExpiryTrigger.value + 1L
+        }
+    }
+
+    private fun resolveCurrentNowEpochMillis(): Long {
+        val reportedWall = clockEpochMillis()
+        val monoProvider = monotonicElapsedMillis
+        if (monoProvider == null) {
+            if (reportedWall <= 0L) {
+                return anchorWallEpochMillis ?: reportedWall
+            }
+            val anchorWall = anchorWallEpochMillis
+            if (anchorWall == null) {
+                anchorWallEpochMillis = reportedWall
+                return reportedWall
+            }
+            return maxOf(reportedWall, anchorWall)
+        }
+
+        val currentMono = monoProvider()
+        val existingAnchorWall = anchorWallEpochMillis
+        val existingAnchorMono = anchorMonotonicMillis
+        if (existingAnchorWall == null || existingAnchorMono == null) {
+            if (reportedWall > 0L) {
+                anchorWallEpochMillis = reportedWall
+                anchorMonotonicMillis = currentMono
+            }
+            return reportedWall
+        }
+
+        return NewVersionBadgePolicy.resolveTrustedNowEpochMillis(
+            reportedWallEpochMillis = reportedWall,
+            anchorWallEpochMillis = existingAnchorWall,
+            anchorMonotonicMillis = existingAnchorMono,
+            currentMonotonicMillis = currentMono
+        )
+    }
+
+    private fun cancelBadgeExpiryJob() {
+        badgeExpiryJob?.cancel()
+        badgeExpiryJob = null
+        scheduledExpiryTargetEpochMillis = null
     }
 
     private fun loadFiles() {
@@ -212,13 +329,19 @@ class SectionFilesViewModel(
         }
     }
 
+    override fun onCleared() {
+        cancelBadgeExpiryJob()
+        super.onCleared()
+    }
+
     companion object {
         fun provideFactory(
             sectionId: String,
             catalogRepository: CatalogRepository,
             authRepository: AuthRepository? = null,
             offlineDownloadsRepository: OfflineDownloadsRepository? = null,
-            clockEpochMillis: () -> Long = { System.currentTimeMillis() }
+            clockEpochMillis: () -> Long = { System.currentTimeMillis() },
+            monotonicElapsedMillis: (() -> Long)? = { SystemClock.elapsedRealtime() }
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -227,7 +350,8 @@ class SectionFilesViewModel(
                     catalogRepository = catalogRepository,
                     authRepository = authRepository,
                     offlineDownloadsRepository = offlineDownloadsRepository,
-                    clockEpochMillis = clockEpochMillis
+                    clockEpochMillis = clockEpochMillis,
+                    monotonicElapsedMillis = monotonicElapsedMillis
                 ) as T
             }
         }

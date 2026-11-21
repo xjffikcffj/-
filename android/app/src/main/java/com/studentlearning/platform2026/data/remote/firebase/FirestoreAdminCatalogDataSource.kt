@@ -75,13 +75,13 @@ interface AdminCatalogRemoteDataSource {
 
     suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata>
     suspend fun createStudyFileVersion(
-        customId: String?,
         fileId: String,
         versionNumber: Int,
         versionLabel: String,
         versionNotes: String?,
-        publishImmediately: Boolean,
-        actorUid: String
+        publishAsActive: Boolean,
+        actorUid: String,
+        customVersionId: String? = null
     ): StudyFileVersionMetadata
     suspend fun updateStudyFileVersionMetadata(
         fileId: String,
@@ -147,12 +147,13 @@ class FirestoreAdminCatalogDataSource(
         isPublished: Boolean,
         actorUid: String
     ): StudyBranch {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildBranchCreatePayload(
             name = name,
             order = order,
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.BRANCHES, customId, payload)
@@ -167,11 +168,12 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun updateBranch(branchId: String, name: String, order: Int, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildCatalogItemUpdatePayload(
             name = name,
             order = order,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.BRANCHES)
@@ -181,10 +183,11 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun setBranchPublished(branchId: String, isPublished: Boolean, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.BRANCHES)
@@ -218,6 +221,7 @@ class FirestoreAdminCatalogDataSource(
         isPublished: Boolean,
         actorUid: String
     ): StudySubject {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val branchReference = firestore.collection(Collections.BRANCHES).document(branchId)
         val payload = FirestoreAdminCatalogMapper.buildSubjectCreatePayload(
@@ -225,7 +229,7 @@ class FirestoreAdminCatalogDataSource(
             name = name,
             order = order,
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.SUBJECTS, customId, payload)
@@ -241,11 +245,12 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun updateSubject(subjectId: String, name: String, order: Int, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildCatalogItemUpdatePayload(
             name = name,
             order = order,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.SUBJECTS)
@@ -255,10 +260,11 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun setSubjectPublished(subjectId: String, isPublished: Boolean, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.SUBJECTS)
@@ -292,6 +298,7 @@ class FirestoreAdminCatalogDataSource(
         isPublished: Boolean,
         actorUid: String
     ): StudySection {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val subjectReference = firestore.collection(Collections.SUBJECTS).document(subjectId)
         val payload = FirestoreAdminCatalogMapper.buildSectionCreatePayload(
@@ -299,7 +306,7 @@ class FirestoreAdminCatalogDataSource(
             name = name,
             order = order,
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.SECTIONS, customId, payload)
@@ -315,11 +322,12 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun updateSection(sectionId: String, name: String, order: Int, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildCatalogItemUpdatePayload(
             name = name,
             order = order,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.SECTIONS)
@@ -329,10 +337,11 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun setSectionPublished(sectionId: String, isPublished: Boolean, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.SECTIONS)
@@ -367,6 +376,7 @@ class FirestoreAdminCatalogDataSource(
         isPublished: Boolean,
         actorUid: String
     ): StudyFileMetadata {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val sectionReference = firestore.collection(Collections.SECTIONS).document(sectionId)
         val payload = FirestoreAdminCatalogMapper.buildStudyFileCreatePayload(
@@ -375,7 +385,7 @@ class FirestoreAdminCatalogDataSource(
             description = description,
             order = order,
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.STUDY_FILES, customId, payload)
@@ -394,8 +404,8 @@ class FirestoreAdminCatalogDataSource(
             activeVersionId = null,
             activeVersionNumber = null,
             activeVersionLabel = null,
-            createdByUid = actorUid,
-            updatedByUid = actorUid
+            createdByUid = validActorUid,
+            updatedByUid = validActorUid
         )
     }
 
@@ -407,6 +417,7 @@ class FirestoreAdminCatalogDataSource(
         order: Int,
         actorUid: String
     ) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val expectedSectionRef = firestore.collection(Collections.SECTIONS).document(sectionId)
         val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
@@ -414,7 +425,7 @@ class FirestoreAdminCatalogDataSource(
             title = title,
             description = description,
             order = order,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
 
@@ -442,23 +453,33 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
+        val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
         val payload = FirestoreAdminCatalogMapper.buildPublishStateUpdatePayload(
             isPublished = isPublished,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
-        firestore.collection(Collections.STUDY_FILES)
-            .document(fileId)
-            .update(payload)
-            .awaitResult()
+        firestore.runTransaction { transaction ->
+            val fileSnap = transaction.get(fileRef)
+            FirestoreAdminCatalogMapper.validateStudyFilePublishTransition(
+                fileId = fileId,
+                exists = fileSnap.exists(),
+                isArchived = fileSnap.getBoolean(Fields.IS_ARCHIVED) == true,
+                targetPublished = isPublished
+            )
+            transaction.update(fileRef, payload)
+            null
+        }.awaitResult()
     }
 
     override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val payload = FirestoreAdminCatalogMapper.buildArchiveStateUpdatePayload(
             isArchived = isArchived,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = FieldValue.serverTimestamp()
         )
         firestore.collection(Collections.STUDY_FILES)
@@ -492,24 +513,36 @@ class FirestoreAdminCatalogDataSource(
     }
 
     override suspend fun createStudyFileVersion(
-        customId: String?,
         fileId: String,
         versionNumber: Int,
         versionLabel: String,
         versionNotes: String?,
-        publishImmediately: Boolean,
-        actorUid: String
+        publishAsActive: Boolean,
+        actorUid: String,
+        customVersionId: String?
     ): StudyFileVersionMetadata {
+        val validActorUid = requireNonBlankActorUid(actorUid)
+        if (publishAsActive) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                message = "Cannot publish an active version before its PDF binary is uploaded to Cloudflare R2."
+            )
+        }
+
         val firestore = requireConfiguredFirestore()
         val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
         val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
-        val newVersionRef = if (customId != null) {
-            versionsCollection.document(customId)
+        val newVersionRef = if (customVersionId != null) {
+            versionsCollection.document(customVersionId)
         } else {
             versionsCollection.document()
         }
 
-        val existingVersionRefs = versionsCollection.get().awaitResult()
+        // Pre-fetched refs are ONLY a legacy fallback for docs written before registeredVersionNumbers;
+        // atomic uniqueness is enforced inside the transaction via fileRef[REGISTERED_VERSION_NUMBERS],
+        // because reading and writing fileRef serializes concurrent transactions for the same file.
+        val legacyVersionRefs = versionsCollection.get().awaitResult()
             .documents
             .map { it.reference }
 
@@ -519,8 +552,8 @@ class FirestoreAdminCatalogDataSource(
             versionNumber = versionNumber,
             versionLabel = versionLabel,
             versionNotes = versionNotes,
-            isPublished = publishImmediately,
-            actorUid = actorUid,
+            isPublished = false,
+            actorUid = validActorUid,
             timestampValue = timestamp
         )
 
@@ -543,7 +576,7 @@ class FirestoreAdminCatalogDataSource(
             }
 
             val refsToRead = buildList {
-                addAll(existingVersionRefs)
+                addAll(legacyVersionRefs)
                 val activeId = fileSnap.getString(Fields.ACTIVE_VERSION_ID)?.trim().orEmpty()
                 if (activeId.isNotEmpty()) {
                     add(versionsCollection.document(activeId))
@@ -554,53 +587,37 @@ class FirestoreAdminCatalogDataSource(
                 .filter { it.path != newVersionRef.path }
                 .map { transaction.get(it) }
 
-            for (existingSnap in existingSnapshots) {
-                if (!existingSnap.exists()) continue
-                val existingNumber = (existingSnap.get(Fields.VERSION_NUMBER) as? Number)?.toInt()
-                if (existingNumber == versionNumber) {
-                    throw AdminException(
-                        reason = AdminFailureReason.VALIDATION_ERROR,
-                        validationError = AdminValidationError.INVALID_VERSION_NUMBER,
-                        message = "Version number $versionNumber already exists for file '$fileId'."
-                    )
-                }
-            }
+            val registeredOnParent = FirestoreAdminCatalogMapper.extractRegisteredVersionNumbers(
+                fileSnap.data ?: emptyMap()
+            )
+            val numbersFromDocs = existingSnapshots
+                .filter { it.exists() }
+                .mapNotNull { (it.get(Fields.VERSION_NUMBER) as? Number)?.toInt()?.takeIf { n -> n >= 1 } }
+            val knownNumbers = (registeredOnParent + numbersFromDocs).toSet()
 
-            // Writes after all reads in the transaction
-            if (publishImmediately) {
-                for (existingSnap in existingSnapshots) {
-                    if (!existingSnap.exists()) continue
-                    if (existingSnap.getBoolean(Fields.IS_PUBLISHED) == true) {
-                        transaction.update(
-                            existingSnap.reference,
-                            mapOf(
-                                Fields.IS_PUBLISHED to false,
-                                Fields.UPDATED_BY_UID to actorUid,
-                                Fields.UPDATED_AT to timestamp
-                            )
-                        )
-                    }
-                }
-            }
-
-            transaction.set(newVersionRef, createPayload)
-
-            if (publishImmediately) {
-                val pointerPayload = FirestoreAdminCatalogMapper.buildActiveVersionPointerPayload(
-                    versionId = newVersionRef.id,
-                    versionNumber = versionNumber,
-                    versionLabel = versionLabel,
-                    publishedAtValue = timestamp,
-                    actorUid = actorUid,
-                    timestampValue = timestamp
+            if (versionNumber in knownNumbers) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.INVALID_VERSION_NUMBER,
+                    message = "Version number $versionNumber already exists for file '$fileId'."
                 )
-                transaction.update(fileRef, pointerPayload)
             }
+
+            // Writes after all reads: atomically reserve versionNumber on fileRef and create draft version.
+            transaction.set(newVersionRef, createPayload)
+            transaction.update(
+                fileRef,
+                mapOf(
+                    Fields.REGISTERED_VERSION_NUMBERS to (knownNumbers + versionNumber).sorted(),
+                    Fields.UPDATED_BY_UID to validActorUid,
+                    Fields.UPDATED_AT to timestamp
+                )
+            )
             null
         }.awaitResult()
 
         return StudyFileVersionMetadata(
-            versionId = newVersionRef.id,
+            id = newVersionRef.id,
             fileId = fileId,
             versionNumber = versionNumber,
             versionLabel = versionLabel,
@@ -608,9 +625,10 @@ class FirestoreAdminCatalogDataSource(
             r2ObjectKey = null,
             fileSizeBytes = null,
             checksumSha256 = null,
-            isPublished = publishImmediately,
+            isPublished = false,
+            createdByUid = validActorUid,
             fileReferencePath = fileRef.path,
-            updatedByUid = actorUid,
+            updatedByUid = validActorUid,
             isArchived = false
         )
     }
@@ -622,6 +640,7 @@ class FirestoreAdminCatalogDataSource(
         versionNotes: String?,
         actorUid: String
     ) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
         val versionRef = fileRef.collection(Subcollections.VERSIONS).document(versionId)
@@ -629,7 +648,7 @@ class FirestoreAdminCatalogDataSource(
         val updatePayload = FirestoreAdminCatalogMapper.buildStudyFileVersionMetadataUpdatePayload(
             versionLabel = versionLabel,
             versionNotes = versionNotes,
-            actorUid = actorUid,
+            actorUid = validActorUid,
             timestampValue = timestamp
         )
 
@@ -666,7 +685,7 @@ class FirestoreAdminCatalogDataSource(
                     fileRef,
                     mapOf(
                         Fields.ACTIVE_VERSION_LABEL to versionLabel,
-                        Fields.UPDATED_BY_UID to actorUid,
+                        Fields.UPDATED_BY_UID to validActorUid,
                         Fields.UPDATED_AT to timestamp
                     )
                 )
@@ -680,6 +699,7 @@ class FirestoreAdminCatalogDataSource(
         versionId: String,
         actorUid: String
     ) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val fileRef = firestore.collection(Collections.STUDY_FILES).document(fileId)
         val versionsCollection = fileRef.collection(Subcollections.VERSIONS)
@@ -697,6 +717,13 @@ class FirestoreAdminCatalogDataSource(
                 throw AdminException(
                     reason = AdminFailureReason.NOT_FOUND,
                     message = "Study file '$fileId' does not exist."
+                )
+            }
+            if (fileSnap.getBoolean(Fields.IS_ARCHIVED) == true) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+                    message = "Cannot publish a version while parent file '$fileId' is archived."
                 )
             }
 
@@ -722,7 +749,7 @@ class FirestoreAdminCatalogDataSource(
             }
 
             val mappedTarget = FirestoreAdminCatalogMapper.mapStudyFileVersionForAdmin(
-                documentId = targetSnap.id,
+                id = targetSnap.id,
                 data = targetSnap.data ?: emptyMap(),
                 expectedFileId = fileId
             ) ?: throw AdminException(
@@ -730,6 +757,29 @@ class FirestoreAdminCatalogDataSource(
                 validationError = AdminValidationError.EMPTY_PARENT_REFERENCE,
                 message = "Version '$versionId' has invalid parent link or metadata."
             )
+
+            if (mappedTarget.isArchived) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.VERSION_ARCHIVED_CANNOT_PUBLISH,
+                    message = "Cannot publish archived version '$versionId'."
+                )
+            }
+
+            val hasPdfProof = FirestoreAdminCatalogMapper.hasReliableUploadedPdfProof(
+                fileId = fileId,
+                versionId = mappedTarget.id,
+                r2ObjectKey = mappedTarget.r2ObjectKey,
+                fileSizeBytes = mappedTarget.fileSizeBytes,
+                checksumSha256 = mappedTarget.checksumSha256
+            )
+            if (!hasPdfProof) {
+                throw AdminException(
+                    reason = AdminFailureReason.VALIDATION_ERROR,
+                    validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                    message = "Cannot publish version '${mappedTarget.id}' without a verified Cloudflare R2 PDF binary."
+                )
+            }
 
             // All writes after reads: enforce at most ONE active published version without
             // deleting any historical version documents or overwriting their R2 object keys.
@@ -740,7 +790,7 @@ class FirestoreAdminCatalogDataSource(
                         snap.reference,
                         mapOf(
                             Fields.IS_PUBLISHED to false,
-                            Fields.UPDATED_BY_UID to actorUid,
+                            Fields.UPDATED_BY_UID to validActorUid,
                             Fields.UPDATED_AT to timestamp
                         )
                     )
@@ -752,17 +802,17 @@ class FirestoreAdminCatalogDataSource(
                 mapOf(
                     Fields.IS_PUBLISHED to true,
                     Fields.PUBLISHED_AT to timestamp,
-                    Fields.UPDATED_BY_UID to actorUid,
+                    Fields.UPDATED_BY_UID to validActorUid,
                     Fields.UPDATED_AT to timestamp
                 )
             )
 
             val pointerPayload = FirestoreAdminCatalogMapper.buildActiveVersionPointerPayload(
-                versionId = mappedTarget.versionId,
+                versionId = mappedTarget.id,
                 versionNumber = mappedTarget.versionNumber,
                 versionLabel = mappedTarget.versionLabel,
                 publishedAtValue = timestamp,
-                actorUid = actorUid,
+                actorUid = validActorUid,
                 timestampValue = timestamp
             )
             transaction.update(fileRef, pointerPayload)
@@ -875,6 +925,7 @@ class FirestoreAdminCatalogDataSource(
         secondNewOrder: Int,
         actorUid: String
     ) {
+        val validActorUid = requireNonBlankActorUid(actorUid)
         val firestore = requireConfiguredFirestore()
         val collection = firestore.collection(collectionName)
         val timestamp = FieldValue.serverTimestamp()
@@ -883,7 +934,7 @@ class FirestoreAdminCatalogDataSource(
             collection.document(firstId),
             FirestoreAdminCatalogMapper.buildOrderUpdatePayload(
                 order = firstNewOrder,
-                actorUid = actorUid,
+                actorUid = validActorUid,
                 timestampValue = timestamp
             )
         )
@@ -891,11 +942,22 @@ class FirestoreAdminCatalogDataSource(
             collection.document(secondId),
             FirestoreAdminCatalogMapper.buildOrderUpdatePayload(
                 order = secondNewOrder,
-                actorUid = actorUid,
+                actorUid = validActorUid,
                 timestampValue = timestamp
             )
         )
         batch.commit().awaitResult()
+    }
+
+    private fun requireNonBlankActorUid(actorUid: String): String {
+        val cleanUid = actorUid.trim()
+        if (cleanUid.isEmpty()) {
+            throw AdminException(
+                reason = AdminFailureReason.UNAUTHENTICATED,
+                message = "Authenticated admin UID is required."
+            )
+        }
+        return cleanUid
     }
 
     private fun requireConfiguredFirestore(): FirebaseFirestore {

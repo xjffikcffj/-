@@ -100,4 +100,95 @@ class AdminCatalogValidatorTest {
             assertEquals(AdminValidationError.INVALID_DOCUMENT_ID, ex.validationError)
         }
     }
+
+    @Test
+    fun `validateStudyFileVersionCreate trims fields enforces 64 char label limit and positive versionNumber`() {
+        val valid64 = "v".repeat(64)
+        val valid = AdminCatalogValidator.validateStudyFileVersionCreate(
+            fileId = " file-1 ",
+            versionNumber = 2,
+            versionLabel = " $valid64 ",
+            versionNotes = "   ",
+            customVersionId = " ver_2 "
+        )
+        assertEquals("file-1", valid.fileId)
+        assertEquals("ver_2", valid.customVersionId)
+        assertEquals(2, valid.versionNumber)
+        assertEquals(valid64, valid.versionLabel)
+        assertNull(valid.versionNotes)
+
+        try {
+            AdminCatalogValidator.validateStudyFileVersionCreate(
+                fileId = "file-1",
+                versionNumber = 0,
+                versionLabel = "1.0",
+                versionNotes = null
+            )
+            fail("Expected invalid version number")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.INVALID_VERSION_NUMBER, ex.validationError)
+        }
+
+        try {
+            AdminCatalogValidator.validateStudyFileVersionCreate(
+                fileId = "file-1",
+                versionNumber = 1,
+                versionLabel = "   ",
+                versionNotes = null
+            )
+            fail("Expected empty version label")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.EMPTY_VERSION_LABEL, ex.validationError)
+        }
+
+        try {
+            AdminCatalogValidator.validateStudyFileVersionCreate(
+                fileId = "file-1",
+                versionNumber = 1,
+                versionLabel = "x".repeat(65),
+                versionNotes = null
+            )
+            fail("Expected version label too long")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.VERSION_LABEL_TOO_LONG, ex.validationError)
+        }
+
+        try {
+            AdminCatalogValidator.validateStudyFileVersionCreate(
+                fileId = "file-1",
+                versionNumber = 1,
+                versionLabel = "1.0",
+                versionNotes = "n".repeat(501)
+            )
+            fail("Expected version notes too long")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.VERSION_NOTES_TOO_LONG, ex.validationError)
+        }
+    }
+
+    @Test
+    fun `validateStudyFileVersionUpdate validates fileId versionId and metadata limits`() {
+        val updated = AdminCatalogValidator.validateStudyFileVersionUpdate(
+            fileId = " file-1 ",
+            versionId = " ver-1 ",
+            versionLabel = " 2026 المنقحة ",
+            versionNotes = " تصحيح الأخطاء المطبعية "
+        )
+        assertEquals("file-1", updated.fileId)
+        assertEquals("ver-1", updated.versionId)
+        assertEquals("2026 المنقحة", updated.versionLabel)
+        assertEquals("تصحيح الأخطاء المطبعية", updated.versionNotes)
+
+        try {
+            AdminCatalogValidator.validateStudyFileVersionUpdate(
+                fileId = "file-1",
+                versionId = "   ",
+                versionLabel = "2.0",
+                versionNotes = null
+            )
+            fail("Expected invalid version document id")
+        } catch (ex: AdminException) {
+            assertEquals(AdminValidationError.INVALID_DOCUMENT_ID, ex.validationError)
+        }
+    }
 }

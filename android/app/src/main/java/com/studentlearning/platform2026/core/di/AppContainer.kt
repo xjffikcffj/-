@@ -182,7 +182,8 @@ class AppContainer(context: Context) {
         AdminCatalogRepositoryImpl(
             authRepository = authRepository,
             remoteDataSource = adminCatalogRemoteDataSource,
-            dispatcherProvider = dispatcherProvider
+            dispatcherProvider = dispatcherProvider,
+            pdfVersionStorageBroker = pdfVersionStorageBroker
         )
     }
 }

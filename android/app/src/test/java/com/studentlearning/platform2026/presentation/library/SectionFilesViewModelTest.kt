@@ -19,6 +19,7 @@ import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
 import com.studentlearning.platform2026.domain.model.DownloadTaskState
 import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
+import com.studentlearning.platform2026.domain.model.NewVersionBadgePolicy
 import com.studentlearning.platform2026.domain.model.OfflineDownloadRequest
 import com.studentlearning.platform2026.domain.model.PdfSourceDescriptor
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
@@ -31,7 +32,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -439,4 +442,217 @@ class SectionFilesViewModelTest {
             assertEquals(DownloadStatus.COMPLETED, finalUi.activeVersionDownload?.status)
             assertTrue(finalUi.hasActiveVersionLocalCopy)
         }
+
+    @Test
+    fun `new version badge stays visible across failed downloads hides on local active download and auto-expires after 30 days`() =
+        runTest {
+            val baseTime = 1_700_000_000_000L
+            val file = StudyFileMetadata(
+                id = "file-badge",
+                sectionId = "sec-1",
+                title = "الكيمياء العضوية",
+                order = 1,
+                isPublished = true,
+                isArchived = false,
+                activeVersionId = "v2",
+                activeVersionNumber = 2,
+                activeVersionLabel = "2.0",
+                activeVersionPublishedAtEpochMillis = baseTime
+            )
+            val authRepo = FakeAuthRepository(
+                initialSession = AdminSession(
+                    isSignedIn = true,
+                    uid = "student-1",
+                    email = "student@example.com",
+                    role = AdminRole.NONE,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val downloadsRepo = FakeOfflineDownloadsRepository(authRepo).apply {
+                putSavedVersion(
+                    LocalDownloadedFileVersion(
+                        fileId = "file-badge",
+                        versionId = "v1",
+                        versionNumber = 1,
+                        versionLabel = "v1",
+                        fileTitle = "الكيمياء العضوية",
+                        sectionId = "sec-1",
+                        localFilePath = "/private/v1.pdf",
+                        fileSizeBytes = 1024L,
+                        checksumSha256 = "sha1",
+                        downloadedAtEpochMillis = baseTime - 10_000L
+                    )
+                )
+                setTaskState(
+                    DownloadTaskState(
+                        fileId = "file-badge",
+                        versionId = "v2",
+                        status = DownloadStatus.FAILED,
+                        failureReason = DownloadFailureReason.NETWORK_UNAVAILABLE
+                    )
+                )
+            }
+            val catalogRepo = FakeCatalogRepository(studyFilesResult = { AppResult.Success(listOf(file)) })
+
+            val viewModel = SectionFilesViewModel(
+                sectionId = "sec-1",
+                catalogRepository = catalogRepo,
+                authRepository = authRepo,
+                offlineDownloadsRepository = downloadsRepo,
+                clockEpochMillis = { baseTime + testScheduler.currentTime }
+            )
+            runCurrent()
+
+            val initialState = viewModel.uiState.value as SectionFilesUiState.Content
+            assertTrue("file-badge" in initialState.newVersionBadgeFileIds)
+
+            // Advance just before the 30-day window expires: badge must remain visible.
+            advanceTimeBy(NewVersionBadgePolicy.ONE_MONTH_WINDOW_MILLIS - 1_000L)
+            runCurrent()
+            assertTrue(
+                "file-badge" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds
+            )
+
+            // Cross the 30-day boundary while screen remains open: badge auto-expires without reload.
+            advanceTimeBy(1_000L)
+            advanceUntilIdle()
+            assertFalse(
+                "file-badge" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds
+            )
+        }
+
+    @Test
+    fun `hides new version badge immediately when active version is saved locally on device`() =
+        runTest {
+            val baseTime = 1_700_000_000_000L
+            val file = StudyFileMetadata(
+                id = "file-local-hide",
+                sectionId = "sec-1",
+                title = "الفيزياء",
+                order = 1,
+                isPublished = true,
+                isArchived = false,
+                activeVersionId = "v2",
+                activeVersionNumber = 2,
+                activeVersionLabel = "2.0",
+                activeVersionPublishedAtEpochMillis = baseTime
+            )
+            val authRepo = FakeAuthRepository(initialSession = AdminSession())
+            val downloadsRepo = FakeOfflineDownloadsRepository(authRepo)
+            val catalogRepo = FakeCatalogRepository(studyFilesResult = { AppResult.Success(listOf(file)) })
+
+            val viewModel = SectionFilesViewModel(
+                sectionId = "sec-1",
+                catalogRepository = catalogRepo,
+                authRepository = authRepo,
+                offlineDownloadsRepository = downloadsRepo,
+                clockEpochMillis = { baseTime + 60_000L }
+            )
+            runCurrent()
+            assertTrue(
+                "file-local-hide" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds
+            )
+
+            downloadsRepo.putSavedVersion(
+                LocalDownloadedFileVersion(
+                    fileId = "file-local-hide",
+                    versionId = "v2",
+                    versionNumber = 2,
+                    versionLabel = "2.0",
+                    fileTitle = "الفيزياء",
+                    sectionId = "sec-1",
+                    localFilePath = "/private/v2.pdf",
+                    fileSizeBytes = 4096L,
+                    checksumSha256 = "sha2",
+                    downloadedAtEpochMillis = baseTime + 120_000L
+                )
+            )
+            runCurrent()
+            assertFalse(
+                "file-local-hide" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds
+            )
+        }
+
+    @Test
+    fun `onForegroundResumed re-evaluates badge after background sleep past 30-day window`() = runTest {
+        val baseTime = 1_700_000_000_000L
+        var wallClock = baseTime
+        var monoClock = 10_000L
+        val file = StudyFileMetadata(
+            id = "file-resume",
+            sectionId = "sec-1",
+            title = "الأحياء",
+            order = 1,
+            isPublished = true,
+            isArchived = false,
+            activeVersionId = "v2",
+            activeVersionNumber = 2,
+            activeVersionLabel = "2.0",
+            activeVersionPublishedAtEpochMillis = baseTime
+        )
+        val catalogRepo = FakeCatalogRepository(studyFilesResult = { AppResult.Success(listOf(file)) })
+
+        val viewModel = SectionFilesViewModel(
+            sectionId = "sec-1",
+            catalogRepository = catalogRepo,
+            clockEpochMillis = { wallClock },
+            monotonicElapsedMillis = { monoClock }
+        )
+        runCurrent()
+        assertTrue("file-resume" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+
+        // Simulate device sleeping in background for 30 days (uptime/delay paused, elapsedRealtime + wallClock moved).
+        wallClock += NewVersionBadgePolicy.ONE_MONTH_WINDOW_MILLIS
+        monoClock += NewVersionBadgePolicy.ONE_MONTH_WINDOW_MILLIS
+        viewModel.onForegroundResumed()
+        runCurrent()
+
+        assertFalse("file-resume" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+    }
+
+    @Test
+    fun `forward jump and backward skew on device clock do not prematurely hide new version badge`() = runTest {
+        val publishedAt = 1_700_000_000_000L
+        val fiveMinutesMillis = 5L * 60L * 1000L
+        var wallClock = publishedAt - 2L * 60L * 60L * 1000L // Initially 2 hours behind server publish timestamp
+        var monoClock = 1_000L
+        val file = StudyFileMetadata(
+            id = "file-skew",
+            sectionId = "sec-1",
+            title = "الرياضيات",
+            order = 1,
+            isPublished = true,
+            isArchived = false,
+            activeVersionId = "v2",
+            activeVersionNumber = 2,
+            activeVersionLabel = "2.0",
+            activeVersionPublishedAtEpochMillis = publishedAt
+        )
+        val catalogRepo = FakeCatalogRepository(studyFilesResult = { AppResult.Success(listOf(file)) })
+
+        val viewModel = SectionFilesViewModel(
+            sectionId = "sec-1",
+            catalogRepository = catalogRepo,
+            clockEpochMillis = { wallClock },
+            monotonicElapsedMillis = { monoClock }
+        )
+        runCurrent()
+        // Slow initial device clock must still show badge.
+        assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+
+        // User jumps device clock forward +45 days while only 5 minutes elapsed -> must NOT hide badge.
+        wallClock = publishedAt + 45L * 24L * 60L * 60L * 1000L
+        monoClock += fiveMinutesMillis
+        viewModel.onForegroundResumed()
+        runCurrent()
+        assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+
+        // User pulls device clock backward -6 hours while another 5 minutes elapsed -> must NOT hide badge.
+        wallClock = publishedAt - 6L * 60L * 60L * 1000L
+        monoClock += fiveMinutesMillis
+        viewModel.onForegroundResumed()
+        runCurrent()
+        assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+    }
 }

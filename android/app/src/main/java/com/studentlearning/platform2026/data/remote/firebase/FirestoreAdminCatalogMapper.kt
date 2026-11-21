@@ -14,8 +14,11 @@ import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import java.io.IOException
+import java.net.URLEncoder
 
 object FirestoreAdminCatalogMapper {
+
+    private val SHA256_HEX_REGEX = Regex("^[a-fA-F0-9]{64}$")
 
     fun mapBranchForAdmin(id: String, data: Map<String, Any?>): StudyBranch? {
         if (id.isBlank()) return null
@@ -237,6 +240,84 @@ object FirestoreAdminCatalogMapper {
                     .thenByDescending { it.publishedAtEpochMillis ?: 0L }
                     .thenByDescending { it.createdAtEpochMillis ?: 0L }
             )
+    }
+
+    fun hasReliableUploadedPdfProof(
+        fileId: String,
+        versionId: String,
+        r2ObjectKey: String?,
+        fileSizeBytes: Long?,
+        checksumSha256: String? = null
+    ): Boolean {
+        val cleanFileId = fileId.trim()
+        val cleanVersionId = versionId.trim()
+        if (cleanFileId.isEmpty() || cleanVersionId.isEmpty()) return false
+
+        val cleanKey = r2ObjectKey?.trim().orEmpty()
+        if (cleanKey.isEmpty()) return false
+        if (cleanKey.contains("://") ||
+            cleanKey.contains("..") ||
+            cleanKey.contains("?") ||
+            cleanKey.contains("#") ||
+            cleanKey.contains("fake", ignoreCase = true) ||
+            cleanKey.contains("placeholder", ignoreCase = true)
+        ) {
+            return false
+        }
+
+        val encodedFileId = encodeR2PathSegment(cleanFileId)
+        val encodedVersionId = encodeR2PathSegment(cleanVersionId)
+        val encodedPrefix = "study-files/$encodedFileId/versions/$encodedVersionId/"
+        val rawPrefix = "study-files/$cleanFileId/versions/$cleanVersionId/"
+        val matchingPrefix = when {
+            cleanKey.startsWith(encodedPrefix) -> encodedPrefix
+            cleanKey.startsWith(rawPrefix) -> rawPrefix
+            else -> return false
+        }
+        val fileName = cleanKey.removePrefix(matchingPrefix)
+        if (fileName.isBlank() || fileName.contains("/") || !fileName.endsWith(".pdf")) {
+            return false
+        }
+
+        if (fileSizeBytes == null || fileSizeBytes <= 0L) return false
+
+        val cleanChecksum = checksumSha256?.trim()
+        if (!cleanChecksum.isNullOrEmpty() && !SHA256_HEX_REGEX.matches(cleanChecksum)) {
+            return false
+        }
+        return true
+    }
+
+    fun extractRegisteredVersionNumbers(data: Map<String, Any?>): Set<Int> {
+        val rawList = data[Fields.REGISTERED_VERSION_NUMBERS] as? List<*> ?: return emptySet()
+        return rawList.mapNotNull { item ->
+            (item as? Number)?.toInt()?.takeIf { it >= 1 }
+        }.toSet()
+    }
+
+    fun validateStudyFilePublishTransition(
+        fileId: String,
+        exists: Boolean,
+        isArchived: Boolean,
+        targetPublished: Boolean
+    ) {
+        if (!exists) {
+            throw AdminException(
+                reason = AdminFailureReason.NOT_FOUND,
+                message = "Study file '$fileId' does not exist."
+            )
+        }
+        if (targetPublished && isArchived) {
+            throw AdminException(
+                reason = AdminFailureReason.VALIDATION_ERROR,
+                validationError = AdminValidationError.FILE_ARCHIVED_CANNOT_PUBLISH_VERSION,
+                message = "Cannot publish archived study file '$fileId'; unarchive it first."
+            )
+        }
+    }
+
+    private fun encodeR2PathSegment(value: String): String {
+        return URLEncoder.encode(value.trim(), Charsets.UTF_8.name()).replace("+", "%20")
     }
 
     fun buildBranchCreatePayload(

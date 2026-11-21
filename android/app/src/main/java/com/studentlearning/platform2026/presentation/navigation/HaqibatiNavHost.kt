@@ -94,6 +94,18 @@ fun HaqibatiNavHost(
                     ) {
                         launchSingleTop = true
                     }
+                },
+                onNavigateToPdfReaderWithLabel = { fileId, fileTitle, activeVersionId, versionLabel ->
+                    navController.navigate(
+                        AppDestination.PdfReader.createRoute(
+                            fileId = fileId,
+                            fileTitle = fileTitle,
+                            activeVersionId = activeVersionId,
+                            versionLabel = versionLabel
+                        )
+                    ) {
+                        launchSingleTop = true
+                    }
                 }
             )
         }
@@ -185,6 +197,11 @@ fun HaqibatiNavHost(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument(AppDestination.PdfReader.ARG_VERSION_LABEL) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
@@ -197,6 +214,9 @@ fun HaqibatiNavHost(
             val activeVersionId = backStackEntry.arguments
                 ?.getString(AppDestination.PdfReader.ARG_VERSION_ID)
                 ?.takeIf { it.isNotBlank() }
+            val versionLabel = backStackEntry.arguments
+                ?.getString(AppDestination.PdfReader.ARG_VERSION_LABEL)
+                ?.takeIf { it.isNotBlank() }
 
             val pdfReaderViewModel: PdfReaderViewModel = viewModel(
                 factory = PdfReaderViewModel.provideFactory(
@@ -204,7 +224,8 @@ fun HaqibatiNavHost(
                     readingProgressRepository = appContainer.readingProgressRepository,
                     fileId = fileId,
                     fileTitle = fileTitle,
-                    activeVersionId = activeVersionId
+                    activeVersionId = activeVersionId,
+                    versionLabel = versionLabel
                 )
             )
             PdfReaderScreen(
