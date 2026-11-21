@@ -399,8 +399,8 @@ class AdminCatalogRepositoryImpl(
         val slotResult = pdfVersionStorageBroker.requestVersionUploadSlot(
             fileId = validFileId,
             versionId = validVersionId,
-            expectedFileSizeBytes = binarySource.sizeBytes,
-            expectedChecksumSha256 = normalizedSha256
+            fileSizeBytes = binarySource.sizeBytes,
+            checksumSha256 = normalizedSha256
         )
         val slot = (slotResult as? AppResult.Success)?.data
             ?: throw unwrapBrokerError(

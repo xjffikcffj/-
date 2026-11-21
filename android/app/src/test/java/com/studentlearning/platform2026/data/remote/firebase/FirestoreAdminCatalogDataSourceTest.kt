@@ -230,6 +230,18 @@ class FirestoreAdminCatalogDataSourceTest {
                 ((client.docs[filePath]?.get(Fields.REGISTERED_VERSION_NUMBERS) as? List<*>) ?: emptyList<Any>())
                     .contains(1)
             )
+
+            // Duplicate versionNumber & publishAsActive = true must reject with 0 additional writes.
+            val dupNumEx = assertAdminThrows {
+                dataSource.createStudyFileVersion("file-v", 1, "1.1", null, false, "admin-1", "v2")
+            }
+            assertEquals(AdminValidationError.INVALID_VERSION_NUMBER, dupNumEx.validationError)
+            val activeEx = assertAdminThrows {
+                dataSource.createStudyFileVersion("file-v", 2, "2.0", null, true, "admin-1", "v2")
+            }
+            assertEquals(AdminValidationError.VERSION_PDF_BINARY_MISSING, activeEx.validationError)
+            assertEquals(1, client.setCalls.size)
+            assertEquals(1, client.updateCalls.size)
         }
 
     @Test
@@ -326,6 +338,21 @@ class FirestoreAdminCatalogDataSourceTest {
                     ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
                 }
                 assertEquals(AdminFailureReason.NOT_FOUND, ex.reason)
+                assertEquals(0, client.updateCalls.size)
+            }
+
+            // 4b. Target version linked to another parent file -> EMPTY_PARENT_REFERENCE, 0 writes.
+            run {
+                val otherFilePath = "${Collections.STUDY_FILES}/other-file"
+                val client = FakeAdminCatalogFirestoreClient().apply {
+                    putDoc(filePath, mapOf(Fields.IS_PUBLISHED to false, Fields.IS_ARCHIVED to false))
+                    putDoc("$versionsPath/v1", verifiedVersionData(otherFilePath, isArchived = false, checksum = sha1))
+                }
+                val ds = FirestoreAdminCatalogDataSource(FirestoreProvider(), client)
+                val ex = assertAdminThrows {
+                    ds.publishStudyFileVersion(fileId, "v1", "admin-1", proofV1)
+                }
+                assertEquals(AdminValidationError.EMPTY_PARENT_REFERENCE, ex.validationError)
                 assertEquals(0, client.updateCalls.size)
             }
 

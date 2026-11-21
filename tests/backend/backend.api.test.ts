@@ -124,17 +124,45 @@ class MockR2StorageAdapter implements R2StoragePort {
         ? configuredChunkSize
         : 8;
     const adapter = this;
-    async function* chunkedStream(): AsyncIterable<Uint8Array> {
-      try {
-        for (let i = 0; i < streamBytes.length; i += chunkSize) {
-          yield streamBytes.subarray(i, i + chunkSize);
-        }
-      } finally {
+    let index = 0;
+    let closed = false;
+    const markClosed = () => {
+      if (!closed) {
+        closed = true;
         adapter.lastStreamClosedKey = key;
       }
-    }
+    };
+    const mockStream: AsyncIterable<Uint8Array> & {
+      destroy: () => void;
+      return: () => Promise<IteratorResult<Uint8Array>>;
+    } = {
+      destroy() {
+        markClosed();
+      },
+      async return() {
+        markClosed();
+        return { value: undefined as unknown as Uint8Array, done: true };
+      },
+      [Symbol.asyncIterator]() {
+        return {
+          async next(): Promise<IteratorResult<Uint8Array>> {
+            if (closed || index >= streamBytes.length) {
+              markClosed();
+              return { value: undefined as unknown as Uint8Array, done: true };
+            }
+            const chunk = streamBytes.subarray(index, index + chunkSize);
+            index += chunkSize;
+            return { value: chunk, done: false };
+          },
+          async return() {
+            markClosed();
+            return { value: undefined as unknown as Uint8Array, done: true };
+          },
+        };
+      },
+    };
     return {
-      stream: chunkedStream(),
+      stream: mockStream,
       etag: obj.etag,
       contentLength:
         this.forceNullStreamLengthForKey === key ? null : obj.bytes.length,
@@ -323,7 +351,7 @@ describe('Haqibati Backend API (Stage 8 - D2)', () => {
     mockR2.lastStreamClosedKey = undefined;
     mockR2.resetCallCounts();
     verifier.calls.length = 0;
-    currentNowMs = 1_750_000_000_000;
+    currentNowMs += 10_000_000;
     uuidSeq = 1;
 
     verifier.registerValid('token-owner', {

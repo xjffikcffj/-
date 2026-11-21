@@ -88,6 +88,9 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.work.runtime.ktx)
+    // Expose Guava 32.1.3-android (already in runtime classpath via Firebase) on compile classpath
+    // because listenablefuture:9999.0-empty-to-avoid-conflict-with-guava hides ListenableFuture otherwise.
+    implementation(libs.guava)
 
     implementation(libs.kotlinx.coroutines.android)
 

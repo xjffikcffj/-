@@ -88,7 +88,19 @@ internal class BackendCatalogDataSource(
         return root.objectListOrEmpty("items").mapNotNull { item ->
             val id = item.stringOrNull("id") ?: return@mapNotNull null
             val title = item.stringOrNull("title") ?: return@mapNotNull null
-            val archiveStatus = when (item.stringOrNull("archiveStatus")?.trim()?.uppercase()) {
+            if (item.containsKey("isArchived") && item["isArchived"] != false) {
+                return@mapNotNull null
+            }
+            if (item.containsKey("isPublished") && item["isPublished"] != true) {
+                return@mapNotNull null
+            }
+            val itemSectionId = if (item.containsKey("sectionId")) {
+                item.stringOrNull("sectionId")?.takeIf { it == cleanSectionId }
+                    ?: return@mapNotNull null
+            } else {
+                cleanSectionId
+            }
+            val archiveStatus = when (item.stringOrNull("archiveStatus")) {
                 "UNARCHIVED" -> ArchiveStatus.UNARCHIVED
                 else -> return@mapNotNull null
             }
@@ -97,7 +109,6 @@ internal class BackendCatalogDataSource(
                 ?: return@mapNotNull null
             val fileSizeBytes = item.longOrNull("fileSizeBytes")?.takeIf { it > 0L }
             val checksumSha256 = item.stringOrNull("checksumSha256")?.lowercase()
-            val itemSectionId = item.stringOrNull("sectionId") ?: cleanSectionId
             StudyFileMetadata(
                 id = id,
                 sectionId = itemSectionId,

@@ -16,7 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.LockOutline
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -144,7 +144,7 @@ fun DownloadsScreenContent(
                     Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Rounded.LockOutline,
+                                imageVector = Icons.Rounded.Lock,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )

@@ -1,8 +1,7 @@
 # نقطة التوقف — المرحلة الثامنة: تدقيق Backend D2 وربط Android (`STAGE_8_CHECKPOINT.md`)
 
-**حالة المرحلة:** لم تُغلق المرحلة الثامنة نهائياً بعد، كما لم تُعتمد حزمة **Fix Pack 2G** نهائياً بعد؛ تم تنفيذ تدقيق وإصلاح **Backend D2** وربط **Android Native** واستكمال **Fix Pack 2F-R** ثم **Fix Pack 2G (Archive Safety Hardening & ViewModel Bypass Closure)** على الكود المصدري وقواعد الأمان والاختبارات، مع بقاء الاعتماد والإغلاق النهائي مرهونَين بتشغيل اختبارات محاكي Firebase وGradle فعلياً في بيئة تحتوي على JDK وAndroid SDK.  
-- تم التحقق فعلياً من فحص TypeScript الساكن (`npm run lint` / `npx tsc --noEmit`) وبناء الويب (`npm run build`) واختبارات الوحدة غير المعتمدة على المحاكي (`seedCatalog` و`fixesVerification` و`pdfReaderDom`) وتطابق ملفَي `values/strings.xml` و`values-ar/strings.xml` والفحص الساكن لمصادر Kotlin.
-- اختبارات Android Gradle (`testDebugUnitTest` / `assembleDebug` / `lintDebug` / `connectedDebugAndroidTest`) واختبارات محاكي Firebase (`npm run test:backend` / `npm run test:rules`) لم تُنفّذ فعلياً في هذه البيئة لعدم توفر JDK أو Android SDK أو محاكي Firebase المحلي (يُثبت ذلك صراحة دون أي ادعاء بتشغيلها أو إغلاق المرحلة الثامنة أو اعتماد Fix Pack 2G قبل إتمامها).
+**حالة المرحلة:** لم تُغلق المرحلة الثامنة نهائياً بعد، ولم تبدأ المرحلة التاسعة. تم تنفيذ **دفعة الإصلاح المحدودة للأعطال الستة** لإزالة عوائق بناء Android واختبارات Backend، ونجحت اختبارات `npm run lint` (`0`) و`npm run build` (`0`) و`npm run test:rules` (`17/17`, `0`) و`npm run test:backend` (`16/16`, `0`) وبناء `:app:compileDebugKotlin` وإنتاج ملف Debug APK فعلي (`android/app/build/outputs/apk/debug/app-debug.apk`, `32,883,248` بايت، `0`). بقيت مهام `:app:testDebugUnitTest` (`exit 1`) و`:app:lintDebug` (`exit 1`) معلقة بسبب أخطاء مسبقة ومستقلة عن الإصلاحات الستة في ملفات اختبارات الوحدة الـ 7 (`:app:compileDebugUnitTestKotlin`) و3 أخطاء Lint مسبقة في `AndroidManifest.xml` و`PdfReaderScreen.kt`، إضافةً إلى تعذر `connectedDebugAndroidTest` لغياب `/dev/kvm` والأجهزة المتصلة.
+- تم التوقف عند حدود دفعة الأعطال الستة دون فتح سلسلة إصلاحات متسلسلة للأعطال المستقلة المذكورة حتى تتم مراجعتها واعتماد خطوتها التالية.
 
 ---
 
@@ -46,17 +45,51 @@
    - **F-2G-6 (إغلاق مسارات التجاوز المباشر في `AdminPortalViewModel`):** تشديد `saveStudyFileVersion` و`uploadAndVerifyVersionPdf` و`requestPublishStudyFileVersion` و`requestToggleStudyFilePublished` و`requestToggleStudyFileArchived` ضد الاستدعاءات المباشرة والمحملة بحالة غير متطابقة أو `UNSPECIFIED`/`ARCHIVED` أو سياق ناقص، مع استثناء صريح لإلغاء نشر ملف منشور بالفعل وتعديلات البيانات الوصفية غير الحساسة.
    - **F-2G-7 & F-2G-8 (الاختبارات المضافة والمحدثة):** إنشاء `FirestoreAdminCatalogDataSourceTest.kt` لاختبار المعاملات مباشرًة دون كتابة عند الرفض، وفصل الحالتين 6 و7 في `AdminPortalRtlTest.kt` مع عدادات استدعاءات حقيقية و`performClick()`، وتوسيع `AdminPortalViewModelTest.kt` و`AdminCatalogRepositoryImplTest.kt` و`BackendHttpIntegrationTest.kt` و`FirestoreAdminCatalogMapperTest.kt` و`FirestoreCatalogMapperTest.kt`.
 
+5. **مراجعة التحقق وسد الفجوات لـ Fix Pack 2H (غير معتمدة بعد حتى تشغيل اختبارات المحاكي وGradle):**
+   - **ما ثُبت وجوده مسبقاً في المستودع دون إعادة كتابة:**
+     - `AdminPortalViewModel.kt` + `AdminPortalViewModelTest.kt`: إزالة fallback إلى الكائن الممرر في `requestPublishStudyFileVersion` / `requestToggleStudyFilePublished` / `requestToggleStudyFileArchived`، والتحقق من تطابق `fileId` و`id` للإصدار، ومنع `UNSPECIFIED` في النشر/الأرشفة/الاستعادة، وإبقاء إلغاء نشر ملف منشور متاحاً، وإعادة التحقق داخل التنفيذ دون الاعتماد على حالة قديمة.
+     - `FirestoreAdminCatalogDataSource.kt`: تمرير المعاملات عبر `AdminCatalogFirestoreClient` و`FirebaseAdminCatalogFirestoreClient` في الإنتاج، والقراءة والتحقق داخل المعاملة قبل أي كتابة، والتحقق من أرشفة الملف والإصدار، ومطابقة إثبات PDF، وتسلسل أرقام الإصدارات، وعزل تعديل البيانات الوصفية، وحفظ `CancellationException`.
+     - `firestore.rules` و`firestore.indexes.json` و`tests/firestore.rules.test.ts` وميزات الطالب المحلية (`NewVersionBadgePolicy`، تعدد إصدارات التنزيل المحلي ونزاهتها، حفظ تقدم القراءة محلياً عبر تبديل الحساب والأرشفة، وتفضيلات اللغة والوضع الليلي المحلية).
+   - **الفجوات الفعلية المغلقة في هذه الجولة فقط (3 ملفات كود/اختبار + هذه الوثيقة):**
+     - `FirestoreAdminCatalogDataSourceTest.kt`: إضافة اختبار رفض نشر إصدار مرجعه `Fields.FILE_ID` تابع لملف آخر (`other-file` -> `AdminValidationError.EMPTY_PARENT_REFERENCE` مع 0 عمليات كتابة)، وإضافة تأكيدات `createStudyFileVersion` لرفض تكرار رقم الإصدار (`INVALID_VERSION_NUMBER`) ورفض `publishAsActive = true` (`VERSION_PDF_BINARY_MISSING`) مع 0 كتابات إضافية.
+     - `BackendCatalogDataSource.kt`: تشديد `fetchPublishedStudyFiles` في وضع Fail-Closed لرفض العناصر المتناقضة أو غير الصالحة (`isArchived` موجود ولا يساوي `false`، أو `isPublished` موجود ولا يساوي `true`، أو `sectionId` لا يطابق القسم المطلوب، أو `archiveStatus` لا يطابق `"UNARCHIVED"` حرفياً).
+     - `BackendHttpIntegrationTest.kt`: توسيع اختبار التصفية العامة ليشمل العناصر المتناقضة (`isArchived: true`، `isArchived: "false"`، `isPublished: false`، و`sectionId: "sec-other"`).
+
 ---
 
 ## 2. حالة التشغيل الفعلي والتوثيق الصادق
 
-- **ما شُغّل ونجح فعلاً في بيئة الحاوية:**
-  - `npx tsc --noEmit` (`npm run lint`) و`npm run build`.
-  - اختبارات الوحدة التي لا تعتمد على محاكي Firebase: `src/data/seedCatalog.test.ts` و`src/domain/fixesVerification.test.ts` و`src/screens/pdfReaderDom.test.tsx`.
-  - فحص تطابق موارد `android/app/src/main/res/values/strings.xml` و`values-ar/strings.xml` وفحص المراجع الساكن لملفات Kotlin.
-- **ما تعذّر تشغيله لغياب الأدوات في الحاوية (ولذلك لا تُعد المرحلة الثامنة مكتملة بعد):**
-  - `npm run test:backend` و`npm run test:rules` (يتطلبان Java JDK لتشغيل `firebase emulators:exec`).
-  - `./gradlew testDebugUnitTest` و`lintDebug` و`assembleDebug` و`connectedDebugAndroidTest` (يتطلبان JDK + Android SDK 35 + Emulator؛ كما لا يملك `./gradlew` إذن التنفيذ مع غياب `java` في الحاوية).
+- **الأدوات المتوفرة مسبقاً والتي جُهزت محلياً في بيئة الحاوية:**
+  - متوفر مسبقاً: `Node.js v22.23.2`، `npm 10.9.8`، `firebase-cli 15.34.1`، وغلاف `android/gradlew` (Gradle 8.11.1).
+  - جُهز محلياً (مجاني دون حسابات/أسرار): **Eclipse Temurin JDK 21.0.13.1+2** (`/opt/java/jdk-21`)، و**Android SDK CLI 12.0** مع `platforms;android-35` و`build-tools;35.0.0` و`build-tools;34.0.0` و`platform-tools 37.0.3` (`adb 1.0.41`) في `/opt/android-sdk`، ومحاكي Firestore المحلي (`cloud-firestore-emulator-v1.22.0.jar`).
+
+- **الأعطال الستة التي عولجت في الدفعة المحدودة والملفات المعدّلة (6 ملفات):**
+  1. `android/gradle/libs.versions.toml` و`android/app/build.gradle.kts`: إضافة `implementation(libs.guava)` (`com.google.guava:guava:32.1.3-android` المطابق لما يجلبه Firebase في runtime) إلى مسار التصنيف لأن `listenablefuture:9999.0-empty-to-avoid-conflict-with-guava` كان يخفي `ListenableFuture` عن `DownloadTaskScheduler.kt` دون تغيير جدولة WorkManager.
+  2. `android/app/src/main/java/com/studentlearning/platform2026/data/repository/AdminCatalogRepositoryImpl.kt` (الأسطر `402-403`): مطابقة المعاملَين المُسمّيَين في استدعاء `requestVersionUploadSlot` مع عقد `PdfVersionStorageBroker` (`fileSizeBytes` و`checksumSha256`) مع بقاء التحقق من الحجم وSHA-256 والإثبات دون تغيير.
+  3. `android/app/src/main/java/com/studentlearning/platform2026/presentation/downloads/DownloadsScreen.kt` (الأسطر `19, 147`): استبدال الأيقونة غير الموجودة `Icons.Rounded.LockOutline` بـ `Icons.Rounded.Lock` المتوفرة في حزمة Material Icons Extended.
+  4. `android/app/src/main/java/com/studentlearning/platform2026/presentation/library/SectionFilesViewModel.kt` (السطر `15`): إضافة استيراد `com.studentlearning.platform2026.domain.model.StudyFileOfflineState`.
+  5. `tests/backend/backend.api.test.ts` — Test 12 (الأسطر `127-169`): تعديل تدفق `MockR2StorageAdapter` ليطبّق `destroy()` و`return()` و`[Symbol.asyncIterator]()` مع دالة `markClosed()` متسقة عند الإغلاق المبكر من `DeliveryService` قبل أول `.next()` دون إضعاف التحقق من `contentLength == null`.
+  6. `tests/backend/backend.api.test.ts` — Test 16 (السطر `325`): تقديم `currentNowMs += 10_000_000` بين الاختبارات في `beforeEach` لعزل نوافذ `InMemoryRateLimiter` لكل اختبار دون تغيير حدود الإنتاج في `server/middleware/rateLimit.ts`.
+
+- **نتائج الأوامر السبعة الفعلية بعد الإصلاح:**
+  1. `npm run lint` (`tsc --noEmit`): **نجح — رمز خروج `0`**.
+  2. `npm run build` (`vite build --mode production`): **نجح — رمز خروج `0`** (`dist/index.html 1.22 kB`، `dist/assets/index-DJmymc7v.css 30.78 kB`، `dist/assets/index-C7rASqja.js 350.65 kB`).
+  3. `npm run test:rules`: **نجح — `17 / 17` اختباراً ضمن 9 مجموعات، رمز خروج `0`**.
+  4. `npm run test:backend`: **نجح — `16 / 16` اختباراً (`Test 1` إلى `Test 16`), رمز خروج `0`**.
+  5. `./android/gradlew testDebugUnitTest --no-daemon` (بـ `sh ./android/gradlew -p android ...`): نجح `:app:compileDebugKotlin` بالكامل، ثم **فشل (`EXIT_CODE=1`) في `:app:compileDebugUnitTestKotlin`** بسبب أخطاء مسبقة ومستقلة عن الإصلاحات الستة في 7 ملفات اختبار وحدة:
+     - `PdfSourceAndFetcherTest.kt:50` و`BackendHttpIntegrationTest.kt` (66 خطأ: استخدام SAM lambda على `AuthTokenProvider` غير `fun interface` + `HttpServer`/`HttpExchange` غير متوفرة على `android.jar` bootclasspath).
+     - `FirestoreAdminCatalogDataSourceTest.kt` (16 خطأ: استخدام SAM lambda على `FirestoreProvider` غير `fun interface`).
+     - `FirestoreAdminCatalogMapperTest.kt:817` (غياب استيراد `StudyFileMetadata`).
+     - `AdminCatalogRepositoryImplTest.kt` (7 أخطاء: عدم تطابق توقيع مزيف `PdfVersionStorageBroker`).
+     - `OfflineDownloadsRepositoryImplTest.kt` (55 خطأ: `AuthorizedRemoteUrl` ناقصة `cacheKey`، و`HttpServer`، وتوقيع قديم لـ `DownloadStreamFetcher`).
+     - `SectionFilesViewModelTest.kt` (4 أخطاء: `NETWORK_OR_UNAVAILABLE` و`AuthorizedRemoteUrl` ناقصة `headers`).
+  6. `./android/gradlew lintDebug --no-daemon`: **فشل (`EXIT_CODE=1`) — `3 errors, 74 warnings`** (مشاكل مسبقة ومستقلة في `AndroidManifest.xml:7` [`RemoveWorkManagerInitializer`] و`PdfReaderScreen.kt:903,915` [`ProduceStateDoesNotAssignValue`]؛ محفوظة في `android/app/build/reports/lint-results-debug.txt`).
+  7. `./android/gradlew assembleDebug --no-daemon`: **نجح — `BUILD SUCCESSFUL`، رمز خروج `0`**، وأُنتج ملف Debug APK الفعلي:
+     - المسار: `android/app/build/outputs/apk/debug/app-debug.apk`
+     - الحجم: **`32,883,248` بايت** (`32M`).
+- **ما تعذّر تشغيله وبقي معلقاً:**
+  - `connectedDebugAndroidTest`: متعذر في الحاوية لغياب `/dev/kvm` والأجهزة المتصلة عبر `adb` (فضلاً عن بقاء `testDebugUnitTest` و`lintDebug` بانتظار قرار إصلاح الأخطاء المستقلة).
+  - الربط والاختبار الحي مع Firebase Production وCloudflare R2 وCloud Run Backend (`android/app/google-services.json` و`.env` وتعيين `HAQIBATI_BACKEND_BASE_URL` وتوقيع Release).
 
 ---
 

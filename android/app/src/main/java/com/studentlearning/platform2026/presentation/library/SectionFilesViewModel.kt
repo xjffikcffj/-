@@ -12,6 +12,7 @@ import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
 import com.studentlearning.platform2026.domain.model.NewVersionBadgePolicy
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
+import com.studentlearning.platform2026.domain.model.StudyFileOfflineState
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
 import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
