@@ -7,10 +7,13 @@ import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.repository.LocalFileOrganizationRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,7 +52,8 @@ class LocalFileOrganizationDataSourceTest {
             archiveStatus = ArchiveStatus.UNARCHIVED
         )
 
-        val scope1 = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val job1 = SupervisorJob()
+        val scope1 = CoroutineScope(job1 + StandardTestDispatcher(testScheduler))
         val dataStore1 = PreferenceDataStoreFactory.create(scope = scope1, produceFile = { storeFile })
         val ds1 = LocalFileOrganizationDataSource(dataStore1) { 1_700_000_000_000L }
 
@@ -59,10 +63,12 @@ class LocalFileOrganizationDataSourceTest {
 
         ds1.removeFavorite("file-1")
         assertEquals(setOf("file-2"), ds1.observeFavoriteIds().first())
-        scope1.cancel()
+        job1.cancelAndJoin()
+        advanceUntilIdle()
 
         // Re-open DataStore from disk (simulating app restart & device-only persistence)
-        val scope2 = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val job2 = SupervisorJob()
+        val scope2 = CoroutineScope(job2 + StandardTestDispatcher(testScheduler))
         val dataStore2 = PreferenceDataStoreFactory.create(scope = scope2, produceFile = { storeFile })
         val ds2 = LocalFileOrganizationDataSource(dataStore2)
 
@@ -75,7 +81,8 @@ class LocalFileOrganizationDataSourceTest {
         val rawPrefsText = dataStore2.data.first().asMap().entries.joinToString("\n")
         assertFalse(rawPrefsText.contains("uid"))
         assertFalse(rawPrefsText.contains("email"))
-        scope2.cancel()
+        job2.cancelAndJoin()
+        advanceUntilIdle()
     }
 
     @Test
@@ -88,14 +95,17 @@ class LocalFileOrganizationDataSourceTest {
             StudyFileMetadata(id = "downloaded-3", sectionId = "sec-math", title = "C", order = 3, isPublished = true)
         )
 
-        val scope1 = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val job1 = SupervisorJob()
+        val scope1 = CoroutineScope(job1 + StandardTestDispatcher(testScheduler))
         val ds1 = LocalFileOrganizationDataSource(
             PreferenceDataStoreFactory.create(scope = scope1, produceFile = { storeFile })
         )
         ds1.saveCustomOrder(scopeKey, listOf("online-2", "downloaded-3", "downloaded-1"))
-        scope1.cancel()
+        job1.cancelAndJoin()
+        advanceUntilIdle()
 
-        val scope2 = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val job2 = SupervisorJob()
+        val scope2 = CoroutineScope(job2 + StandardTestDispatcher(testScheduler))
         val ds2 = LocalFileOrganizationDataSource(
             PreferenceDataStoreFactory.create(scope = scope2, produceFile = { storeFile })
         )
@@ -113,6 +123,7 @@ class LocalFileOrganizationDataSourceTest {
 
         ds2.clearCustomOrder(scopeKey)
         assertTrue(ds2.observeCustomOrder(scopeKey).first().isEmpty())
-        scope2.cancel()
+        job2.cancelAndJoin()
+        advanceUntilIdle()
     }
 }

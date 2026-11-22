@@ -518,4 +518,7 @@
     <string name="admin_audit_actor_format">المنفّذ: %1$s (%2$s)</string>
     <string name="admin_audit_target_format">الهدف: %1$s / %2$s</string>
     <string name="admin_audit_source_format">المصدر: %1$s</string>
+    <string name="admin_audit_owner_only_notice">عرض سجل التدقيق محصور بدور المالك (Owner) فقط.</string>
+    <string name="admin_error_staff_role_partial_token_revoke_failed">تم تعديل صلاحيات المشرف فعلياً في الحساب، لكن تعذّر إبطال رموز التحديث النشطة؛ يُنصح بمراجعة حالة المشرف أو إعادة المحاولة.</string>
+    <string name="admin_error_staff_role_audit_log_failed">تم تعديل صلاحيات المشرف وإبطال رموز التحديث، لكن تعذّر توثيق العملية في سجل التدقيق؛ يُرجى مراجعة السجل.</string>
 </resources>

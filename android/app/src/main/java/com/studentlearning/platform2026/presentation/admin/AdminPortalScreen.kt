@@ -759,7 +759,8 @@ private fun AdminDashboardContent(
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     val tabs = AdminManagementSection.entries.filter { tab ->
-        tab != AdminManagementSection.STAFF || uiState.session.canPerformOwnerOnlyActions
+        (tab != AdminManagementSection.STAFF && tab != AdminManagementSection.AUDIT_LOGS) ||
+            uiState.session.canPerformOwnerOnlyActions
     }
     val canMutate = uiState.session.canPerformAdminActions && !uiState.isSubmitting
     val canPerformOwnerOnly = uiState.session.canPerformOwnerOnlyActions && !uiState.isSubmitting
@@ -913,6 +914,14 @@ private fun AdminDashboardContent(
                                     onDrillDown = { onOpenBranchSubjects(branch) }
                                 )
                             }
+                        }
+                    }
+                    if (!uiState.session.canPerformOwnerOnlyActions && uiState.session.canPerformAdminActions) {
+                        item(key = "admin_broadcast_important_update_card") {
+                            AdminBroadcastUpdateCard(
+                                isSubmitting = !canMutate || uiState.isBroadcastingUpdate,
+                                onSendBroadcast = onBroadcastImportantUpdate
+                            )
                         }
                     }
                 }
@@ -1096,41 +1105,47 @@ private fun AdminDashboardContent(
                             onSendBroadcast = onBroadcastImportantUpdate
                         )
                     }
-                    item(key = "audit_logs_header") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = stringResource(R.string.admin_audit_logs_section_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = onRetryAuditLogs,
-                                enabled = !uiState.isLoadingAuditLogs
+                    if (!uiState.session.canPerformOwnerOnlyActions) {
+                        item {
+                            AdminEmptyCard(message = stringResource(R.string.admin_audit_owner_only_notice))
+                        }
+                    } else {
+                        item(key = "audit_logs_header") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = stringResource(R.string.action_retry)
+                                Text(
+                                    text = stringResource(R.string.admin_audit_logs_section_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                IconButton(
+                                    onClick = onRetryAuditLogs,
+                                    enabled = !uiState.isLoadingAuditLogs
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = stringResource(R.string.action_retry)
+                                    )
+                                }
                             }
                         }
-                    }
-                    when {
-                        uiState.isLoadingAuditLogs -> item { AdminLoadingBox() }
-                        uiState.auditLogsError != null -> item {
-                            AdminErrorCard(reason = uiState.auditLogsError, onRetry = onRetryAuditLogs)
-                        }
-                        uiState.auditLogs.isEmpty() -> item {
-                            AdminEmptyCard(message = stringResource(R.string.admin_audit_logs_empty))
-                        }
-                        else -> {
-                            itemsIndexed(uiState.auditLogs, key = { _, entry -> entry.id }) { _, entry ->
-                                AdminAuditLogCard(entry = entry)
+                        when {
+                            uiState.isLoadingAuditLogs -> item { AdminLoadingBox() }
+                            uiState.auditLogsError != null -> item {
+                                AdminErrorCard(reason = uiState.auditLogsError, onRetry = onRetryAuditLogs)
+                            }
+                            uiState.auditLogs.isEmpty() -> item {
+                                AdminEmptyCard(message = stringResource(R.string.admin_audit_logs_empty))
+                            }
+                            else -> {
+                                itemsIndexed(uiState.auditLogs, key = { _, entry -> entry.id }) { _, entry ->
+                                    AdminAuditLogCard(entry = entry)
+                                }
                             }
                         }
                     }

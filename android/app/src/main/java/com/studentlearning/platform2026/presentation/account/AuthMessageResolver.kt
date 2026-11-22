@@ -65,6 +65,10 @@ fun resolveAuthErrorText(
         AdminFailureReason.TOO_MANY_REQUESTS -> R.string.auth_error_too_many_requests
         AdminFailureReason.NETWORK_UNAVAILABLE -> R.string.admin_error_network
         AdminFailureReason.NOT_FOUND -> R.string.admin_error_not_found
+        AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED ->
+            R.string.admin_error_staff_role_partial_token_revoke_failed
+        AdminFailureReason.STAFF_ROLE_AUDIT_LOG_FAILED ->
+            R.string.admin_error_staff_role_audit_log_failed
         AdminFailureReason.VALIDATION_ERROR,
         AdminFailureReason.UNKNOWN -> R.string.admin_error_unknown
     }

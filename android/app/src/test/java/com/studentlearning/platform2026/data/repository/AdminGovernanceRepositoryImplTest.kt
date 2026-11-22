@@ -50,10 +50,16 @@ class AdminGovernanceRepositoryImplTest {
     private var lastRoleRequestBody: String = ""
 
     @Volatile
+    private var auditLogsCallCount = 0
+
+    @Volatile
     private var returnInsufficientRoleOnStaff = false
 
     @Volatile
     private var returnUserNotFoundOnRole = false
+
+    @Volatile
+    private var nextRoleFailurePayload: Pair<Int, String>? = null
 
     @Volatile
     private var broadcastSentFlag = false
@@ -67,6 +73,15 @@ class AdminGovernanceRepositoryImplTest {
             staffRoleCallCount++
             lastRoleRequestBody = ex.requestBody.readBytes().toString(Charsets.UTF_8)
             when {
+                nextRoleFailurePayload != null -> {
+                    val (status, code) = nextRoleFailurePayload!!
+                    nextRoleFailurePayload = null
+                    val body = """{"error":{"code":"$code","message":"Role failure: $code"}}"""
+                        .toByteArray(Charsets.UTF_8)
+                    ex.responseHeaders.set("Content-Type", "application/json")
+                    ex.sendResponseHeaders(status, body.size.toLong())
+                    ex.responseBody.use { it.write(body) }
+                }
                 returnInsufficientRoleOnStaff -> {
                     val body = """{"error":{"code":"INSUFFICIENT_ROLE","message":"Owner only"}}"""
                         .toByteArray(Charsets.UTF_8)
@@ -115,6 +130,7 @@ class AdminGovernanceRepositoryImplTest {
         }
 
         server.createContext("/api/admin/audit-logs") { ex ->
+            auditLogsCallCount++
             val body = """
                 {
                   "items": [
@@ -225,10 +241,30 @@ class AdminGovernanceRepositoryImplTest {
             AdminFailureReason.ACCOUNT_NOT_FOUND,
             ((missingUserRes as AppResult.Error).cause as AdminException).reason
         )
+        returnUserNotFoundOnRole = false
+
+        nextRoleFailurePayload = 502 to "STAFF_ROLE_CLAIMS_UPDATED_TOKEN_REVOKE_FAILED"
+        val partialRevokeRes = repo.setStaffAdminRoleByEmail("admin2@example.com", assignAdmin = true)
+        assertEquals(
+            AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED,
+            ((partialRevokeRes as AppResult.Error).cause as AdminException).reason
+        )
+
+        nextRoleFailurePayload = 500 to "STAFF_ROLE_UPDATED_AUDIT_LOG_FAILED"
+        val auditFailRes = repo.setStaffAdminRoleByEmail("admin2@example.com", assignAdmin = false)
+        assertEquals(
+            AdminFailureReason.STAFF_ROLE_AUDIT_LOG_FAILED,
+            ((auditFailRes as AppResult.Error).cause as AdminException).reason
+        )
+
+        val ownerLogsRes = repo.getAuditLogs(limit = 20)
+        assertTrue(ownerLogsRes is AppResult.Success)
+        assertEquals("log-1", (ownerLogsRes as AppResult.Success).data.single().id)
+        assertEquals(1, auditLogsCallCount)
     }
 
     @Test
-    fun `non-owner admin is denied staff endpoints locally before HTTP while allowed audit logs and broadcast`() = runTest {
+    fun `non-owner admin is denied staff and audit endpoints locally before HTTP while allowed broadcast`() = runTest {
         val repo = buildRepo(
             AdminSession(
                 isSignedIn = true,
@@ -250,12 +286,14 @@ class AdminGovernanceRepositoryImplTest {
             AdminFailureReason.INSUFFICIENT_ROLE,
             ((grantRes as AppResult.Error).cause as AdminException).reason
         )
+        val logsRes = repo.getAuditLogs(limit = 20)
+        assertEquals(
+            AdminFailureReason.INSUFFICIENT_ROLE,
+            ((logsRes as AppResult.Error).cause as AdminException).reason
+        )
         assertEquals(0, staffListCallCount)
         assertEquals(0, staffRoleCallCount)
-
-        val logsRes = repo.getAuditLogs(limit = 20)
-        assertTrue(logsRes is AppResult.Success)
-        assertEquals("log-1", (logsRes as AppResult.Success).data.single().id)
+        assertEquals(0, auditLogsCallCount)
 
         broadcastSentFlag = false
         val broadcastRes = repo.broadcastImportantUpdate("تنبيه مهم", "تفاصيل التحديث")

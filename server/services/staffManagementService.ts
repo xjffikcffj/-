@@ -31,16 +31,32 @@ function isAuthUserNotFound(err: unknown): boolean {
   return false;
 }
 
+function extractErrorCode(err: unknown): string {
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === 'string' && code.trim().length > 0) {
+      return code.trim();
+    }
+  }
+  if (err instanceof Error && err.name.trim().length > 0) {
+    return err.name.trim();
+  }
+  return 'UNKNOWN_ERROR';
+}
+
 export class StaffManagementService {
   private readonly staffAuthManager?: StaffAuthManager;
   private readonly auditLogService?: AuditLogService;
+  private readonly warn: (message: string) => void;
 
   constructor(options: {
     staffAuthManager?: StaffAuthManager;
     auditLogService?: AuditLogService;
+    warn?: (message: string) => void;
   }) {
     this.staffAuthManager = options.staffAuthManager;
     this.auditLogService = options.auditLogService;
+    this.warn = options.warn ?? ((message: string) => console.warn(message));
   }
 
   private requireManager(): StaffAuthManager {
@@ -182,6 +198,14 @@ export class StaffManagementService {
       );
     }
 
+    if (!this.auditLogService) {
+      throw new ApiError(
+        503,
+        'AUDIT_SERVICE_UNAVAILABLE',
+        'Audit log service is not configured on this server instance.',
+      );
+    }
+
     const nextClaims: Record<string, unknown> = {
       ...(targetUser.customClaims ?? {}),
     };
@@ -193,27 +217,84 @@ export class StaffManagementService {
 
     const claimsPayload = Object.keys(nextClaims).length > 0 ? nextClaims : null;
     await manager.setCustomUserClaims(targetUser.uid, claimsPayload);
-    await manager.revokeRefreshTokens(targetUser.uid);
+
+    const targetRoleDto: 'admin' | 'student' = rawRole === 'admin' ? 'admin' : 'student';
+    let tokensRevoked = false;
+    let revokeFailureReason: string | null = null;
+    try {
+      await manager.revokeRefreshTokens(targetUser.uid);
+      tokensRevoked = true;
+    } catch (err) {
+      revokeFailureReason = extractErrorCode(err);
+    }
 
     const targetLabel = targetUser.email ?? targetUser.uid;
-    await this.auditLogService?.recordBestEffort({
-      action: rawRole === 'admin' ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED',
-      actorUid: params.actorUid,
-      actorRole: params.actorRole,
-      targetCollection: 'users',
-      targetId: targetUser.uid,
-      summary:
-        rawRole === 'admin'
-          ? `Granted admin role to ${targetLabel}`
-          : `Revoked admin role from ${targetLabel}`,
-      source: 'backend',
-    });
+    const baseSummary =
+      rawRole === 'admin'
+        ? `Granted admin role to ${targetLabel}`
+        : `Revoked admin role from ${targetLabel}`;
+    const auditSummary = tokensRevoked
+      ? baseSummary
+      : `${baseSummary} (partial state: custom claims updated, refresh token revocation failed)`;
+
+    let auditRecorded = false;
+    let auditFailureReason: string | null = null;
+    try {
+      await this.auditLogService.recordAuditEvent({
+        action: rawRole === 'admin' ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED',
+        actorUid: params.actorUid,
+        actorRole: params.actorRole,
+        targetCollection: 'users',
+        targetId: targetUser.uid,
+        summary: auditSummary,
+        source: 'backend',
+      });
+      auditRecorded = true;
+    } catch (err) {
+      auditFailureReason = extractErrorCode(err);
+    }
+
+    if (!tokensRevoked) {
+      this.warn(
+        `[staff-management] Partial role update for uid=${targetUser.uid} role=${targetRoleDto}: custom claims updated, revokeRefreshTokens failed (${revokeFailureReason ?? 'UNKNOWN_ERROR'}), auditRecorded=${auditRecorded}${auditFailureReason ? ` (${auditFailureReason})` : ''}`,
+      );
+      throw new ApiError(
+        502,
+        'STAFF_ROLE_CLAIMS_UPDATED_TOKEN_REVOKE_FAILED',
+        'Staff custom claims were updated, but revoking active refresh tokens failed. Claims were not rolled back.',
+        {
+          claimsUpdated: true,
+          tokensRevoked: false,
+          auditRecorded,
+          uid: targetUser.uid,
+          role: targetRoleDto,
+        },
+      );
+    }
+
+    if (!auditRecorded) {
+      this.warn(
+        `[staff-management] Staff role updated and refresh tokens revoked for uid=${targetUser.uid} role=${targetRoleDto}, but mandatory audit log write failed (${auditFailureReason ?? 'UNKNOWN_ERROR'})`,
+      );
+      throw new ApiError(
+        500,
+        'STAFF_ROLE_UPDATED_AUDIT_LOG_FAILED',
+        'Staff custom claims were updated and refresh tokens were revoked, but recording the audit log failed.',
+        {
+          claimsUpdated: true,
+          tokensRevoked: true,
+          auditRecorded: false,
+          uid: targetUser.uid,
+          role: targetRoleDto,
+        },
+      );
+    }
 
     return {
       status: 'UPDATED',
       uid: targetUser.uid,
       email: targetUser.email ?? null,
-      role: rawRole === 'admin' ? 'admin' : 'student',
+      role: targetRoleDto,
       tokensRevoked: true,
     };
   }

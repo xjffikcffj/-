@@ -1181,10 +1181,20 @@ class FakeNotificationLogRepository(
         itemsFlow.map { list -> list.count { !it.isRead } }
 
     override suspend fun recordIncomingNotification(item: LocalNotificationItem) {
+        recordIncomingNotificationIfNew(item)
+    }
+
+    override suspend fun recordIncomingNotificationIfNew(item: LocalNotificationItem): Boolean {
+        var inserted = false
         itemsFlow.update { current ->
-            val updated = listOf(item) + current.filterNot { it.id == item.id }
-            updated.sortedByDescending { it.receivedAtEpochMillis }
+            if (current.any { it.id == item.id }) {
+                current
+            } else {
+                inserted = true
+                (listOf(item) + current).sortedByDescending { it.receivedAtEpochMillis }
+            }
         }
+        return inserted
     }
 
     override suspend fun markAsRead(notificationId: String) {
@@ -1213,6 +1223,7 @@ class FakeAdminGovernanceRepository(
     val staff = mutableListOf<StaffMember>()
     val logs = mutableListOf<AuditLogEntry>()
     var broadcastResultSent: Boolean = false
+    var nextRoleUpdateFailureReason: AdminFailureReason? = null
     var roleUpdateCalls = 0
         private set
     var broadcastCalls = 0
@@ -1289,6 +1300,13 @@ class FakeAdminGovernanceRepository(
                 )
             )
         }
+        nextRoleUpdateFailureReason?.let { reason ->
+            nextRoleUpdateFailureReason = null
+            return AppResult.Error(
+                "Simulated role update failure: $reason",
+                AdminException(reason)
+            )
+        }
         logs.add(
             0,
             AuditLogEntry(
@@ -1307,10 +1325,16 @@ class FakeAdminGovernanceRepository(
     }
 
     override suspend fun getAuditLogs(limit: Int): AppResult<List<AuditLogEntry>> {
-        try {
+        val session = try {
             authRepository.requireAuthorizedAdminSession()
         } catch (ex: AdminException) {
             return AppResult.Error(ex.message ?: "Unauthorized", ex)
+        }
+        if (!session.canPerformOwnerOnlyActions) {
+            return AppResult.Error(
+                "Owner only",
+                AdminException(AdminFailureReason.INSUFFICIENT_ROLE)
+            )
         }
         return AppResult.Success(logs.take(limit))
     }

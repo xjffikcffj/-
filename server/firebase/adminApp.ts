@@ -8,7 +8,7 @@ import {
 } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getMessaging, type TopicMessage } from 'firebase-admin/messaging';
 import type { ServerConfig } from '../config/env.js';
 
 export interface DecodedIdTokenLike {
@@ -58,9 +58,17 @@ export interface StaffAuthManager {
 
 export interface PushNotificationMessage {
   topic: string;
-  title: string;
-  body: string;
   data: Record<string, string>;
+}
+
+export function buildTopicFcmMessage(message: PushNotificationMessage): TopicMessage {
+  return {
+    topic: message.topic,
+    data: { ...message.data },
+    android: {
+      priority: 'high',
+    },
+  };
 }
 
 export interface PushNotificationDispatcher {
@@ -180,17 +188,7 @@ export function createFirebaseAdminServices(config: ServerConfig): {
 
   const pushNotificationDispatcher: PushNotificationDispatcher = {
     async sendToTopic(message: PushNotificationMessage): Promise<string> {
-      return messaging.send({
-        topic: message.topic,
-        notification: {
-          title: message.title,
-          body: message.body,
-        },
-        data: message.data,
-        android: {
-          priority: 'high',
-        },
-      });
+      return messaging.send(buildTopicFcmMessage(message));
     },
   };
 

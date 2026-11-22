@@ -24,6 +24,11 @@ class NotificationLogRepositoryImpl(
         }
     }
 
+    override suspend fun recordIncomingNotificationIfNew(item: LocalNotificationItem): Boolean =
+        withContext(dispatcherProvider.io) {
+            localDataSource.saveNotificationIfAbsent(item)
+        }
+
     override suspend fun markAsRead(notificationId: String) {
         withContext(dispatcherProvider.io) {
             localDataSource.markAsRead(notificationId)

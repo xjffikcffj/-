@@ -7,6 +7,10 @@ interface NotificationLogRepository {
     fun observeNotifications(): Flow<List<LocalNotificationItem>>
     fun observeUnreadCount(): Flow<Int>
     suspend fun recordIncomingNotification(item: LocalNotificationItem)
+    suspend fun recordIncomingNotificationIfNew(item: LocalNotificationItem): Boolean {
+        recordIncomingNotification(item)
+        return true
+    }
     suspend fun markAsRead(notificationId: String)
     suspend fun markAllAsRead()
     suspend fun deleteNotification(notificationId: String)

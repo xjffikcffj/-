@@ -252,8 +252,8 @@ export function createAdminRouter(params: {
     },
   );
 
-  // ===== Audit Logs (Admin / Owner) =====
-  router.get('/audit-logs', ...auditReadLimit, async (req, res, next) => {
+  // ===== Audit Logs (Owner-only) =====
+  router.get('/audit-logs', ownerGuard, ...auditReadLimit, async (req, res, next) => {
     try {
       if (!params.auditLogService) {
         throw new ApiError(

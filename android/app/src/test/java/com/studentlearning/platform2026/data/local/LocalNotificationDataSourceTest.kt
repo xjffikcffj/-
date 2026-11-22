@@ -6,9 +6,10 @@ import com.studentlearning.platform2026.domain.model.StudyNotificationType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -59,24 +60,30 @@ class LocalNotificationDataSourceTest {
                 isRead = false
             )
 
-            val scope1 = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val job1 = SupervisorJob()
+            val scope1 = CoroutineScope(job1 + StandardTestDispatcher(testScheduler))
             val ds1 = LocalNotificationDataSource(
                 PreferenceDataStoreFactory.create(scope = scope1, produceFile = { storeFile })
             )
-            ds1.recordIncomingNotification(item1)
-            ds1.recordIncomingNotification(item2)
-            ds1.recordIncomingNotification(item3)
+            assertTrue(ds1.saveNotificationIfAbsent(item1))
+            assertTrue(ds1.saveNotificationIfAbsent(item2))
+            assertTrue(ds1.saveNotificationIfAbsent(item3))
             ds1.markAsRead("n2")
+            // Duplicate notificationId must be ignored without resetting isRead
+            assertFalse(ds1.saveNotificationIfAbsent(item2.copy(title = "عنوان مكرر", isRead = false)))
             assertEquals(2, ds1.observeUnreadCount().first())
-            scope1.cancel()
+            job1.cancelAndJoin()
+            advanceUntilIdle()
 
             // Re-open on simulated restart
-            val scope2 = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val job2 = SupervisorJob()
+            val scope2 = CoroutineScope(job2 + StandardTestDispatcher(testScheduler))
             val ds2 = LocalNotificationDataSource(
                 PreferenceDataStoreFactory.create(scope = scope2, produceFile = { storeFile })
             )
             val loaded = ds2.observeNotifications().first()
             assertEquals(listOf("n3", "n2", "n1"), loaded.map { it.id })
+            assertEquals("إصدار جديد", loaded.first { it.id == "n2" }.title)
             assertTrue(loaded.first { it.id == "n2" }.isRead)
             assertFalse(loaded.first { it.id == "n1" }.isRead)
 
@@ -88,6 +95,7 @@ class LocalNotificationDataSourceTest {
 
             ds2.clearAll()
             assertTrue(ds2.observeNotifications().first().isEmpty())
-            scope2.cancel()
+            job2.cancelAndJoin()
+            advanceUntilIdle()
         }
 }

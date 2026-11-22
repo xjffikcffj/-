@@ -53,12 +53,21 @@ class LocalNotificationDataSource(
     }
 
     suspend fun saveNotification(item: LocalNotificationItem) {
+        saveNotificationIfAbsent(item)
+    }
+
+    suspend fun saveNotificationIfAbsent(item: LocalNotificationItem): Boolean {
         val cleanId = item.id.trim()
-        if (cleanId.isEmpty()) return
+        if (cleanId.isEmpty()) return false
         val entryKey = encodeHex(cleanId)
 
+        var inserted = false
         dataStore.edit { prefs ->
             val currentKeys = prefs[KEY_NOTIFICATION_ENTRY_SET].orEmpty()
+            if (entryKey in currentKeys) {
+                inserted = false
+                return@edit
+            }
             prefs[KEY_NOTIFICATION_ENTRY_SET] = currentKeys + entryKey
             prefs[idKey(entryKey)] = cleanId
             prefs[typeKey(entryKey)] = item.type.name
@@ -86,7 +95,9 @@ class LocalNotificationDataSource(
             prefs[isReadKey(entryKey)] = item.isRead
 
             trimOverflowEntries(prefs)
+            inserted = true
         }
+        return inserted
     }
 
     suspend fun markAsRead(notificationId: String) {

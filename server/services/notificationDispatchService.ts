@@ -127,8 +127,6 @@ export class NotificationDispatchService {
     try {
       await this.dispatcher.sendToTopic({
         topic: HAQIBATI_UPDATES_TOPIC,
-        title: params.title,
-        body: params.body,
         data: {
           notificationId,
           type: params.type,

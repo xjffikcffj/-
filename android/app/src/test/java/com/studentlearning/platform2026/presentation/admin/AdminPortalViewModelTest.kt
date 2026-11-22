@@ -1569,10 +1569,20 @@ class AdminPortalViewModelTest {
             assertEquals(AdminSuccessMessage.STAFF_ADMIN_REVOKED, viewModel.uiState.value.feedback?.successMessage)
             assertFalse(viewModel.uiState.value.staffMembers.any { it.uid == "admin-1" })
             assertTrue(viewModel.uiState.value.auditLogs.any { it.action == "ADMIN_ROLE_REVOKED" })
+
+            // Partial token revocation error surfaces explicit failure and refreshes staff list
+            governanceRepo.nextRoleUpdateFailureReason = AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED
+            viewModel.grantAdminRoleByEmail("partial@example.com")
+            advanceUntilIdle()
+            assertEquals(
+                AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED,
+                viewModel.uiState.value.feedback?.failureReason
+            )
+            assertTrue(viewModel.uiState.value.feedback?.isError == true)
         }
 
     @Test
-    fun `non-owner admin is blocked from staff management while able to view audit logs and broadcast updates`() =
+    fun `non-owner admin is blocked from staff management and audit logs while still able to broadcast updates`() =
         runTest {
             val authRepository = FakeAuthRepository(
                 AdminSession(
@@ -1595,7 +1605,7 @@ class AdminPortalViewModelTest {
                         targetCollection = "branches",
                         targetId = "scientific",
                         summary = "إنشاء الفرع العلمي",
-                        source = "client",
+                        source = "backend",
                         createdAtEpochMillis = 1_700_000_000_000L
                     )
                 )
@@ -1607,22 +1617,27 @@ class AdminPortalViewModelTest {
             )
             advanceUntilIdle()
 
-            // Non-owner cannot enter STAFF tab or execute staff mutations
+            // Non-owner cannot enter STAFF or AUDIT_LOGS tabs or load audit logs
             viewModel.selectTab(AdminManagementSection.STAFF)
             assertFalse(viewModel.uiState.value.activeTab == AdminManagementSection.STAFF)
             assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
+
+            viewModel.selectTab(AdminManagementSection.AUDIT_LOGS)
+            advanceUntilIdle()
+            assertFalse(viewModel.uiState.value.activeTab == AdminManagementSection.AUDIT_LOGS)
+            assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
+
+            viewModel.loadAuditLogs()
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.auditLogs.isEmpty())
+            assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.auditLogsError)
 
             viewModel.grantAdminRoleByEmail("other@example.com")
             advanceUntilIdle()
             assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
             assertEquals(0, governanceRepo.roleUpdateCalls)
 
-            // Non-owner CAN view audit logs and broadcast important updates
-            viewModel.selectTab(AdminManagementSection.AUDIT_LOGS)
-            advanceUntilIdle()
-            assertEquals(AdminManagementSection.AUDIT_LOGS, viewModel.uiState.value.activeTab)
-            assertEquals(listOf("log-1"), viewModel.uiState.value.auditLogs.map { it.id })
-
+            // Non-owner CAN broadcast important updates cleanly without triggering Owner-only audit load error
             governanceRepo.broadcastResultSent = false
             viewModel.broadcastImportantUpdate("تحديث عام", "تم إضافة ملخصات جديدة")
             advanceUntilIdle()
@@ -1630,7 +1645,8 @@ class AdminPortalViewModelTest {
                 AdminSuccessMessage.BROADCAST_RECORDED_PENDING_FCM,
                 viewModel.uiState.value.feedback?.successMessage
             )
-            assertTrue(viewModel.uiState.value.auditLogs.any { it.action == "IMPORTANT_UPDATE_BROADCAST" })
+            assertTrue(governanceRepo.logs.any { it.action == "IMPORTANT_UPDATE_BROADCAST" })
+            assertTrue(viewModel.uiState.value.auditLogs.isEmpty())
 
             governanceRepo.broadcastResultSent = true
             viewModel.broadcastImportantUpdate("تنبيه عاجل", "النسخة النهائية متوفرة الآن")

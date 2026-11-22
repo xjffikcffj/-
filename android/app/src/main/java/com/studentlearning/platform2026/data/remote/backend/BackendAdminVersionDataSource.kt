@@ -624,6 +624,16 @@ internal class BackendAdminVersionDataSource(
                 message = httpError.message,
                 cause = httpError
             )
+            code == "STAFF_ROLE_CLAIMS_UPDATED_TOKEN_REVOKE_FAILED" -> AdminException(
+                reason = AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED,
+                message = httpError.message,
+                cause = httpError
+            )
+            code == "STAFF_ROLE_UPDATED_AUDIT_LOG_FAILED" -> AdminException(
+                reason = AdminFailureReason.STAFF_ROLE_AUDIT_LOG_FAILED,
+                message = httpError.message,
+                cause = httpError
+            )
             httpError.statusCode == 502 ||
                 httpError.statusCode == 503 -> AdminException(
                 reason = AdminFailureReason.NETWORK_UNAVAILABLE,

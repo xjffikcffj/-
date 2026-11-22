@@ -6,30 +6,40 @@ import com.studentlearning.platform2026.HaqibatiApplication
 import com.studentlearning.platform2026.R
 import com.studentlearning.platform2026.domain.model.LocalNotificationItem
 import com.studentlearning.platform2026.domain.model.StudyNotificationType
+import com.studentlearning.platform2026.domain.repository.NotificationLogRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import java.util.UUID
 
-class HaqibatiFirebaseMessagingService : FirebaseMessagingService() {
+internal object IncomingFcmMessageHandler {
 
-    override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        val data = remoteMessage.data
-        val notification = remoteMessage.notification
-
+    suspend fun handleIncomingPayload(
+        data: Map<String, String>,
+        fallbackTitle: String?,
+        fallbackBody: String?,
+        defaultTitle: String,
+        defaultBody: String,
+        remoteMessageId: String?,
+        remoteSentTimeMillis: Long,
+        notificationLogRepository: NotificationLogRepository?,
+        nowMillisProvider: () -> Long = { System.currentTimeMillis() },
+        uuidProvider: () -> String = { UUID.randomUUID().toString() },
+        showSystemNotification: (LocalNotificationItem) -> Unit
+    ): LocalNotificationItem {
         val type = StudyNotificationType.fromWireValue(data["type"])
         val resolvedTitle = data["title"]?.trim()?.takeIf { it.isNotEmpty() }
-            ?: notification?.title?.trim()?.takeIf { it.isNotEmpty() }
-            ?: getString(R.string.notifications_default_title)
+            ?: fallbackTitle?.trim()?.takeIf { it.isNotEmpty() }
+            ?: defaultTitle
         val resolvedBody = data["body"]?.trim()?.takeIf { it.isNotEmpty() }
-            ?: notification?.body?.trim()?.takeIf { it.isNotEmpty() }
-            ?: getString(R.string.notifications_default_body)
+            ?: fallbackBody?.trim()?.takeIf { it.isNotEmpty() }
+            ?: defaultBody
 
         val notificationId = data["notificationId"]?.trim()?.takeIf { it.isNotEmpty() }
-            ?: remoteMessage.messageId?.trim()?.takeIf { it.isNotEmpty() }
-            ?: UUID.randomUUID().toString()
-        val receivedAt = data["sentAtEpochMillis"]?.toLongOrNull()
-            ?: remoteMessage.sentTime.takeIf { it > 0L }
-            ?: System.currentTimeMillis()
+            ?: remoteMessageId?.trim()?.takeIf { it.isNotEmpty() }
+            ?: uuidProvider()
+        val receivedAt = data["sentAtEpochMillis"]?.toLongOrNull()?.takeIf { it > 0L }
+            ?: remoteSentTimeMillis.takeIf { it > 0L }
+            ?: nowMillisProvider()
 
         val item = LocalNotificationItem(
             id = notificationId,
@@ -43,12 +53,13 @@ class HaqibatiFirebaseMessagingService : FirebaseMessagingService() {
             isRead = false
         )
 
-        val appContainer = (applicationContext as? HaqibatiApplication)?.appContainer
-        if (appContainer != null) {
+        // Always persist to the local log first, independent of POST_NOTIFICATIONS permission,
+        // and deduplicate by notificationId.
+        var shouldDisplaySystemNotification = true
+        if (notificationLogRepository != null) {
             try {
-                runBlocking {
-                    appContainer.notificationLogRepository.recordIncomingNotification(item)
-                }
+                shouldDisplaySystemNotification =
+                    notificationLogRepository.recordIncomingNotificationIfNew(item)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -56,7 +67,45 @@ class HaqibatiFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        NotificationChannelHelper.showSystemNotificationIfPermitted(applicationContext, item)
+        if (shouldDisplaySystemNotification) {
+            try {
+                showSystemNotification(item)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Never fail messaging service if notification display is blocked or throws.
+            }
+        }
+        return item
+    }
+}
+
+class HaqibatiFirebaseMessagingService : FirebaseMessagingService() {
+
+    override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        val notification = remoteMessage.notification
+        val appContainer = (applicationContext as? HaqibatiApplication)?.appContainer
+        val defaultTitle = getString(R.string.notifications_default_title)
+        val defaultBody = getString(R.string.notifications_default_body)
+
+        runBlocking {
+            IncomingFcmMessageHandler.handleIncomingPayload(
+                data = remoteMessage.data,
+                fallbackTitle = notification?.title,
+                fallbackBody = notification?.body,
+                defaultTitle = defaultTitle,
+                defaultBody = defaultBody,
+                remoteMessageId = remoteMessage.messageId,
+                remoteSentTimeMillis = remoteMessage.sentTime,
+                notificationLogRepository = appContainer?.notificationLogRepository,
+                showSystemNotification = { item ->
+                    NotificationChannelHelper.showSystemNotificationIfPermitted(
+                        applicationContext,
+                        item
+                    )
+                }
+            )
+        }
     }
 
     override fun onNewToken(token: String) {

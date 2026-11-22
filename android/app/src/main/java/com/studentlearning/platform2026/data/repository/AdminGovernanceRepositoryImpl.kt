@@ -60,7 +60,7 @@ internal class AdminGovernanceRepositoryImpl(
     }
 
     override suspend fun getAuditLogs(limit: Int): AppResult<List<AuditLogEntry>> =
-        executeAuthorized {
+        executeOwnerAuthorized {
             backendDataSource.fetchAuditLogs(limit)
         }
 

@@ -62,17 +62,18 @@ object NotificationChannelHelper {
     fun showSystemNotificationIfPermitted(
         context: Context,
         item: LocalNotificationItem
-    ) {
+    ): Boolean {
         ensureNotificationChannel(context)
         if (!hasPostNotificationsPermission(context)) {
-            return
+            return false
         }
+        val notificationIntId = item.id.hashCode() and 0x7fffffff
         val launchIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             context,
-            abs(item.id.hashCode()),
+            notificationIntId,
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -87,8 +88,8 @@ object NotificationChannelHelper {
             .setContentIntent(pendingIntent)
             .build()
 
-        runCatching {
-            NotificationManagerCompat.from(context).notify(abs(item.id.hashCode()), notification)
-        }
+        return runCatching {
+            NotificationManagerCompat.from(context).notify(notificationIntId, notification)
+        }.isSuccess
     }
 }

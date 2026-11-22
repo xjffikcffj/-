@@ -45,7 +45,19 @@ class AdminPortalViewModel(
             authRepository.sessionFlow.collect { session ->
                 val previousSession = _uiState.value.session
                 val uidChanged = previousSession.uid != null && previousSession.uid != session.uid
-                _uiState.update { it.copy(session = session) }
+                _uiState.update { state ->
+                    val demotedFromOwnerOnlyTab = !session.canPerformOwnerOnlyActions &&
+                        (state.activeTab == AdminManagementSection.STAFF ||
+                            state.activeTab == AdminManagementSection.AUDIT_LOGS)
+                    state.copy(
+                        session = session,
+                        activeTab = if (demotedFromOwnerOnlyTab) AdminManagementSection.BRANCHES else state.activeTab,
+                        staffMembers = if (session.canPerformOwnerOnlyActions) state.staffMembers else emptyList(),
+                        staffError = if (session.canPerformOwnerOnlyActions) state.staffError else null,
+                        auditLogs = if (session.canPerformOwnerOnlyActions) state.auditLogs else emptyList(),
+                        auditLogsError = if (session.canPerformOwnerOnlyActions) state.auditLogsError else null
+                    )
+                }
 
                 if (!session.isSignedIn || !session.hasRecognizedAdminRole || uidChanged) {
                     lastLoadedAdminUid = null
@@ -163,7 +175,9 @@ class AdminPortalViewModel(
     }
 
     fun selectTab(tab: AdminManagementSection) {
-        if (tab == AdminManagementSection.STAFF && !_uiState.value.session.canPerformOwnerOnlyActions) {
+        if ((tab == AdminManagementSection.STAFF || tab == AdminManagementSection.AUDIT_LOGS) &&
+            !_uiState.value.session.canPerformOwnerOnlyActions
+        ) {
             reportFailureReason(AdminFailureReason.INSUFFICIENT_ROLE)
             return
         }
@@ -236,7 +250,18 @@ class AdminPortalViewModel(
                     loadStaffMembers()
                     loadAuditLogs()
                 }
-                is AppResult.Error -> handleSubmissionError(result.cause)
+                is AppResult.Error -> {
+                    val reason = (result.cause as? AdminException)?.reason
+                    handleSubmissionError(result.cause)
+                    if (reason == AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED ||
+                        reason == AdminFailureReason.STAFF_ROLE_AUDIT_LOG_FAILED
+                    ) {
+                        loadStaffMembers()
+                        if (reason == AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED) {
+                            loadAuditLogs()
+                        }
+                    }
+                }
                 AppResult.Loading -> Unit
             }
         }
@@ -258,7 +283,16 @@ class AdminPortalViewModel(
     }
 
     fun loadAuditLogs(limit: Int = 50) {
-        if (!_uiState.value.session.canPerformAdminActions) return
+        if (!_uiState.value.session.canPerformOwnerOnlyActions) {
+            _uiState.update {
+                it.copy(
+                    isLoadingAuditLogs = false,
+                    auditLogs = emptyList(),
+                    auditLogsError = AdminFailureReason.INSUFFICIENT_ROLE
+                )
+            }
+            return
+        }
         val repo = adminGovernanceRepository
         if (repo == null) {
             _uiState.update {
@@ -313,7 +347,9 @@ class AdminPortalViewModel(
                             )
                         )
                     }
-                    loadAuditLogs()
+                    if (_uiState.value.session.canPerformOwnerOnlyActions) {
+                        loadAuditLogs()
+                    }
                 }
                 is AppResult.Error -> {
                     _uiState.update { it.copy(isBroadcastingUpdate = false) }
@@ -1550,7 +1586,18 @@ class AdminPortalViewModel(
                     loadStaffMembers()
                     loadAuditLogs()
                 }
-                is AppResult.Error -> handleSubmissionError(result.cause)
+                is AppResult.Error -> {
+                    val reason = (result.cause as? AdminException)?.reason
+                    handleSubmissionError(result.cause)
+                    if (reason == AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED ||
+                        reason == AdminFailureReason.STAFF_ROLE_AUDIT_LOG_FAILED
+                    ) {
+                        loadStaffMembers()
+                        if (reason == AdminFailureReason.STAFF_ROLE_PARTIAL_TOKEN_REVOKE_FAILED) {
+                            loadAuditLogs()
+                        }
+                    }
+                }
                 AppResult.Loading -> Unit
             }
         }
