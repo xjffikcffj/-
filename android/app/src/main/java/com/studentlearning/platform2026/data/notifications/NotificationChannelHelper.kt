@@ -79,7 +79,8 @@ object NotificationChannelHelper {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_STUDY_UPDATES)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_haqibati)
+            .setColor(ContextCompat.getColor(context, R.color.haqibati_emerald_primary))
             .setContentTitle(item.title)
             .setContentText(item.body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(item.body))

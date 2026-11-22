@@ -14,7 +14,7 @@
 
     <!-- Home -->
     <string name="home_welcome_title">مرحباً بك في حقيبتي</string>
-    <string name="home_welcome_subtitle">تم تأسيس البنية الأساسية ونظام التنقل والواجهات الرئيسية للتطبيق باللغة العربية واتجاه RTL.</string>
+    <string name="home_welcome_subtitle">تنظيم الفروع والمواد والأقسام الدراسية مع قارئ PDF عربي وحفظ محلي للدراسة دون اتصال.</string>
     <string name="home_quick_sections_title">الأقسام الرئيسية</string>
     <string name="home_quick_library_subtitle">استعراض الفروع والمواد والأقسام الدراسية</string>
     <string name="home_quick_downloads_subtitle">إدارة الملفات المحفوظة للقراءة دون اتصال</string>
@@ -53,7 +53,7 @@
     <string name="catalog_loading_message">جاري تحميل البيانات…</string>
     <string name="catalog_error_title">تعذّر تحميل البيانات</string>
     <string name="catalog_error_not_configured">الاتصال بـ Firebase غير مفعّل محلياً بعد؛ يلزم إضافة ملف google-services.json وتكوين المشروع.</string>
-    <string name="catalog_error_backend_not_configured">خدمة الكتالوج (Backend D2) غير مربوطة بعد؛ يلزم إعداد رابط الخادم لتشغيل المكتبة، ولا يعني ذلك وجود خلل في إعداد Firebase.</string>
+    <string name="catalog_error_backend_not_configured">خدمة المكتبة السحابية غير مربوطة بعد؛ يلزم ضبط رابط الخادم المعتمد (HTTPS)، ولا يعني ذلك وجود خلل في إعداد Firebase.</string>
     <string name="catalog_error_permission_denied">الوصول إلى بيانات Firestore مقيّد مؤقتاً بقواعد الأمان الحالية، وسيعمل فور اعتماد صلاحيات القراءة.</string>
     <string name="catalog_error_network">تعذّر الاتصال بالشبكة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.</string>
     <string name="catalog_error_unknown">حدث خطأ غير متوقع أثناء جلب البيانات. يرجى المحاولة مجدداً.</string>
@@ -61,7 +61,7 @@
     <!-- Downloads -->
     <string name="downloads_title">التنزيلات المحلية</string>
     <string name="downloads_empty_title">لا توجد ملفات محفوظة حالياً</string>
-    <string name="downloads_empty_message">ستظهر الملفات التعليمية التي يتم تنزيلها للوصول دون اتصال في هذا القسم عند تفعيل وحدة التخزين والتنزيلات.</string>
+    <string name="downloads_empty_message">ستظهر هنا الملفات الدراسية التي تنزّلها من المكتبة للوصول إليها وقراءتها دون اتصال بالإنترنت على هذا الجهاز.</string>
 
     <!-- Settings -->
     <string name="settings_appearance_section">المظهر واللغة</string>
@@ -76,8 +76,8 @@
     <!-- About -->
     <string name="about_title">حول التطبيق</string>
     <string name="about_version_label">رقم الإصدار</string>
-    <string name="about_stage_label">المرحلة الحالية</string>
-    <string name="about_stage_value">المرحلة الثامنة — إدارة إصدارات الملفات والتحديثات</string>
+    <string name="about_stage_label">حالة الإصدار</string>
+    <string name="about_stage_value">نسخة مهيأة للنشر (العربية RTL)</string>
 
     <!-- Settings: Staff / Admin Portal Entry -->
     <string name="settings_admin_section">الإدارة والمشرفون</string>
@@ -194,7 +194,7 @@
     <string name="admin_success_reordered">تم تحديث الترتيب بنجاح.</string>
 
     <string name="admin_error_not_configured">خدمات Firebase غير مفعّلة محلياً بعد؛ أضف ملف google-services.json للمشروع المعتمد أولاً.</string>
-    <string name="admin_error_backend_not_configured">خدمة الخادم (Backend D2) غير مربوطة بعد؛ تبقى عمليات إدارة الإصدارات ورفع الملفات معطّلة حتى ضبط رابط الخادم الآمن (HTTPS)، ولا يعني ذلك وجود خلل في إعداد Firebase.</string>
+    <string name="admin_error_backend_not_configured">خدمة الخادم الإداري غير مربوطة بعد؛ تبقى عمليات إدارة الإصدارات ورفع الملفات معطّلة حتى ضبط رابط الخادم الآمن (HTTPS)، ولا يعني ذلك وجود خلل في إعداد Firebase.</string>
     <string name="admin_error_unauthenticated">يجب تسجيل الدخول بحساب إداري معتمد أولاً.</string>
     <string name="admin_error_insufficient_role">الحساب المسجّل لا يملك صلاحية owner أو admin المعتمدة.</string>
     <string name="admin_error_session_verification_required">تعذّر التأكد من حداثة بيانات الصلاحية. يرجى تحديث الصلاحيات عند توفر الاتصال قبل تنفيذ أي تعديل.</string>

@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -34,10 +35,51 @@ android {
         )
     }
 
+    val signingProperties = Properties()
+    val signingPropertiesFile = rootProject.file("signing.properties")
+    if (signingPropertiesFile.isFile) {
+        signingPropertiesFile.inputStream().use { signingProperties.load(it) }
+    }
+
+    fun resolveSigningValue(propKey: String, envKey: String): String? {
+        val fromFile = signingProperties.getProperty(propKey)?.trim()?.takeIf { it.isNotEmpty() }
+        val fromGradle = providers.gradleProperty(envKey).orNull?.trim()?.takeIf { it.isNotEmpty() }
+        val fromEnv = providers.environmentVariable(envKey).orNull?.trim()?.takeIf { it.isNotEmpty() }
+        return fromFile ?: fromGradle ?: fromEnv
+    }
+
+    val releaseStoreFilePath = resolveSigningValue("storeFile", "HAQIBATI_RELEASE_STORE_FILE")
+    val releaseStorePassword = resolveSigningValue("storePassword", "HAQIBATI_RELEASE_STORE_PASSWORD")
+    val releaseKeyAlias = resolveSigningValue("keyAlias", "HAQIBATI_RELEASE_KEY_ALIAS")
+    val releaseKeyPassword = resolveSigningValue("keyPassword", "HAQIBATI_RELEASE_KEY_PASSWORD")
+    val resolvedReleaseStoreFile = releaseStoreFilePath
+        ?.let { path -> rootProject.file(path).takeIf { it.isFile } ?: file(path).takeIf { it.isFile } }
+    val hasExternalReleaseSigning = resolvedReleaseStoreFile != null &&
+        !releaseStorePassword.isNullOrEmpty() &&
+        !releaseKeyAlias.isNullOrEmpty() &&
+        !releaseKeyPassword.isNullOrEmpty()
+
+    if (hasExternalReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = resolvedReleaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            isDebuggable = false
+            isJniDebuggable = false
             isMinifyEnabled = true
             isShrinkResources = true
+            // Fail-closed: never fall back to the debug keystore for release builds.
+            if (hasExternalReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -66,6 +108,11 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
     }
 }
 

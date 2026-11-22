@@ -18,3 +18,5 @@ app/google-services.json
 *.p12
 *.pem
 keystore.properties
+signing.properties
+**/signing.properties
