@@ -59,10 +59,10 @@ import com.studentlearning.platform2026.presentation.theme.HaqibatiThemeTokens
 fun SectionFilesScreen(
     viewModel: SectionFilesViewModel,
     onOpenStudyVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit,
+    modifier: Modifier = Modifier,
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
-    onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -105,6 +105,7 @@ fun SectionFilesScreenContent(
     uiState: SectionFilesUiState,
     onRetry: () -> Unit,
     onOpenStudyVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit,
+    modifier: Modifier = Modifier,
     onStartDownload: (StudyFileMetadata) -> Unit = {},
     onCancelDownload: (StudyFileMetadata) -> Unit = {},
     onRetryDownload: (StudyFileMetadata) -> Unit = {},
@@ -112,8 +113,7 @@ fun SectionFilesScreenContent(
     onDismissTransientError: () -> Unit = {},
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
-    onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     val openVersion: (String, String, String?, String?) -> Unit = { fileId, fileTitle, versionId, versionLabel ->

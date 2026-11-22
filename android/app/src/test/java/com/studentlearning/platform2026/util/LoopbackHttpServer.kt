@@ -115,6 +115,20 @@ class LoopbackHttpExchange internal constructor(
         rawOut.flush()
     }
 
+    fun awaitPeerClosed(timeoutMillis: Int): Boolean {
+        val previousTimeout = runCatching { socket.soTimeout }.getOrDefault(0)
+        return try {
+            socket.soTimeout = timeoutMillis
+            socket.getInputStream().read() == -1
+        } catch (_: java.net.SocketTimeoutException) {
+            false
+        } catch (_: IOException) {
+            true
+        } finally {
+            runCatching { socket.soTimeout = previousTimeout }
+        }
+    }
+
     fun close() {
         if (closed.compareAndSet(false, true)) {
             runCatching { rawOut.flush() }

@@ -53,9 +53,9 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminPortal: () -> Unit,
+    modifier: Modifier = Modifier,
     onNavigateToSignIn: () -> Unit = {},
-    onNavigateToSignUp: () -> Unit = {},
-    modifier: Modifier = Modifier
+    onNavigateToSignUp: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -77,10 +77,10 @@ fun SettingsScreenContent(
     onToggleDarkMode: (Boolean) -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminPortal: () -> Unit,
+    modifier: Modifier = Modifier,
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
-    onSignOut: () -> Unit = {},
-    modifier: Modifier = Modifier
+    onSignOut: () -> Unit = {}
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     val session = uiState.adminSession

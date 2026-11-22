@@ -174,7 +174,9 @@ class PdfReaderViewModelTest {
             val pdfRepo = FakePdfDocumentRepository(
                 openHandler = { id, _ ->
                     if (id == "file-a") {
-                        fileAGate.await()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            fileAGate.await()
+                        }
                         AppResult.Success(sessionA)
                     } else {
                         AppResult.Success(sessionB)

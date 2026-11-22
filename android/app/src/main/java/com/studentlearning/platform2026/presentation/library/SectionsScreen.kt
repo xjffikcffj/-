@@ -24,8 +24,8 @@ import com.studentlearning.platform2026.presentation.theme.HaqibatiThemeTokens
 @Composable
 fun SectionsScreen(
     viewModel: SectionsViewModel,
-    onSelectSection: (com.studentlearning.platform2026.domain.model.StudySection) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSelectSection: (com.studentlearning.platform2026.domain.model.StudySection) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -41,8 +41,8 @@ fun SectionsScreen(
 fun SectionsScreenContent(
     uiState: SectionsUiState,
     onRetry: () -> Unit,
-    onSelectSection: (com.studentlearning.platform2026.domain.model.StudySection) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSelectSection: (com.studentlearning.platform2026.domain.model.StudySection) -> Unit = {}
 ) {
     val spacing = HaqibatiThemeTokens.spacing
 

@@ -102,6 +102,16 @@ class AuthRepositoryImplTest {
         val authSession = repository.requireAuthenticatedSession()
         assertEquals("stu-1", authSession.uid)
 
+        remote.readSessionHandler = {
+            AdminSession(
+                isSignedIn = true,
+                uid = "stu-1",
+                email = "student@example.com",
+                role = AdminRole.NONE,
+                hasLoadedTokenClaims = true,
+                areClaimsConfirmedCurrent = true
+            )
+        }
         val adminFailure = try {
             repository.requireAuthorizedAdminSession()
             null
@@ -287,7 +297,9 @@ class AuthRepositoryImplTest {
                 areClaimsConfirmedCurrent = true
             )
         }
-        val repository = AuthRepositoryImpl(remote, testDispatchers, observerScope = backgroundScope)
+        val observerScope = kotlinx.coroutines.CoroutineScope(backgroundScope.coroutineContext + testDispatchers.io)
+        val repository = AuthRepositoryImpl(remote, testDispatchers, observerScope = observerScope)
+        advanceUntilIdle()
         repository.signInWithEmailAndPassword("owner@example.com", "secret-pass")
         assertTrue(repository.sessionFlow.value.canPerformAdminActions)
 

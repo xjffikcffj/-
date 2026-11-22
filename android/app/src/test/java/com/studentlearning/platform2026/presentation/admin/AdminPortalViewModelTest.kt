@@ -1050,7 +1050,11 @@ class AdminPortalViewModelTest {
             val mappedFile = com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogMapper.mapStudyFileForAdmin(
                 id = "file-legacy-vm",
                 data = mapOf(
-                    "sectionId" to "sections/sec-1",
+                    "sectionId" to com.studentlearning.platform2026.data.remote.firebase.FirestoreReferenceTarget(
+                        collectionId = "sections",
+                        documentId = "sec-1",
+                        path = "sections/sec-1"
+                    ),
                     "title" to "ملف قديم",
                     "order" to 1,
                     "isPublished" to false,
@@ -1061,7 +1065,11 @@ class AdminPortalViewModelTest {
             val mappedVersion = com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogMapper.mapStudyFileVersionForAdmin(
                 id = "v1",
                 data = mapOf(
-                    "fileId" to "study_files/file-legacy-vm",
+                    "fileId" to com.studentlearning.platform2026.data.remote.firebase.FirestoreReferenceTarget(
+                        collectionId = "study_files",
+                        documentId = "file-legacy-vm",
+                        path = "study_files/file-legacy-vm"
+                    ),
                     "versionNumber" to 1,
                     "versionLabel" to "1.0",
                     "isPublished" to false

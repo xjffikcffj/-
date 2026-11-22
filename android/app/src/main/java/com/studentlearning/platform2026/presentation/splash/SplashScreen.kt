@@ -67,9 +67,9 @@ fun SplashScreen(
 
 @Composable
 fun SplashScreenContent(
+    modifier: Modifier = Modifier,
     isError: Boolean = false,
-    onRetry: () -> Unit = {},
-    modifier: Modifier = Modifier
+    onRetry: () -> Unit = {}
 ) {
     val alphaAnim = remember { Animatable(0f) }
     val scaleAnim = remember { Animatable(0.92f) }

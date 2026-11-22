@@ -1,6 +1,8 @@
 package com.studentlearning.platform2026.presentation.library
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.core.common.DispatcherProvider
 import com.studentlearning.platform2026.data.download.DownloadExecutionEngine
@@ -307,10 +309,11 @@ class SectionFilesViewModelTest {
             }
             val dataSource = OfflineDownloadsDataSource(
                 PreferenceDataStoreFactory.create(
-                    scope = backgroundScope,
+                    scope = kotlinx.coroutines.CoroutineScope(backgroundScope.coroutineContext + dispatchers.io),
                     produceFile = { File(tempFolder.newFolder(), "ui_race.preferences_pb") }
                 )
             )
+            dataSource.getAllRecords()
             val storageManager = LocalPdfStorageManager(tempFolder.newFolder("ui_race_storage"))
             val taskFlow = MutableStateFlow<Map<Pair<String, String>, DownloadTaskState>>(emptyMap())
             var workSeq = 0
@@ -376,7 +379,16 @@ class SectionFilesViewModelTest {
                 authRepository = authRepo,
                 offlineDownloadsRepository = realDownloadsRepo
             )
-            advanceUntilIdle()
+            suspend fun awaitUiState(predicate: (SectionFilesUiState) -> Boolean) {
+                val deadline = System.currentTimeMillis() + 5_000L
+                while (System.currentTimeMillis() < deadline) {
+                    advanceUntilIdle()
+                    if (predicate(viewModel.uiState.value)) return
+                    Thread.sleep(10)
+                }
+                advanceUntilIdle()
+            }
+            awaitUiState { (it as? SectionFilesUiState.Content)?.offlineStates?.containsKey(file.id) == true }
 
             // 1) Simulate running download -> cancel -> UI immediately reflects CANCELLED
             val key = file.id to "v1"
@@ -389,17 +401,26 @@ class SectionFilesViewModelTest {
                     taskId = "ui-work-0"
                 )
             )
-            advanceUntilIdle()
+            awaitUiState {
+                (it as? SectionFilesUiState.Content)
+                    ?.offlineStates?.get(file.id)?.activeVersionDownload?.status == DownloadStatus.DOWNLOADING
+            }
 
             viewModel.cancelDownload(file)
-            advanceUntilIdle()
+            awaitUiState {
+                (it as? SectionFilesUiState.Content)
+                    ?.offlineStates?.get(file.id)?.activeVersionDownload?.status == DownloadStatus.CANCELLED
+            }
             val afterCancelState = (viewModel.uiState.value as SectionFilesUiState.Content)
                 .offlineStates[file.id]?.activeVersionDownload
             assertEquals(DownloadStatus.CANCELLED, afterCancelState?.status)
 
             // 2) Immediate restart -> UI reflects QUEUED (not stuck on CANCELLED or old RUNNING)
             viewModel.startDownload(file)
-            advanceUntilIdle()
+            awaitUiState {
+                (it as? SectionFilesUiState.Content)
+                    ?.offlineStates?.get(file.id)?.activeVersionDownload?.status == DownloadStatus.QUEUED
+            }
             val afterRestartState = (viewModel.uiState.value as SectionFilesUiState.Content)
                 .offlineStates[file.id]?.activeVersionDownload
             assertEquals(DownloadStatus.QUEUED, afterRestartState?.status)
@@ -414,7 +435,10 @@ class SectionFilesViewModelTest {
                     taskId = "ui-work-1"
                 )
             )
-            advanceUntilIdle()
+            awaitUiState {
+                (it as? SectionFilesUiState.Content)
+                    ?.offlineStates?.get(file.id)?.activeVersionDownload?.status == DownloadStatus.FAILED
+            }
             assertEquals(
                 DownloadStatus.FAILED,
                 (viewModel.uiState.value as SectionFilesUiState.Content)
@@ -422,7 +446,10 @@ class SectionFilesViewModelTest {
             )
 
             viewModel.retryDownload(file)
-            advanceUntilIdle()
+            awaitUiState {
+                (it as? SectionFilesUiState.Content)
+                    ?.offlineStates?.get(file.id)?.activeVersionDownload?.status == DownloadStatus.QUEUED
+            }
             val afterRetryUi = (viewModel.uiState.value as SectionFilesUiState.Content)
                 .offlineStates[file.id]?.activeVersionDownload
             assertEquals(DownloadStatus.QUEUED, afterRetryUi?.status)
@@ -441,7 +468,10 @@ class SectionFilesViewModelTest {
                     taskId = "ui-work-2"
                 )
             )
-            advanceUntilIdle()
+            awaitUiState {
+                (it as? SectionFilesUiState.Content)
+                    ?.offlineStates?.get(file.id)?.activeVersionDownload?.status == DownloadStatus.COMPLETED
+            }
             val finalUi = (viewModel.uiState.value as SectionFilesUiState.Content).offlineStates[file.id]!!
             assertEquals(DownloadStatus.COMPLETED, finalUi.activeVersionDownload?.status)
             assertTrue(finalUi.hasActiveVersionLocalCopy)
@@ -635,28 +665,36 @@ class SectionFilesViewModelTest {
         )
         val catalogRepo = FakeCatalogRepository(studyFilesResult = { AppResult.Success(listOf(file)) })
 
-        val viewModel = SectionFilesViewModel(
-            sectionId = "sec-1",
-            catalogRepository = catalogRepo,
-            clockEpochMillis = { wallClock },
-            monotonicElapsedMillis = { monoClock }
-        )
-        runCurrent()
-        // Slow initial device clock must still show badge.
-        assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+        val viewModelStore = ViewModelStore()
+        val viewModel = ViewModelProvider(
+            viewModelStore,
+            SectionFilesViewModel.provideFactory(
+                sectionId = "sec-1",
+                catalogRepository = catalogRepo,
+                clockEpochMillis = { wallClock },
+                monotonicElapsedMillis = { monoClock }
+            )
+        )[SectionFilesViewModel::class.java]
+        try {
+            runCurrent()
+            // Slow initial device clock must still show badge.
+            assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
 
-        // User jumps device clock forward +45 days while only 5 minutes elapsed -> must NOT hide badge.
-        wallClock = publishedAt + 45L * 24L * 60L * 60L * 1000L
-        monoClock += fiveMinutesMillis
-        viewModel.onForegroundResumed()
-        runCurrent()
-        assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+            // User jumps device clock forward +45 days while only 5 minutes elapsed -> must NOT hide badge.
+            wallClock = publishedAt + 45L * 24L * 60L * 60L * 1000L
+            monoClock += fiveMinutesMillis
+            viewModel.onForegroundResumed()
+            runCurrent()
+            assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
 
-        // User pulls device clock backward -6 hours while another 5 minutes elapsed -> must NOT hide badge.
-        wallClock = publishedAt - 6L * 60L * 60L * 1000L
-        monoClock += fiveMinutesMillis
-        viewModel.onForegroundResumed()
-        runCurrent()
-        assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+            // User pulls device clock backward -6 hours while another 5 minutes elapsed -> must NOT hide badge.
+            wallClock = publishedAt - 6L * 60L * 60L * 1000L
+            monoClock += fiveMinutesMillis
+            viewModel.onForegroundResumed()
+            runCurrent()
+            assertTrue("file-skew" in (viewModel.uiState.value as SectionFilesUiState.Content).newVersionBadgeFileIds)
+        } finally {
+            viewModelStore.clear()
+        }
     }
 }

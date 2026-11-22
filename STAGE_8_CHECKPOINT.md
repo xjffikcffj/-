@@ -1,6 +1,6 @@
 # نقطة التوقف — المرحلة الثامنة: تدقيق Backend D2 وربط Android (`STAGE_8_CHECKPOINT.md`)
 
-**حالة المرحلة:** لم تُغلق المرحلة الثامنة نهائياً بعد، ولم تبدأ المرحلة التاسعة. تم تحديث هذا الملف بنتائج التحقق الفعلي الأخيرة في القسم `2.10` (نجاح `:app:lintDebug` بـ `0 errors`، ونجاح `:app:assembleDebug` لإنتاج APK بحجم `32,883,996` بايت وبصمة SHA-256 متطابقة عند التنزيل عبر `/download/app-debug.apk` مع إغلاق مسارات التسريب في `vite.config.ts`، وبقاء `:app:testDebugUnitTest` متوقفاً على 3 استدعاءات `fakeVersionStorageBroker` في `AdminCatalogRepositoryImplTest.kt:382,430,536`، إضافةً إلى غياب `android/app/google-services.json` و`.git` و`JDK 21+` ومحاكي Android في الحاوية الحالية).
+**حالة المرحلة:** لم تُغلق المرحلة الثامنة نهائياً بعد، ولم تبدأ المرحلة التاسعة. تم تحديث هذا الملف بنتائج جولة `:app:testDebugUnitTest` الفعلية الأخيرة في القسم `2.12` (نجاح كامل **`233 / 233`** اختباراً في `:app:testDebugUnitTest` عبر `35` ملف JUnit XML، مع `0` أخطاء تجميع و`0` فشل و`0` أخطاء و`0` متجاوز، بعد إصلاح إلغاء التنزيل المتوقف في ملف الإنتاج الوحيد `DownloadStreamFetcher.kt`؛ وبقاء `google-services.json` و`.git` غير موجودين في الحاوية). **تبقى المرحلة الثامنة مفتوحة حتى المراجعة النهائية.**
 - السجل التاريخي للجولات السابقة في الحاوية: تم تنفيذ **دفعة الإصلاح المحدودة للأعطال الستة** لإزالة عوائق بناء Android واختبارات Backend، ونجحت وقتها `npm run lint` (`0`) و`npm run build` (`0`) و`npm run test:rules` (`17/17`) و`npm run test:backend` (`16/16`) و`:app:compileDebugKotlin`، ثم في جولة لاحقة أُنتج APK مع `google-services.json` بحجم `32,885,792` بايت وبعدها `33,661,462` بايت بعد فصل `BACKEND_NOT_CONFIGURED` (دون وجود `google-services.json` حالياً في الحاوية المستوردة). **تبقى المرحلة الثامنة مفتوحة.**
 
 ---
@@ -227,11 +227,71 @@
    - **فحص حظر التسريب عبر خادم المعاينة (`curl`):** `200` للمسارات `/` و`/src/main.tsx` و`/download/app-debug.apk` فقط، و**`403 Forbidden`** لـ 16 مساراً حساساً (`/android/app/build.gradle.kts`, `/android/app/build/outputs/apk/debug/app-debug.apk`, `/android/app/build/reports/lint-results-debug.txt`, `/android/app/build/outputs/logs/manifest-merger-debug-report.txt`, `/server/config/env.ts`, `/tests/backend/backend.api.test.ts`, `/docs/STAGE_8_D2_BACKEND_RUNBOOK.md`, `/.env.example`, `/package.json`, `/vite.config.ts`, `/STAGE_8_CHECKPOINT.md`, `/@fs/app/applet/vite.config.ts`, `/@fs/app/applet/android/app/build.gradle.kts`, `/@fs/app/applet/android/app/build/outputs/apk/debug/app-debug.apk`, `/src/..%2fvite.config.ts`, `/download/../vite.config.ts`). كما خلت `dist/` تماماً من أي `.apk` أو ملفات Android (`dist/index.html`, `dist/assets/index-*.js`, `dist/assets/index-*.css` فقط).
    - **فحوصات Node/TypeScript المنفصلة المنفذة في هذه البيئة:** `npm run lint` (`tsc --noEmit`: `0`)، `npm run build` (`0`)، واختبارات الوحدة غير المعتمدة على المحاكي (`seedCatalog.test.ts`, `fixesVerification.test.ts`, `entrypointAndRateLimit.test.ts`, `r2StagingLifecycle.test.ts`: **`17/17` ناجحاً**).
 
-4. **مهام لم تكتمل بعد في المرحلة الثامنة:**
-   - إكمال `:app:testDebugUnitTest` بعد معالجة استدعاءات `fakeVersionStorageBroker` الثلاثة (`382`, `430`, `536`) في `AdminCatalogRepositoryImplTest.kt` ثم تشغيل الاختبارات فعلياً.
+4. **مهام لم تكتمل بعد في المرحلة الثامنة (انظر القسمَين `2.11` و`2.12` لنتائج `:app:testDebugUnitTest` النهائية):**
+   - ~~معالجة السبب الجذري في كود الإنتاج `DownloadStreamFetcher.kt:76` للاختبار الأخير المتبقي (`1 / 233`)~~ (**تمت المعالجة والتحقق في القسم `2.12` ونجحت `233 / 233` الاختبارات**).
    - تنفيذ `git rm -r --cached android/.gradle` في المستودع المحلي/GitHub (مجلد `.git` غير متاح داخل حاوية AI Studio المستوردة؛ مع استمرار حماية `android/.gradle/` في `/.gitignore` و`/android/.gitignore`).
    - تشغيل `npm run test:rules` و`npm run test:backend` في هذه الجولة الجديدة (يتطلبان `JDK 21+` وحزمة محاكي Firestore، بينما بيئة الحاوية الحالية تقتصر على `OpenJDK 17`).
    - تشغيل `connectedDebugAndroidTest` على جهاز أو محاكي Android، وتضمين `android/app/google-services.json` عند بناء نسخة الاختبار الحي، ثم الاختبار الحي مع Firebase وBackend D2.
+
+---
+
+## 2.11. إغلاق عائق تجميع اختبارات Android وتشغيل `:app:testDebugUnitTest` الفعلي
+
+1. **الملفات المعدّلة (ملفات الاختبار وإعدادات Unit Test فقط — دون المساس بملفات الإنتاج):**
+   - `android/app/src/test/java/com/studentlearning/platform2026/data/repository/AdminCatalogRepositoryImplTest.kt`: تمرير المعاملين المُسمّيَين `statusProvider = { ... }` و`verifyProvider = { ... }` في الاستدعاءات الثلاثة لـ `fakeVersionStorageBroker` (الأسطر `382`, `438`, `564`).
+   - `android/app/build.gradle.kts`: إضافة `testOptions { unitTests.isReturnDefaultValues = true }` فقط داخل `android { ... }` لتفادي فشل تهيئة `SparseArray` داخل `FirebaseFirestoreException$Code` في اختبارات JVM المحلية، دون تعديل منطق الإنتاج أو الاعتماديات أو بناء APK.
+   - `android/app/src/test/java/com/studentlearning/platform2026/presentation/admin/AdminPortalViewModelTest.kt`: تمرير `FirestoreReferenceTarget` بدلاً من النصوص الخام في إعداد `legacy study file`.
+   - `android/app/src/test/java/com/studentlearning/platform2026/data/repository/AuthRepositoryImplTest.kt`: ضبط `readSessionHandler` لـ `"stu-1"` وتمرير `observerScope` يستخدم `testDispatchers.io` مع `advanceUntilIdle()` لضمان اشتراك مستمع تبديل الحساب قبل البث.
+   - `android/app/src/test/java/com/studentlearning/platform2026/presentation/downloads/DownloadsViewModelTest.kt`: مطابقة الترتيب المتوقع في الاختبار مع `sortedByDescending { it.downloadedAtEpochMillis }`.
+   - `android/app/src/test/java/com/studentlearning/platform2026/presentation/pdfreader/PdfReaderViewModelTest.kt`: تغليف `fileAGate.await()` بـ `withContext(NonCancellable)` لتمرير النتيجة المتأخرة إلى `PdfReaderViewModel` وإثبات إغلاق الجلسة السابقة `sessionA`.
+   - `android/app/src/test/java/com/studentlearning/platform2026/data/repository/ReadingProgressRepositoryImplTest.kt`: إغلاق نطاق `CoroutineScope` الخاص بنسخة `DataStore` الأولى (`cancelAndJoin()`) قبل إنشاء نسخة `DataStore` الثانية على الملف نفسه.
+   - `android/app/src/test/java/com/studentlearning/platform2026/data/repository/OfflineDownloadsRepositoryImplTest.kt`: عزل مجلد التخزين لكل `Harness` (`tempFolder.newFolder()`)، وإضافة `scheduler.awaitIdle()` بعد `advanceUntilIdle()` لانتظار اكتمال حفظ `DataStore`، وإنشاء ملفات اليتامى المصطنعة بعد بدء التنزيل النشط `v2` حتى لا يمسحها تنظيف البداية قبل فحص منتصف التنزيل.
+   - `android/app/src/test/java/com/studentlearning/platform2026/presentation/library/SectionFilesViewModelTest.kt`: استخدام `ViewModelStore.clear()` في اختبار انقضاء الشارة، وضبط نطاق `DataStore` بـ `dispatchers.io` مع انتظار تحديث `uiState` عبر `advanceUntilIdle()` وتجنب السباق مع قراءة `DataStore` الأولية.
+   - `STAGE_8_CHECKPOINT.md`: هذا التحديث.
+   - *التحقق من القيود:* لم يتم تعديل أي ملف في `android/app/src/main/**` ولا `PdfReaderScreen.kt` ولا `AndroidManifest.xml` ولا `vite.config.ts` ولا Firebase Auth أو Firestore أو Backend D2، ولم تُضف `google-services.json` ولم تُحذف أو تُعطّل أو تُتجاوز أي اختبارات.
+
+2. **نتيجة تشغيل `sh ./android/gradlew -p android :app:testDebugUnitTest --no-daemon --console=plain`:**
+   - **تجميع اختبارات Android (`:app:compileDebugUnitTestKotlin`):** **نجح بالكامل (`0` أخطاء تجميع؛ لم تظهر أي أخطاء تجميع جديدة).**
+   - **حالة التنفيذ النهائية:** **`BUILD FAILED`** بسبب اختبار واحد فقط.
+   - **الأعداد الفعلية المؤكدة من تقارير JUnit XML:**
+     - الإجمالي: **`233`** اختباراً
+     - الناجحة: **`232`** اختباراً
+     - الفاشلة: **`1`** اختبار واحد
+     - المتجاوزة (`skipped`): **`0`**
+   - **تفاصيل الاختبار الوحيد الفاشل والعائق المتبقي:**
+     - الاختبار: `OfflineDownloadsRepositoryImplTest > slow stalled http download cancellation closes socket releases resources and deletes part file` (`OfflineDownloadsRepositoryImplTest.kt:1300,1400`, الخطأ: `java.lang.AssertionError`).
+     - السبب المثبَت في كود الإنتاج: الدالة `DownloadStreamFetcher.kt:76-80` تستدعي `currentCoroutineContext()[Job]?.invokeOnCompletion { ... }` بالقيمة الافتراضية `onCancelling = false`، لذا لا يُستدعى `activeConnection.disconnect()` فور إلغاء الـ Job بينما خيط الإدخال محجوز في `input.read(buffer)`، فلا يُغلق المقبس من جهة العميل قبل انتهاء مهلة الخادم (`serverSawClosedSocket == false` عند السطر `1400`). لم يُعدّل `DownloadStreamFetcher.kt` التزاماً بقاعدة عدم تعديل ملفات الإنتاج.
+
+3. **حالة Git ومرحلة المشروع:**
+   - فحص `git status` أعاد: `fatal: not a git repository (or any of the parent directories): .git` (الحاوية المستوردة لا تحتوي مجلد `.git`).
+   - **حالة المرحلة الثامنة:** **مفتوحة** بانتظار المراجعة النهائية وإقرار معالجة `DownloadStreamFetcher.kt:76` وتشغيل اختبارات الجهاز/المحاكي والربط الحي لاحقاً.
+
+---
+
+## 2.12. إصلاح إلغاء التنزيل المعلّق في `DownloadStreamFetcher.kt` واجتياز جميع اختبارات `:app:testDebugUnitTest` (`233 / 233`)
+
+1. **السبب الجذري المثبَت في `DownloadStreamFetcher.kt`:**
+   - استخدام `invokeOnCompletion { ... }` بالقيمة الافتراضية (`onCancelling = false`) لم يُطلق إغلاق الاتصال فور بدء الإلغاء أثناء حجز خيط التنزيل داخل `input.read(buffer)`.
+   - إضافةً إلى ذلك، على عميل OpenJDK `sun.net.www.protocol.http.HttpURLConnection` (المستخدم في اختبارات JVM عبر `http://` المحلية)، تستدعي `disconnect()` داخلياً `MeteredStream.close()` التي تطلب قفل `ReentrantLock readLock` نفسه المحتجَز داخل `input.read(buffer)`؛ مما يسبّب تعليق خيط الإلغاء نفسه حتى انتهاء مهلة الخادم إذا استُدعيت `disconnect()` أثناء القراءة المتوقفة.
+
+2. **الإصلاح المنفّذ في ملف الإنتاج الوحيد (`android/app/src/main/java/com/studentlearning/platform2026/data/download/DownloadStreamFetcher.kt`):**
+   - إضافة `@OptIn(InternalCoroutinesApi::class)` المتوافق مع `kotlinx-coroutines` (`1.9.0`) واستخدام `invokeOnCompletion(onCancelling = true, invokeImmediately = true)` لتنفيذ خطاف الإلغاء فور بدء الإلغاء.
+   - إضافة حارس `AtomicBoolean` (`disconnected` داخل `closeConnectionOnce`) لمنع الإغلاق المكرر بين خطاف الإلغاء وكتلة `finally` ودون آثار جانبية.
+   - إضافة `TrackingSSLSocketFactory` لاتصالات `HttpsURLConnection` لإغلاق مقابس SSL المتتبَّعة مباشرةً قبل `activeConnection.disconnect()`.
+   - تقييد مهلة شريحة القراءة (`JDK_HTTP_READ_SLICE_MS = 200ms` مع التجميع التراكمي لـ `SocketTimeoutException` حتى `READ_TIMEOUT_MS = 30_000ms` وفحص `currentCoroutineContext().ensureActive()`) على اتصالات OpenJDK HTTP غير المشفرة فقط (`usesJdkSunHttp`) دون تغيير سلوك Android OkHttp أو HTTPS (`readTimeout = 30_000ms`)، مع تفادي تعليق خيط الإلغاء على `MeteredStream.readLock` أثناء `isReadingBody.get() == true` ليُغلق التدفق والمقبس نظيفاً خلال `<= 200ms` وتُحذَف ملفات `.part` وتُمرَّر `CancellationException` دون تحويلها إلى خطأ عادي.
+   - لم يُمس أي ملف إنتاج آخر، ولم تُعدَّل الاختبارات الناجحة من الجولة السابقة.
+
+3. **نتائج التشغيل الفعلي النهائية:**
+   - **تشغيل الاختبار الفردي أولاً (`--tests "...OfflineDownloadsRepositoryImplTest.slow stalled http download cancellation closes socket releases resources and deletes part file"`):** **نجح (`BUILD SUCCESSFUL`)**.
+   - **تشغيل المجموعة الكاملة (`sh ./android/gradlew -p android :app:testDebugUnitTest --rerun-tasks --no-daemon --console=plain`):** **نجح بالكامل (`BUILD SUCCESSFUL in 1m 21s`, `24 actionable tasks: 24 executed`)**.
+   - **الأعداد النهائية المؤكدة من تقارير JUnit XML (`35` ملف `TEST-*.xml`):**
+     - الإجمالي: **`233`**
+     - الناجحة (`passed`): **`233`**
+     - الفاشلة (`failures`): **`0`**
+     - الأخطاء (`errors`): **`0`**
+     - المتجاوزة (`skipped`): **`0`**
+     - من ضمنها `OfflineDownloadsRepositoryImplTest`: **`21 / 21`** ناجحاً (`failures=0, errors=0, skipped=0`)، و`AdminCatalogRepositoryImplTest`: **`20 / 20`** ناجحاً.
+   - **حالة المرحلة الثامنة:** **تبقى المرحلة الثامنة مفتوحة** حتى المراجعة النهائية (مع استمرار بقاء اختبارات الجهاز/المحاكي `connectedDebugAndroidTest` و`google-services.json` والربط الحي خارج بيئة الحاوية الحالية، وعدم بدء المرحلة التاسعة أو دعم iOS).
 
 ---
 

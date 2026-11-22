@@ -222,6 +222,10 @@ class OfflineDownloadsRepositoryImplTest {
             return queued
         }
 
+        suspend fun awaitIdle() {
+            activeJobs.values.toList().forEach { it.join() }
+        }
+
         override suspend fun cancel(fileId: String, versionId: String) {
             val key = fileId to versionId
             activeJobs.remove(key)?.cancel()
@@ -260,7 +264,7 @@ class OfflineDownloadsRepositoryImplTest {
         streamFetcher: DownloadStreamFetcher,
         usableSpaceProvider: (File) -> Long = { 64L * 1024L * 1024L },
         prefsFile: File = File(tempFolder.newFolder(), "offline_downloads.preferences_pb"),
-        storageRoot: File = tempFolder.newFolder("offline_storage")
+        storageRoot: File = tempFolder.newFolder()
     ): Harness {
         val authRepository = FakeAuthRepository(initialSession = initialSession)
         val dataStore = PreferenceDataStoreFactory.create(
@@ -353,6 +357,7 @@ class OfflineDownloadsRepositoryImplTest {
                 val result = harness.repository.startDownload(sampleFile())
                 assertTrue(result is AppResult.Success)
                 advanceUntilIdle()
+                harness.scheduler.awaitIdle()
 
                 val saved = harness.repository.getVerifiedLocalVersion("file-1", "v1")
                 assertNotNull(saved)
@@ -402,6 +407,7 @@ class OfflineDownloadsRepositoryImplTest {
             // Download v1 completely first
             harness.repository.startDownload(sampleFile(versionId = "v1", versionNumber = 1, versionLabel = "v1"))
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
             val v1Saved = harness.repository.getVerifiedLocalVersion("file-1", "v1")
             assertNotNull(v1Saved)
 
@@ -659,6 +665,7 @@ class OfflineDownloadsRepositoryImplTest {
 
             harness.repository.startDownload(sampleFile(id = "f-local", versionId = "v1"))
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
 
             // Sign out to guest, then sign in as student_B
             harness.authRepository.signOut()
@@ -790,6 +797,7 @@ class OfflineDownloadsRepositoryImplTest {
                 )
                 validHarness.repository.startDownload(sampleFile(versionId = "v2"))
                 advanceUntilIdle()
+                validHarness.scheduler.awaitIdle()
                 val savedValid = validHarness.repository.getVerifiedLocalVersion("file-1", "v2")
                 assertNotNull(savedValid)
                 assertEquals(validSha, savedValid?.checksumSha256)
@@ -806,6 +814,7 @@ class OfflineDownloadsRepositoryImplTest {
                     expectedChecksumSha256 = wrongSha
                 )
                 advanceUntilIdle()
+                emptyFailHarness.scheduler.awaitIdle()
                 val emptyFailState = emptyFailHarness.repository.observeFileOfflineState("file-1", "v3").first()
                 assertEquals(DownloadStatus.FAILED, emptyFailState.activeVersionDownload?.status)
                 assertEquals(
@@ -823,6 +832,7 @@ class OfflineDownloadsRepositoryImplTest {
                     expectedChecksumSha256 = validSha
                 )
                 advanceUntilIdle()
+                emptyOkHarness.scheduler.awaitIdle()
                 assertNotNull(emptyOkHarness.repository.getVerifiedLocalVersion("file-1", "v4"))
 
                 // 4) Absent X-Content-Sha256 continues with expectedChecksumSha256 policy
@@ -837,6 +847,7 @@ class OfflineDownloadsRepositoryImplTest {
                     expectedChecksumSha256 = validSha
                 )
                 advanceUntilIdle()
+                absentHarness.scheduler.awaitIdle()
                 assertNotNull(absentHarness.repository.getVerifiedLocalVersion("file-1", "v5"))
             } finally {
                 server.stop(0)
@@ -1187,6 +1198,7 @@ class OfflineDownloadsRepositoryImplTest {
 
             harness.repository.startDownload(file)
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
             val saved = harness.repository.getVerifiedLocalVersion(file.id, file.activeVersionId)
             assertNotNull(saved)
 
@@ -1201,6 +1213,7 @@ class OfflineDownloadsRepositoryImplTest {
             // Re-download repairs the corrupted file
             harness.repository.startDownload(file)
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
             assertNotNull(harness.repository.getVerifiedLocalVersion(file.id, file.activeVersionId))
 
             // Case B: File is deleted externally after saving record
@@ -1243,11 +1256,16 @@ class OfflineDownloadsRepositoryImplTest {
             // 1) Complete v1 first
             harness.repository.startDownload(sampleFile(versionId = "v1", versionNumber = 1, versionLabel = "v1"))
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
             val completedV1 = harness.repository.getVerifiedLocalVersion("file-1", "v1")
             assertNotNull(completedV1)
             val completedV1File = File(completedV1!!.localFilePath)
 
-            // 2) Simulate leftovers from an earlier killed process (.part + .commit_*.tmp)
+            // 2) Start an active v2 download so an active .part file is registered in-flight
+            harness.repository.startDownload(sampleFile(versionId = "v2", versionNumber = 2, versionLabel = "v2"))
+            activeStarted.await()
+
+            // 3) Simulate leftovers from an earlier killed process (.part + .commit_*.tmp) while v2 is active
             val tmpDir = File(harness.storageRoot, LocalPdfStorageManager.TEMP_DIR_NAME).apply { mkdirs() }
             val orphanedPart = File(tmpDir, "deadbeef_dead01_abc123.part").apply {
                 writeText("%PDF-orphan-from-process-kill")
@@ -1255,10 +1273,6 @@ class OfflineDownloadsRepositoryImplTest {
             val orphanedCommitTmp = File(completedV1File.parentFile, ".commit_999999.tmp").apply {
                 writeText("%PDF-orphan-commit")
             }
-
-            // 3) Start an active v2 download so an active .part file is registered in-flight
-            harness.repository.startDownload(sampleFile(versionId = "v2", versionNumber = 2, versionLabel = "v2"))
-            activeStarted.await()
 
             val tempFilesBeforeCleanup = harness.storageManager.listAllTempFiles()
             assertEquals(2, tempFilesBeforeCleanup.size)
@@ -1276,6 +1290,7 @@ class OfflineDownloadsRepositoryImplTest {
             // 5) Finish active v2 download cleanly
             releaseActive.complete(Unit)
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
             assertNotNull(harness.repository.getVerifiedLocalVersion("file-1", "v2"))
             assertTrue(harness.storageManager.listAllTempFiles().isEmpty())
         }
@@ -1306,9 +1321,13 @@ class OfflineDownloadsRepositoryImplTest {
 
                             // Hold response mid-stream until the client cancels its blocked read().
                             allowServerSecondWrite.await(5, TimeUnit.SECONDS)
-                            repeat(4) {
-                                body.write(secondChunk)
-                                body.flush()
+                            if (exchange.awaitPeerClosed(timeoutMillis = 2_000)) {
+                                serverSawClosedSocket.set(true)
+                            } else {
+                                repeat(64) {
+                                    body.write(secondChunk)
+                                    body.flush()
+                                }
                             }
                         }
                     } catch (_: IOException) {
@@ -1433,6 +1452,7 @@ class OfflineDownloadsRepositoryImplTest {
             val startResult = harness.repository.startDownload(studyFile)
             assertTrue(startResult is AppResult.Success)
             advanceUntilIdle()
+            harness.scheduler.awaitIdle()
 
             // Verify student downloaded v1 locally before admin archives the parent file.
             val savedBeforeArchive = harness.repository.getVerifiedLocalVersion("physics-ch1", "v1")

@@ -50,11 +50,11 @@ import com.studentlearning.platform2026.presentation.theme.HaqibatiThemeTokens
 @Composable
 fun DownloadsScreen(
     viewModel: DownloadsViewModel,
+    modifier: Modifier = Modifier,
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onOpenLocalVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit = { _, _, _ -> },
-    onOpenLocalVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    onOpenLocalVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -72,12 +72,12 @@ fun DownloadsScreen(
 @Composable
 fun DownloadsScreenContent(
     uiState: DownloadsUiState,
+    modifier: Modifier = Modifier,
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onOpenLocalVersion: (fileId: String, fileTitle: String, versionId: String?) -> Unit = { _, _, _ -> },
     onDeleteLocalVersion: (fileId: String, versionId: String) -> Unit = { _, _ -> },
-    onOpenLocalVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    onOpenLocalVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null
 ) {
     val spacing = HaqibatiThemeTokens.spacing
     var pendingDeleteVersion by remember { mutableStateOf<LocalDownloadedFileVersion?>(null) }

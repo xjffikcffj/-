@@ -379,9 +379,17 @@ class AdminCatalogRepositoryImplTest {
             )
         )
         val remote = RecordingAdminRemoteDataSource()
-        val unconfiguredBroker = fakeVersionStorageBroker {
-            PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
-        }
+        val unconfiguredBroker = fakeVersionStorageBroker(
+            statusProvider = {
+                PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+            },
+            verifyProvider = { _, _ ->
+                AppResult.Error(
+                    message = "Cloudflare R2 verification broker is not configured.",
+                    cause = PdfLoadException(PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED)
+                )
+            }
+        )
         val repository = AdminCatalogRepositoryImpl(
             authRepository = authRepository,
             remoteDataSource = remote,
@@ -427,7 +435,27 @@ class AdminCatalogRepositoryImplTest {
                 )
             )
             var currentBrokerStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
-            val broker = fakeVersionStorageBroker { currentBrokerStatus }
+            val broker = fakeVersionStorageBroker(
+                statusProvider = { currentBrokerStatus },
+                verifyProvider = { fileId, versionId ->
+                    if (currentBrokerStatus != PdfBrokerConfigurationStatus.CONFIGURED) {
+                        AppResult.Error(
+                            message = "Cloudflare R2 verification broker is not configured.",
+                            cause = PdfLoadException(PdfFailureReason.SECURE_SOURCE_NOT_CONFIGURED)
+                        )
+                    } else {
+                        AppResult.Success(
+                            VerifiedPdfBinaryProof(
+                                fileId = fileId,
+                                versionId = versionId,
+                                r2ObjectKey = "study-files/$fileId/versions/$versionId/document.pdf",
+                                fileSizeBytes = 12_345L,
+                                checksumSha256 = "a".repeat(64)
+                            )
+                        )
+                    }
+                }
+            )
             val remote = RecordingAdminRemoteDataSource()
             val repository = AdminCatalogRepositoryImpl(
                 authRepository = authRepository,
@@ -533,7 +561,20 @@ class AdminCatalogRepositoryImplTest {
             authRepository = authRepository,
             remoteDataSource = remote,
             dispatcherProvider = testDispatchers,
-            pdfVersionStorageBroker = fakeVersionStorageBroker { PdfBrokerConfigurationStatus.CONFIGURED }
+            pdfVersionStorageBroker = fakeVersionStorageBroker(
+                statusProvider = { PdfBrokerConfigurationStatus.CONFIGURED },
+                verifyProvider = { fileId, versionId ->
+                    AppResult.Success(
+                        VerifiedPdfBinaryProof(
+                            fileId = fileId,
+                            versionId = versionId,
+                            r2ObjectKey = "study-files/$fileId/versions/$versionId/document.pdf",
+                            fileSizeBytes = 12_345L,
+                            checksumSha256 = "a".repeat(64)
+                        )
+                    )
+                }
+            )
         )
 
         val blockedPublish = repository.setStudyFilePublished("file-archived", isPublished = true)

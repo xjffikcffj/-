@@ -52,11 +52,11 @@ fun MainShellScreen(
     appContainer: AppContainer,
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminPortal: () -> Unit,
+    modifier: Modifier = Modifier,
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onNavigateToPdfReader: (fileId: String, fileTitle: String, activeVersionId: String?) -> Unit = { _, _, _ -> },
     onNavigateToPdfReaderWithLabel: ((fileId: String, fileTitle: String, activeVersionId: String?, versionLabel: String?) -> Unit)? = null,
-    modifier: Modifier = Modifier,
     tabNavController: NavHostController = rememberNavController()
 ) {
     val navBackStackEntry by tabNavController.currentBackStackEntryAsState()

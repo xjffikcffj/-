@@ -236,6 +236,7 @@ fun AdminPortalScreenContent(
     onToggleStudyFilePublish: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onToggleStudyFileArchive: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onMoveStudyFile: (com.studentlearning.platform2026.domain.model.StudyFileMetadata, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
     onOpenFileVersions: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit = {},
     onDismissFileVersions: () -> Unit = {},
     onRetryFileVersions: () -> Unit = {},
@@ -250,8 +251,7 @@ fun AdminPortalScreenContent(
     onSaveStudyFile: (String, com.studentlearning.platform2026.domain.model.StudyFileMetadata?, String?, String, String?, Int, Boolean) -> Unit,
     onSaveStudyFileVersion: (String, com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata?, String?, Int, String, String?, Boolean) -> Unit = { _, _, _, _, _, _, _ -> },
     onConfirmAction: () -> Unit,
-    onDismissConfirmation: () -> Unit,
-    modifier: Modifier = Modifier
+    onDismissConfirmation: () -> Unit
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),

@@ -119,7 +119,7 @@ class DownloadsViewModelTest {
 
             assertTrue(viewModel.uiState.value.hasSavedFiles)
             assertEquals(
-                listOf("file-1" to "v1", "file-1" to "v2"),
+                listOf("file-1" to "v2", "file-1" to "v1"),
                 viewModel.uiState.value.savedVersions.map { it.fileId to it.versionId }
             )
 

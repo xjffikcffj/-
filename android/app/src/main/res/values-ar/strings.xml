@@ -64,7 +64,6 @@
     <string name="downloads_empty_message">ستظهر الملفات التعليمية التي يتم تنزيلها للوصول دون اتصال في هذا القسم عند تفعيل وحدة التخزين والتنزيلات.</string>
 
     <!-- Settings -->
-    <string name="settings_title">الإعدادات</string>
     <string name="settings_appearance_section">المظهر واللغة</string>
     <string name="settings_dark_mode_title">الوضع الداكن</string>
     <string name="settings_dark_mode_subtitle">تبديل ألوان الواجهة بين الوضع الفاتح والداكن</string>
@@ -227,9 +226,6 @@
     <string name="account_owner_permissions_summary">صلاحية المالك الكاملة المعتمدة من الخادم.</string>
     <string name="account_local_device_independence_note">بيانات الاستخدام والتفضيلات الشخصية والمفضلة وتقدم القراءة والتنزيلات تبقى محفوظة محلياً لكل جهاز فقط ولا تُمسح عند تسجيل الخروج.</string>
     <string name="account_signed_out_success">تم تسجيل الخروج بنجاح مع بقاء إعداداتك وبياناتك المحلية محفوظة على هذا الجهاز.</string>
-    <string name="account_session_refreshed_success">تم تحديث بيانات الحساب والصلاحيات بنجاح.</string>
-    <string name="account_status_label">حالة الجلسة</string>
-    <string name="account_active_email_label">البريد المسجّل</string>
 
     <string name="auth_sign_in_screen_title">تسجيل الدخول</string>
     <string name="auth_sign_in_subtitle">سجّل الدخول بحسابك في حقيبتي. يحصل الحساب العادي على صلاحية طالب، بينما تُضبط صلاحيات المشرف والمالك من الخادم فقط.</string>
@@ -258,7 +254,6 @@
     <string name="auth_sign_up_success_message">تم تسجيل دخولك بالحساب (%1$s) بصلاحية طالب افتراضية.</string>
     <string name="auth_sign_in_success_title">أهلاً بك في حقيبتي</string>
     <string name="auth_sign_in_success_message">تم تسجيل الدخول بالحساب (%1$s) — الدور الحالي: %2$s.</string>
-    <string name="auth_password_reset_success_title">تم إرسال رابط الاستعادة</string>
     <string name="auth_password_reset_success_message">أُرسلت رسالة إعادة تعيين كلمة المرور إلى (%1$s) إن كان البريد مرتبطاً بحساب فعّال. تحقّق من صندوق الوارد أو البريد غير المرغوب.</string>
 
     <string name="downloads_guest_notice_title">التنزيلات متاحة للحسابات المسجّلة</string>
@@ -287,7 +282,6 @@
     <string name="pdf_reader_loading">جاري تجهيز صفحات الملف…</string>
     <string name="pdf_reader_page_loading">جاري تحميل الصفحة %1$d…</string>
     <string name="pdf_reader_page_indicator">صفحة %1$d من %2$d</string>
-    <string name="pdf_reader_page_jump_action">الانتقال إلى صفحة</string>
     <string name="pdf_reader_page_jump_title">الانتقال إلى صفحة محددة</string>
     <string name="pdf_reader_page_jump_hint">أدخل رقم الصفحة (1 إلى %1$d)</string>
     <string name="pdf_reader_page_jump_confirm">انتقال</string>
@@ -297,7 +291,6 @@
 
     <string name="pdf_reader_zoom_in">تكبير</string>
     <string name="pdf_reader_zoom_out">تصغير</string>
-    <string name="pdf_reader_zoom_reset">إعادة ضبط التكبير</string>
     <string name="pdf_reader_zoom_percent">%1$d%%</string>
 
     <string name="pdf_reader_night_mode">الوضع الليلي للقراءة</string>
@@ -379,7 +372,6 @@
     <string name="admin_version_status_active_published">الإصدار الفعّال المنشور</string>
     <string name="admin_version_status_archived_history">إصدار سابق محفوظ</string>
     <string name="admin_version_status_draft">مسودة غير منشورة</string>
-    <string name="admin_version_r2_key_label">مسار التخزين في R2: %1$s</string>
     <string name="admin_version_r2_pending_label">ملف PDF على Cloudflare R2: بانتظار وسيط الرفع الآمن</string>
     <string name="admin_version_published_date_label">تاريخ النشر: %1$s</string>
     <string name="admin_version_notes_label">ملاحظات التحديث: %1$s</string>
@@ -389,7 +381,6 @@
     <string name="admin_field_version_number">رقم الإصدار التسلسلي (1، 2، 3…)</string>
     <string name="admin_field_version_label">تسمية الإصدار (مثل 2.0 أو نسخة 2026)</string>
     <string name="admin_field_version_notes">ملاحظات التحديث (اختياري)</string>
-    <string name="admin_field_publish_version_immediately">تفعيل ونشر هذا الإصدار فوراً كأحدث إصدار للطلاب</string>
 
     <string name="admin_r2_upload_broker_pending_notice">رفع ملفات PDF الفعلية إلى Cloudflare R2 بانتظار تفعيل وسيط التوقيع الآمن على الخادم؛ لا تُستخدم أي مفاتيح أو روابط وهمية.</string>
     <string name="admin_r2_upload_broker_configured_notice" formatted="false">وسيط Cloudflare R2 مفعّل عبر Backend D2: اختر ملف PDF (%PDF- بحد أقصى 100 ميجابايت) لرفعه مؤقتاً ثم التحقق من حجمه وبصمة SHA-256 قبل النشر.</string>

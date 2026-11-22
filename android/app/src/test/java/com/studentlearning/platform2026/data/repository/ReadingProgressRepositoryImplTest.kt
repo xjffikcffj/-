@@ -12,7 +12,12 @@ import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -42,10 +47,11 @@ class ReadingProgressRepositoryImplTest {
     private fun createRepository(
         prefsFile: File,
         scope: TestScope,
-        clock: () -> Long = { 1_700_000_000_000L }
+        clock: () -> Long = { 1_700_000_000_000L },
+        dataStoreScope: CoroutineScope = scope.backgroundScope
     ): ReadingProgressRepositoryImpl {
         val dataStore = PreferenceDataStoreFactory.create(
-            scope = scope.backgroundScope,
+            scope = dataStoreScope,
             produceFile = { prefsFile }
         )
         return ReadingProgressRepositoryImpl(
@@ -107,7 +113,8 @@ class ReadingProgressRepositoryImplTest {
                 )
             )
 
-            val firstRepo = createRepository(prefsFile, this)
+            val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val firstRepo = createRepository(prefsFile, this, dataStoreScope = firstScope)
             firstRepo.saveLastPage(fileId = "math-ch1", pageNumber = 23, totalPages = 50)
 
             // Sign out and switch to guest / another user: local progress must remain untouched.
@@ -123,6 +130,7 @@ class ReadingProgressRepositoryImplTest {
                 )
             )
 
+            firstScope.coroutineContext[Job]?.cancelAndJoin()
             val recreatedRepo = createRepository(prefsFile, this)
             val restored = recreatedRepo.getProgress("math-ch1")
             assertEquals(23, restored?.lastPageNumber)
@@ -164,7 +172,8 @@ class ReadingProgressRepositoryImplTest {
     @Test
     fun `isolates reading progress per versionId for the same fileId without UID dependency`() = runTest {
         val prefsFile = File(tempFolder.newFolder(), "versions.preferences_pb")
-        val repository = createRepository(prefsFile, this)
+        val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repository = createRepository(prefsFile, this, dataStoreScope = firstScope)
 
         repository.saveLastPage(fileId = "physics-ch1", pageNumber = 5, totalPages = 30, versionId = "v1")
         repository.saveLastPage(fileId = "physics-ch1", pageNumber = 19, totalPages = 40, versionId = "v2")
@@ -189,6 +198,7 @@ class ReadingProgressRepositoryImplTest {
         assertEquals(2, repository.getProgress("physics-ch1", versionId = null)?.lastPageNumber)
 
         // Re-creating repository preserves isolated version progress across restarts/account switches.
+        firstScope.coroutineContext[Job]?.cancelAndJoin()
         val recreated = createRepository(prefsFile, this)
         assertEquals(19, recreated.getProgress("physics-ch1", versionId = "v2")?.lastPageNumber)
     }
