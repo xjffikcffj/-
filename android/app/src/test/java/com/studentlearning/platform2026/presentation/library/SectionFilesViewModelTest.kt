@@ -387,6 +387,10 @@ class SectionFilesViewModelTest {
                     Thread.sleep(10)
                 }
                 advanceUntilIdle()
+                assertTrue(
+                    "Timed out waiting for expected SectionFilesUiState (last=${viewModel.uiState.value})",
+                    predicate(viewModel.uiState.value)
+                )
             }
             awaitUiState { (it as? SectionFilesUiState.Content)?.offlineStates?.containsKey(file.id) == true }
 

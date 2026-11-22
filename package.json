@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit",
     "dev:api": "PORT=8081 tsx server.ts",
     "start": "tsx server.ts",
-    "test:backend": "firebase emulators:exec --only firestore --project student-learning-platform-2026 \"npx tsx --test tests/backend/backend.api.test.ts\"",
+    "test:backend": "firebase emulators:exec --only firestore --project student-learning-platform-2026 \"npx tsx --test tests/backend/backend.api.test.ts tests/backend/entrypointAndRateLimit.test.ts tests/backend/r2StagingLifecycle.test.ts\"",
     "test:rules": "firebase emulators:exec --only firestore --project student-learning-platform-2026 \"npx tsx --test tests/firestore.rules.test.ts\""
   },
   "dependencies": {

@@ -52,6 +52,7 @@ fun resolveAuthErrorText(
 
     val errorRes = when (reason) {
         AdminFailureReason.FIREBASE_NOT_CONFIGURED -> R.string.admin_error_not_configured
+        AdminFailureReason.BACKEND_NOT_CONFIGURED -> R.string.admin_error_backend_not_configured
         AdminFailureReason.UNAUTHENTICATED -> R.string.admin_error_unauthenticated
         AdminFailureReason.INSUFFICIENT_ROLE -> R.string.admin_error_insufficient_role
         AdminFailureReason.SESSION_VERIFICATION_REQUIRED -> R.string.admin_error_session_verification_required

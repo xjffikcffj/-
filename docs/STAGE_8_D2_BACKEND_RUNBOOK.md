@@ -18,7 +18,7 @@
 ```bash
 npm run test:backend
 ```
-يشغّل هذا الأمر محاكي Firestore المحلي تلقائياً ويُنفّذ حزمة `tests/backend/backend.api.test.ts` للتحقق من:
+يشغّل هذا الأمر محاكي Firestore المحلي تلقائياً ويُنفّذ حزم اختبارات الخادم الثلاث (`tests/backend/backend.api.test.ts` و`tests/backend/entrypointAndRateLimit.test.ts` و`tests/backend/r2StagingLifecycle.test.ts`) للتحقق من:
 - المصادقة (`verifyIdToken(token, true)` + إبطال الرموز + `admin`/`owner`/`student`/`guest`/مجهول).
 - نقاط قراءة الفهرس الحية (`/api/catalog/*`) والتحقق الحي من 5 مستويات دون كاش داخلي.
 - إنشاء مسودات الإصدارات وحظر الحقول الحساسة من العميل.
@@ -61,20 +61,27 @@ npm run build
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | JSON حساب الخدمة لـ Firebase Admin SDK (أو يُترك فارغاً عند الاعتماد على ADC في Cloud Run) | **نعم** |
 | `FIRESTORE_EMULATOR_HOST` | يُستخدم للتطوير/الاختبار المحلي فقط (`127.0.0.1:8080`) | لا |
 | `R2_ACCOUNT_ID` | معرّف حساب Cloudflare (أو يستخدم مع `R2_ENDPOINT`) | نعم/تهيئة |
-| `R2_ENDPOINT` | نقطة اتصال S3-compatible لـ Cloudflare R2 (`https://<account>.r2.cloudflarestorage.com`) | لا |
+| `R2_ENDPOINT` | نقطة اتصال S3-compatible اختيارية لـ Cloudflare R2؛ إذا حُدِّدت يجب أن تستخدم `HTTPS` صالحاً (يُرفض `HTTP` أو أي رابط غير صالح)، وإذا تُركت فارغة يُبنى العنوان الافتراضي `https://<account>.r2.cloudflarestorage.com` تلقائياً من `R2_ACCOUNT_ID` | لا |
 | `R2_BUCKET_NAME` | اسم حاوية R2 المخصصة للملفات الدراسية | لا |
 | `R2_ACCESS_KEY_ID` | مفتاح الوصول لـ Cloudflare R2 API Token (أقل صلاحيات على Bucket واحد فقط) | **نعم** |
 | `R2_SECRET_ACCESS_KEY` | المفتاح السري لـ Cloudflare R2 API Token | **نعم** |
 | `ALLOWED_ORIGINS` | قائمة المصادر المسموحة لـ CORS مفصولة بفاصلة (بدون `*`) | لا |
-| `TRUST_PROXY` | عدد قفزات البروكسي الموثوقة في Express (`false` افتراضياً محلياً، أو `1` خلف Google Front End في Cloud Run؛ يُمنع التفعيل العام `true`) | لا |
+| `TRUST_PROXY` | إعداد البروكسي الموثوق في Express (`false` افتراضياً بوضع Fail-Closed؛ تُرفض قيمتا `'true'` و`'all'` والقيم غير الصالحة وتتحول إلى `false`؛ ولا يُضبط عدد قفزات محدد `1..10` إلا خلف بروكسي موثوق غير قابل للتجاوز شبكياً وبعدد القفزات الدقيق فقط) | لا |
 | `UPLOAD_SESSION_TTL_SECONDS` | مدة صلاحية جلسة الرفع المؤقتة بالثواني (افتراضي `600` = 10 دقائق) | لا |
 | `VERIFY_LOCK_TTL_SECONDS` | مدة قفل محاولة التحقق بالثواني (افتراضي `300` = 5 دقائق) | لا |
 | `MAX_PDF_BYTES` | الحد الأقصى المسموح لحجم ملف PDF بالبايت (افتراضي `104857600` = 100 MiB) | لا |
 | `HAQIBATI_BACKEND_BASE_URL` | عنوان الـ HTTPS للخادم الوسيط يُمرّر لبناء Android عبر Gradle property أو متغير بيئة (`BuildConfig`) دون كشف أي أسرار R2 | لا |
 
-### حدود Rate Limiting قبل النشر على Cloud Run
+### حدود Rate Limiting وضبط `TRUST_PROXY` قبل النشر على Cloud Run
 - يطبّق الخادم حالياً حماية **محلية في الذاكرة لكل نسخة (`InMemoryRateLimiter`)** كطبقة دفاع إضافية فقط، و**ليست** حماية موزعة عبر عدة نسخ أو بديلاً عن حماية Edge.
-- عند النشر على Cloud Run (حيث تتعدد الحاويات تلقائياً وتُعاد تهيئة الذاكرة عند scale-to-zero)، يلزم قبل الإنتاج تفعيل **Edge / Load Balancer Rate Limiting** (مثل **Google Cloud Armor** على External HTTPS Load Balancer أو **Cloudflare WAF Rate Limiting**) أمام Cloud Run، مع ضبط `TRUST_PROXY=1` (أو عدد القفزات الموثوقة الدقيق فقط) وعدم الوثوق برؤوس `X-Forwarded-For` القادمة من العملاء مباشرة.
+- **الوضع الافتراضي المعتمد في التصميم والرمز هو عدم الوثوق بالبروكسي (`TRUST_PROXY=false`):** يتجاهل Express ترويسة `X-Forwarded-For` تماماً، ويقرأ `normalizeClientIp` قيمة `req.ip` (أي عنوان مقبس TCP المباشر `req.socket.remoteAddress` فقط)؛ كما يرفض `parseTrustProxyEnv` في `server/config/env.ts` التفعيل العام (`true` / `all`) ويعيده قسراً إلى `false`.
+- **متى يُضبط عدد قفزات محدد (مثل `TRUST_PROXY=1`) وشروطه الأمنية الصارمة:**
+  - إذا كان الخادم خلف **Cloud Run (Google Front End)**، فإن GFE يضيف عنوان العميل الفعلي كـ **آخر (أقصى يمين) عنوان** في `X-Forwarded-For`. مع `TRUST_PROXY=false` يرى Express عنوان GFE الداخلي نفسه لجميع الطلبات، لذا قد تَبرز الحاجة إلى `TRUST_PROXY=1` فقط لمنع تشارك حد واحد لكل المستخدمين.
+  - **لا يجوز تفعيل `TRUST_PROXY=1` (أو أي رقم `1..10`) إلا بتحقق الشروط الثلاثة معاً:**
+    1. **منع الالتفاف الشبكي (`Non-bypassable Proxy`):** ألا يتمكن أي عميل من الوصول مباشرة إلى منفذ الحاوية أو إلى رابط `*.run.app` متجاوزاً البروكسي الموثوق؛ وإلا سيتمكن المهاجم من تزوير القفزة اليمنى في `X-Forwarded-For`.
+    2. **مطابقة عدد القفزات الفعلي بدقة:** خلف Cloud Run GFE وحده يكون العدد `1`؛ أما عند وضع **Cloudflare WAF** أو **External HTTPS Load Balancer + Cloud Armor** أمام Cloud Run، فتصبح السلسلة عادةً قفزتين (`Edge/LB -> GFE -> Container`) ويُحظر الوصول المباشر لـ `*.run.app` (عبر `--ingress=internal-and-cloud-load-balancing` أو حماية الأصل)، أو يُترك `TRUST_PROXY=false` وتُفرض حدود IP في طبقة Edge WAF.
+    3. **عدم قراءة `X-Forwarded-For` يدوياً:** يقتصر `server/middleware/rateLimit.ts` على قراءة `req.ip` المدار عبر Express `proxy-addr` (الذي يتجاهل القيم اليسرى المزورة من العميل عند ضبط عدد القفزات الدقيق).
+  - قبل الإنتاج الفعلي على Cloud Run، يلزم تفعيل **Edge / Load Balancer Rate Limiting** (مثل **Google Cloud Armor** أو **Cloudflare WAF Rate Limiting**).
 
 ### سياسة Cloudflare R2 Lifecycle المقترحة لمسار Staging فقط (مؤجلة لحين إعداد R2 الفعلي)
 - **العزل الصارم للمفاتيح:**
@@ -153,3 +160,30 @@ cd android
 ./gradlew assembleDebug -PHAQIBATI_BACKEND_BASE_URL="https://api.example.com"
 ```
 عند ترك `HAQIBATI_BACKEND_BASE_URL` فارغاً، يعمل التطبيق بوضع **Fail-Closed** الآمن (`AWAITING_SECURE_BROKER_INTEGRATION`) دون استخدام روابط غير مشفرة (`http://`) أو أي بيانات وهمية.
+
+---
+
+## 5. قائمة الجاهزية التشغيلية وموافقات المالك والمخاطر المتبقية
+
+### أ) الفارق بين الاختبارات المنفذة فعلياً والاختبارات غير المنفذة في الحاوية الحالية
+- **نُفّذت ونجحت مباشرة عبر Node.js دون Java أو محاكي Firestore:**
+  ```bash
+  npm run lint
+  npm run build
+  npx tsx --test tests/backend/entrypointAndRateLimit.test.ts tests/backend/r2StagingLifecycle.test.ts   # 20 / 20 ناجحة عبر 4 مجموعات
+  npx tsx --test src/data/seedCatalog.test.ts src/domain/fixesVerification.test.ts src/screens/pdfReaderDom.test.tsx   # 3 / 3 ملفات اختبار ناجحة
+  ```
+- **لم تُنفَّذ في بيئة العمل الحالية (تتطلب `Java JDK 21+` ومحاكياً محلياً):** `npm run test:rules` (`17` اختباراً) و`npm run test:backend` (`36` اختباراً تشمل الحزم الثلاث: `16` في `backend.api.test.ts` + `7` في `entrypointAndRateLimit.test.ts` + `13` في `r2StagingLifecycle.test.ts`).
+- **لم تُنفَّذ في بيئة العمل الحالية (تتطلب `JDK 17+` و`Android SDK 35` و`google-services.json` لاختبارات التكامل الحي):** `./gradlew testDebugUnitTest` (`253` اختبار `@Test` في `37` ملف اختبار من أصل `40` ملف `.kt`) و`./gradlew lintDebug` و`./gradlew assembleDebug` و`./gradlew connectedDebugAndroidTest` (`52` اختباراً في `8` ملفات على جهاز/محاكي). **أي نتائج سابقة مذكورة تاريخياً لهذه الأوامر لا تُعدّ إثباتاً سارياً على النسخة الحالية حتى إعادة تشغيلها.**
+
+### ب) المتطلبات الخارجية وموافقات المالك قبل التشغيل الفعلي (غير منفذة وغير متصلة بعد)
+1. **موافقة المالك على نشر قواعد وفهارس Firebase:** تنفيذ `firebase deploy --only firestore:rules,firestore:indexes` لمشروع `student-learning-platform-2026`، والتأكد من تفعيل Email/Password وCustom Claims (`owner` / `admin`) في Firebase Auth (غير منشورة حالياً).
+2. **موافقة المالك على موارد Cloudflare R2 (قد تترتب تكاليف فوق الباقة المجانية):** إنشاء Bucket خاص، إصدار API Token بأقل صلاحيات على هذه الحاوية فقط، وتفعيل قاعدة Lifecycle **على البادئة `uploads-staging/` فقط** لمدة `24` ساعة (1 يوم) (غير منشأة حالياً).
+3. **موافقة المالك على استضافة Backend D2 المدفوعة / السحابية:** نشر `server.ts` على Cloud Run (بمنفذ `8080` و`HTTPS`) (غير منشور حالياً)، وضبط المتغيرات السرية في Secret Manager، وتفعيل **Cloud Armor** أو **Cloudflare WAF Rate Limiting** أمام Cloud Run، وضبط `TRUST_PROXY` إما على `false` أو على عدد القفزات الموثوقة الدقيق فقط بعد إغلاق المسار المباشر للحاوية/الأصل لمنع تزوير `X-Forwarded-For`.
+4. **بناء Android الفعلي والاختبار الحي:** وضع `android/app/google-services.json` محلياً دون رفعه لـ Git، وتمرير `-PHAQIBATI_BACKEND_BASE_URL="https://<your-backend-domain>"` أثناء بناء Release/Debug، ثم تشغيل اختبارات Android الكاملة واختبار المصادقة والرفع والبث والتنزيل حياً على جهاز حقيقي.
+
+### ج) المخاطر والقيود المتبقية
+- **الفارق بين اكتمال الشيفرة والتشغيل الفعلي:** الشيفرة مكتملة برمجياً مبدئياً، لكن Backend D2 وCloudflare R2 وFirestore Production غير منشورة أو متصلة بعد، واختبارات Android/Rules/Backend الأساسية لم تُشغّل بعد على هذه النسخة.
+- اختبارات `backend.api.test.ts` تستخدم `MockR2StorageAdapter`، لذا تبقى مطابقة استجابات R2 الحقيقية (`ETag`, `Content-Length`, أخطاء S3) بحاجة لتحقق عملي أولي على بيئة staging حقيقية بعد إنشاء الحاوية.
+- يعتمد `InMemoryRateLimiter` على ذاكرة الحاوية الواحدة؛ لا يكفي وحده عند التوسع الأفقي لـ Cloud Run دون طبقة Edge Rate Limiting.
+- عند فراغ `HAQIBATI_BACKEND_BASE_URL`، يفصل الآن كل من مسار الكتالوج (`CatalogFailureReason.BACKEND_NOT_CONFIGURED`) ومسار الإدارة (`AdminFailureReason.BACKEND_NOT_CONFIGURED`) غياب الـ Backend عن غياب Firebase مع إبقاء عمليات الرفع والنشر معطلة عبر `AWAITING_SECURE_BROKER_INTEGRATION`؛ غير أن تجميع وتشغيل `BackendAdminVersionDataSourceTest.kt` وبقية اختبارات Android بانتظار بيئة `JDK / Android SDK`.

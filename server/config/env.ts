@@ -50,6 +50,37 @@ function parseTrustProxyEnv(raw: string | undefined): TrustProxySetting {
   return false;
 }
 
+export function validateR2Endpoint(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim() ?? '';
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('Invalid R2_ENDPOINT: malformed URL.');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Invalid R2_ENDPOINT: must use HTTPS.');
+  }
+  if (!parsed.hostname) {
+    throw new Error('Invalid R2_ENDPOINT: hostname is required.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Invalid R2_ENDPOINT: embedded credentials are not allowed.');
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error('Invalid R2_ENDPOINT: query parameters and fragments are not allowed.');
+  }
+
+  return parsed.pathname === '/'
+    ? parsed.origin
+    : `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const allowedOrigins = (env.ALLOWED_ORIGINS ?? '')
     .split(',')
@@ -67,7 +98,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     firebaseAuthEmulatorHost:
       env.FIREBASE_AUTH_EMULATOR_HOST?.trim() || undefined,
     r2AccountId: env.R2_ACCOUNT_ID?.trim() || undefined,
-    r2Endpoint: env.R2_ENDPOINT?.trim() || undefined,
+    r2Endpoint: validateR2Endpoint(env.R2_ENDPOINT),
     r2BucketName: env.R2_BUCKET_NAME?.trim() || undefined,
     r2AccessKeyId: env.R2_ACCESS_KEY_ID?.trim() || undefined,
     r2SecretAccessKey: env.R2_SECRET_ACCESS_KEY?.trim() || undefined,
@@ -94,9 +125,18 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
 }
 
 export function isR2Configured(config: ServerConfig): boolean {
-  const hasEndpoint = Boolean(config.r2Endpoint || config.r2AccountId);
+  let hasValidEndpoint = false;
+  if (config.r2Endpoint && config.r2Endpoint.trim().length > 0) {
+    try {
+      hasValidEndpoint = Boolean(validateR2Endpoint(config.r2Endpoint));
+    } catch {
+      return false;
+    }
+  } else {
+    hasValidEndpoint = Boolean(config.r2AccountId?.trim());
+  }
   return Boolean(
-    hasEndpoint &&
+    hasValidEndpoint &&
       config.r2BucketName &&
       config.r2AccessKeyId &&
       config.r2SecretAccessKey,

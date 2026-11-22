@@ -1,7 +1,7 @@
 # نقطة التوقف — المرحلة الثامنة: تدقيق Backend D2 وربط Android (`STAGE_8_CHECKPOINT.md`)
 
-**حالة المرحلة:** لم تُغلق المرحلة الثامنة نهائياً بعد، ولم تبدأ المرحلة التاسعة. تم تحديث هذا الملف بنتائج جولة `:app:testDebugUnitTest` الفعلية الأخيرة في القسم `2.12` (نجاح كامل **`233 / 233`** اختباراً في `:app:testDebugUnitTest` عبر `35` ملف JUnit XML، مع `0` أخطاء تجميع و`0` فشل و`0` أخطاء و`0` متجاوز، بعد إصلاح إلغاء التنزيل المتوقف في ملف الإنتاج الوحيد `DownloadStreamFetcher.kt`؛ وبقاء `google-services.json` و`.git` غير موجودين في الحاوية). **تبقى المرحلة الثامنة مفتوحة حتى المراجعة النهائية.**
-- السجل التاريخي للجولات السابقة في الحاوية: تم تنفيذ **دفعة الإصلاح المحدودة للأعطال الستة** لإزالة عوائق بناء Android واختبارات Backend، ونجحت وقتها `npm run lint` (`0`) و`npm run build` (`0`) و`npm run test:rules` (`17/17`) و`npm run test:backend` (`16/16`) و`:app:compileDebugKotlin`، ثم في جولة لاحقة أُنتج APK مع `google-services.json` بحجم `32,885,792` بايت وبعدها `33,661,462` بايت بعد فصل `BACKEND_NOT_CONFIGURED` (دون وجود `google-services.json` حالياً في الحاوية المستوردة). **تبقى المرحلة الثامنة مفتوحة.**
+**حالة المرحلة:** **قيد المراجعة النهائية للمالك (مكتملة برمجياً مبدئياً مع فصل `BACKEND_NOT_CONFIGURED` وتشديد `R2_ENDPOINT` وتوحيد `test:backend`، ولكنها غير معتمدة/غير مغلقة بعد وتحتاج إلى إعدادات خارجية وإعادة تشغيل الاختبارات في بيئة مكتملة قبل التشغيل الفعلي)**، ولم تبدأ المرحلة التاسعة. تم تحديث هذا الملف بنتائج التدقيق الختامي ومعالجة الملاحظات المتبقية في القسم `2.13` على النسخة الحالية (تحوي `253` اختبار وحدة Kotlin `@Test` في `37` ملف اختبار من أصل `40` ملفاً داخل `src/test/`، و`52` اختبار `androidTest` في `8` ملفات، وتطابق نصوص `371 / 371` عنصر `<string>` بين الإنجليزية والعربية منفصلةً عن ملفات موارد XML المشتركة في `res/`، و`17` اختبار قواعد، و`16` اختبار تكامل خادم على المحاكي، و`20` اختبار وحدة خادم مستقل لا يحتاج محاكياً [موحّدة جميعها أيضاً ضمن `npm run test:backend` بإجمالي `36` اختباراً]، و`3` ملفات اختبارات ويب). جميع الأرقام السابقة في الأقسام `2`–`2.12` تمثل **سجلات تاريخية لنسخ سابقة وليست نتائج اختبار ناجحة للنسخة المستوردة الحالية**؛ إذ لم تُنفَّذ في بيئة العمل الحالية اختبارات Android أو محاكي Firestore Rules أو Backend Emulator لغياب `.git` و`google-services.json` و`Java JDK` و`Android SDK`.
+- ملاحظة توثيقية حول السجلات التاريخية (`2`–`2.12`): تبقى تلك الفقرات محفوظة كمرجع تاريخي لما أُجري في جولات سابقة خارج هذه الحاوية (بما فيها بناء APK سابق أو تشغيل محاكٍ محلي)، ولا يجوز الاستناد إليها باعتبارها نتائج اختبارات سارية على النسخة الحالية قبل إعادة تشغيلها بالكامل في بيئة تطوير مكتملة. **تبقى المرحلة الثامنة مفتوحة بانتظار المراجعة والاعتماد.**
 
 ---
 
@@ -158,7 +158,7 @@
     - لم يلزم أي إعادة بناء لأن APK جاهز ومطابق تماماً.
 - **مسار استعادة Custom Claims ودور المالك الموجود مسبقاً:**
   - عند تسجيل الدخول (`FirebaseAuthDataSource.signInWithEmailAndPassword`) أو استعادة الجلسة عند تشغيل التطبيق (`AuthRepositoryImpl` عبر `AuthStateListener`) أو فتح لوحة المشرفين (`AdminPortalViewModel.refreshSession(forceTokenRefresh = true)`), يستدعي التطبيق `currentUser.getIdToken(true)` ويقرأ `claims["role"]` (`AdminRole.fromClaim`) لإظهار دور **`مالك (Owner)`** في الإعدادات وفتح بوابة `AdminPortalScreen` دون إعادة تعيين أي صلاحية أو إنشاء حساب مالك جديد.
-- **الإتاحة المباشرة للـ APK (دون ZIP ودون GitHub):** تم التحقق من أن خادم التطوير المحلي (`vite --port=3000`) يقدّم المسار `/android/app/build/outputs/apk/debug/app-debug.apk` مباشرة بالحالة `HTTP 200 OK` وبالحجم والبصمة نفسهما (`32,885,792` بايت).
+- **الإتاحة المباشرة للـ APK (سجل تاريخي قبل تعديل `2.10`):** في تلك الجولة التاريخية كان خادم التطوير يقدّم `/android/app/build/outputs/apk/debug/app-debug.apk` (`32,885,792` بايت)؛ ولاحقاً في القسم `2.10` قُيّد التنزيل في `vite.config.ts` على المسار `/download/app-debug.apk` فقط مع حظر `/android/**` بـ `403`، وفي مساحة العمل المستوردة الحالية لا يوجد مجلد `android/app/build/` ولا أي ملف APK مبني.
 - **حالة المرحلة:** **بانتظار تنفيذ المالك لاختبار Firebase Auth الحقيقي على هاتفه Android وتثبيت النتيجة**؛ تبقى **المرحلة الثامنة مفتوحة** ولم تبدأ المرحلة التاسعة.
 
 ---
@@ -292,6 +292,73 @@
      - المتجاوزة (`skipped`): **`0`**
      - من ضمنها `OfflineDownloadsRepositoryImplTest`: **`21 / 21`** ناجحاً (`failures=0, errors=0, skipped=0`)، و`AdminCatalogRepositoryImplTest`: **`20 / 20`** ناجحاً.
    - **حالة المرحلة الثامنة:** **تبقى المرحلة الثامنة مفتوحة** حتى المراجعة النهائية (مع استمرار بقاء اختبارات الجهاز/المحاكي `connectedDebugAndroidTest` و`google-services.json` والربط الحي خارج بيئة الحاوية الحالية، وعدم بدء المرحلة التاسعة أو دعم iOS).
+
+---
+
+## 2.13. محضر المراجعة النهائية للمرحلة الثامنة (النسخة الحالية — بانتظار الاعتماد)
+
+1. **فحص البيئة والمستودع والأسرار:**
+   - **Git وGitHub:** مجلد `.git` **غير موجود** في حاوية العمل المستوردة؛ لا يمكن التحقق برمجياً من الفرع الحالي أو الـ commit الأخير أو آخر 16 تغييراً من داخل هذه البيئة، ولا توجد أي تغييرات محفوظة أو مدفوعة إلى GitHub من هذه الحاوية.
+   - **`android/app/google-services.json` والأسرار:** غير موجود في النسخة المستوردة الحالية، وتستثنيه قواعد `.gitignore` و`android/.gitignore` بصورة صحيحة مع استبعاد `.env*` و`*service-account*.json` و`*firebase-adminsdk*.json` و`*.apk`/`*.aab`/`*.keystore`/`*.jks`.
+   - **الأدوات:** يتوفر `Node.js` و`npm` و`firebase-cli 15.34.1`؛ بينما **لا يتوفر** `Java JDK` أو `Android SDK` أو محاكي Firestore شغّال أو جهاز/محاكي Android في الحاوية الحالية.
+
+2. **جرد الاختبارات والموارد المثبت برمجياً في النسخة الحالية:**
+   - **Android Unit Tests (`android/app/src/test`):** **`253`** اختبار `@Test` في **`37`** ملف اختبار (من أصل `40` ملف `.kt` تشمل `3` ملفات مساعدة ومزيفات اختبارية، وتشمل الـ `253` حالة `249` اختباراً سابقاً + **`4`** اختبارات جديدة في `BackendAdminVersionDataSourceTest.kt`).
+   - **Android Instrumented Tests (`android/app/src/androidTest`):** **`52`** اختبار `@Test` عبر **`8`** ملفات.
+   - **تطابق النصوص وموارد XML (`android/app/src/main/res/`):**
+     - ملفات النصوص (`values/strings.xml` مقابل `values-ar/strings.xml`): **`371 / 371`** عنصر `<string>` متطابق بالكامل (`370 / 370` قبل إضافة `admin_error_backend_not_configured`، ثم `371 / 371` بعد إضافته؛ `0` نقص و`0` زيادة).
+     - ملفات الموارد المشتركة في `res/` **منفصلة عن عدد النصوص**: أشار الجرد السابق إلى **`8`** ملفات موارد XML مشتركة منفصلة عن ملفَي النصوص، وبالفحص المباشر توجد `9` ملفات XML غير نصية (`drawable/*` [3]، `mipmap-anydpi-v26/*` [2]، `values/themes.xml` [1]، `xml/*` [3]).
+   - **قواعد Firestore (`tests/firestore.rules.test.ts`):** **`17`** حالة اختبار + **`4`** فهارس مركبة في `firestore.indexes.json` (`subjects`, `sections`, `study_files`, `upload_sessions`).
+   - **اختبارات Backend D2 والويب:** **`16`** اختبار تكامل على المحاكي (`tests/backend/backend.api.test.ts`) + **`20`** اختبار وحدة خادم مستقل لا يتطلب محاكياً (`7` في `tests/backend/entrypointAndRateLimit.test.ts` + `13` في `tests/backend/r2StagingLifecycle.test.ts` بعد توسيع اختبارات `TRUST_PROXY` وإضافة 4 اختبارات `R2_ENDPOINT`)، وجميع الحزم الثلاث موحّدة الآن في `npm run test:backend` بإجمالي **`36`** اختباراً تحت محاكي Firestore + **`3`** ملفات اختبارات ويب (`seedCatalog.test.ts`, `fixesVerification.test.ts`, `pdfReaderDom.test.tsx`).
+
+3. **نتائج التنفيذ الفعلي في البيئة الحالية مقابل الاختبارات غير المنفذة:**
+   - **نُفّذ ونجح فعلياً على النسخة الحالية داخل هذه الحاوية (دون Java/Emulator/Android SDK):**
+     - `npm run lint` (`tsc --noEmit`: رمز خروج `0`) و`npm run build` (`vite build`: رمز خروج `0`).
+     - اختبارات وحدة Backend المستقلة غير المعتمدة على المحاكي (`tests/backend/entrypointAndRateLimit.test.ts` + `tests/backend/r2StagingLifecycle.test.ts`: **`20 / 20`** ناجحة ضمن `4` مجموعات).
+     - اختبارات الويب (`src/data/seedCatalog.test.ts`, `src/domain/fixesVerification.test.ts`, `src/screens/pdfReaderDom.test.tsx`: **`3 / 3`** ملفات اختبار ناجحة).
+   - **لم يُنفّذ في بيئة العمل الحالية (لغياب `Java JDK` و`Android SDK` و`google-services.json` ومحاكي/جهاز Android):**
+     - **اختبارات Android الرئيسية غير منفذة:** `:app:testDebugUnitTest` (بما فيها `BackendAdminVersionDataSourceTest.kt` الجديد وتعديل `BACKEND_NOT_CONFIGURED` وتعديل `SectionFilesViewModelTest.kt`)، و`:app:lintDebug`، و`:app:assembleDebug`، و`:app:connectedDebugAndroidTest`.
+     - **اختبارات محاكي Firebase غير منفذة:** `npm run test:rules` (`17` اختباراً) و`npm run test:backend` (`36` اختباراً تشمل الحزم الثلاث مع `backend.api.test.ts` على المحاكي؛ فشلت بانقطاع Java عند `java -version`).
+     - **تنبيه التوثيق الصادق:** السجلات في الأقسام `2`–`2.12` هي **سجلات تاريخية لنسخ سابقة فقط** ولا تمثّل اختبارات ناجحة للنسخة الحالية؛ لذا يُعدّ تجميع Kotlin واختبارات Android وRules وBackend على المحاكي **غير مُتحقَّق منها تشغيلياً** في هذه البيئة حتى تُشغَّل على بيئة تطوير مكتملة.
+
+4. **نتائج معالجة الملاحظات المتبقية وتدقيق `TRUST_PROXY` و`R2_ENDPOINT` وتوحيد الاختبارات:**
+   - **تدقيق `TRUST_PROXY` (`server/config/env.ts`, `server/middleware/rateLimit.ts`, `server/app.ts`):** التنفيذ الحالي **آمن ومغلق افتراضياً (`Fail-Closed`) ولا يحتاج تعديلاً في كود الخادم**:
+     - القيمة الافتراضية هي `false` (لا ثقة بأي Proxy؛ يتجاهل Express ترويسة `X-Forwarded-For` ويعتمد `normalizeClientIp` على `req.ip` الناتج عن عنوان مقبس TCP المباشر فقط).
+     - يرفض `parseTrustProxyEnv` قيم `'true'` و`'all'` و`'0'` والأرقام السالبة أو فوق `10` وأي سلاسل غير صالحة ويحوّلها قسراً إلى `false`.
+     - وُسّعت اختبارات `tests/backend/entrypointAndRateLimit.test.ts` للتحقق من رفض القيم الحدية الخاطئة ومن أن `trustProxy: 1` عبر اتصال TCP حقيقي وتطبيق Express يستخرج القفزة اليمنى الوحيدة فقط ولا يسمح بتزوير البادئة اليسرى في `X-Forwarded-For` (شريطة عدم إمكانية تجاوز الـ Proxy على مستوى الشبكة).
+     - **تصحيح توصية النشر:** لا يجوز التوصية بـ `TRUST_PROXY=1` بصورة مطلقة؛ فالتفعيل الرقمي المحدد غير مسموح إلا خلف بروكسي موثوق **غير قابل للتجاوز شبكياً** وبعدد قفزات مطابق تماماً للسلسلة الفعلية (مثلاً `1` خلف Cloud Run GFE وحده، أو `2` عند وجود External LB/WAF أمام GFE مع تعطيل الوصول المباشر لـ `*.run.app`)، وإلا يُبقَى `TRUST_PROXY=false` لتفادي تزوير عنوان IP.
+   - **تشديد أمان `R2_ENDPOINT` (`server/config/env.ts`, `server/storage/r2Storage.ts`, `tests/backend/r2StagingLifecycle.test.ts`):**
+     - إضافة `validateR2Endpoint` و`resolveR2Endpoint` لفرض `HTTPS` حصراً عند تحديد `R2_ENDPOINT`، ورفض `http://` والروابط المشوهة أو المحتوية على بيانات اعتماد أو معاملات استعلام/تجزئة، مع إبقاء العنوان الافتراضي `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` سليماً عند غياب `R2_ENDPOINT` وتمرير جميع إنشاءات `S3Client` عبر `resolveR2Endpoint` فقط دون مسار بديل.
+   - **توحيد `npm run test:backend` (`package.json`):** يشغّل الآن الحزم الثلاث (`backend.api.test.ts` و`entrypointAndRateLimit.test.ts` و`r2StagingLifecycle.test.ts`) على محاكي Firestore دون تجاوز أو حذف.
+   - **تصحيح خطأ إعداد Backend في مسار الإدارة بـ Android ومراجعة الاختبارات:**
+     - تم فصل `AdminFailureReason.BACKEND_NOT_CONFIGURED` عن `FIREBASE_NOT_CONFIGURED` في `AdminFailure.kt` و`BackendAdminVersionDataSource.kt` و`AuthMessageResolver.kt` و`values/strings.xml` و`values-ar/strings.xml` (`admin_error_backend_not_configured`) مع إضافة `BackendAdminVersionDataSourceTest.kt` (`4` اختبارات).
+     - بمراجعة `unitTests.isReturnDefaultValues = true` في `android/app/build.gradle.kts:68` ثبت أنه يغطي تهيئة `FirebaseFirestoreException$Code` (`android.util.SparseArray`) دون إخفاء أخطاء في الاختبارات الحالية، بينما كُشف وأُصلح في `SectionFilesViewModelTest.kt` خروج `awaitUiState` بصمت عند انتهاء مهلة الـ 5 ثوانٍ عبر إضافة `assertTrue` برسالة تشخيصية *(مدقق نظرياً ومصدرياً بانتظار تشغيل Gradle في بيئة JDK/SDK)*.
+   - **الحصر النهائي للملفات المعدّلة والمضافة الفعلي في مساحة العمل عبر جولتَي إغلاق المرحلة الثامنة (`15` ملفاً إجمالاً):**
+     - `server/config/env.ts`
+     - `server/storage/r2Storage.ts`
+     - `package.json`
+     - `tests/backend/entrypointAndRateLimit.test.ts`
+     - `tests/backend/r2StagingLifecycle.test.ts`
+     - `android/app/src/main/java/com/studentlearning/platform2026/domain/model/AdminFailure.kt`
+     - `android/app/src/main/java/com/studentlearning/platform2026/data/remote/backend/BackendAdminVersionDataSource.kt`
+     - `android/app/src/main/java/com/studentlearning/platform2026/presentation/account/AuthMessageResolver.kt`
+     - `android/app/src/main/res/values/strings.xml`
+     - `android/app/src/main/res/values-ar/strings.xml`
+     - `android/app/src/test/java/com/studentlearning/platform2026/data/remote/backend/BackendAdminVersionDataSourceTest.kt` *(مضاف)*
+     - `android/app/src/test/java/com/studentlearning/platform2026/presentation/library/SectionFilesViewModelTest.kt`
+     - `STAGE_8_CHECKPOINT.md`
+     - `docs/STAGE_8_SECURITY_AND_R2_DESIGN.md`
+     - `docs/STAGE_8_D2_BACKEND_RUNBOOK.md`
+
+5. **الفارق بين اكتمال الشيفرة وجاهزية التشغيل الفعلي (الحالة الحقيقية):**
+   - **اكتمال الشيفرة (Code Completeness):** شيفرة المرحلة الثامنة مكتملة برمجياً وفق المراجعة النظرية.
+   - **جاهزية التشغيل الفعلي (Operational Readiness — غير مكتملة بعد):**
+     - Backend D2 **غير منشور** على Cloud Run ولا متصل بأي بيئة إنتاجية.
+     - Cloudflare R2 **غير مُنشأ** (لا Bucket ولا API Tokens ولا Lifecycle Rule).
+     - `firestore.rules` و`firestore.indexes.json` **غير منشورة** إلى Firebase Production.
+     - ملف `android/app/google-services.json` **غير مضاف** في بيئة العمل، واختبارات Android/Rules/Backend الكاملة لم تُنفَّذ بعد على النسخة الحالية.
+     - بناءً عليه تبقى **المرحلة الثامنة قيد المراجعة النهائية** لحين اعتماد المالك ثم تنفيذ الإعدادات الخارجية والاختبارات الكاملة.
+
 
 ---
 

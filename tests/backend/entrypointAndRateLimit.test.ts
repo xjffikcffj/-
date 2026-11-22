@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { promisify } from 'node:util';
+import type { Request as ExpressRequest } from 'express';
 import type { Firestore } from 'firebase-admin/firestore';
 import { isMainEntry } from '../../server.js';
 import { createBackendApp } from '../../server/app.js';
@@ -498,11 +500,180 @@ describe('Rate Limiting & Trust Proxy Security', () => {
     assert.equal(loadServerConfig({ TRUST_PROXY: 'true' }).trustProxy, false);
     assert.equal(loadServerConfig({ TRUST_PROXY: 'all' }).trustProxy, false);
     assert.equal(loadServerConfig({ TRUST_PROXY: '0' }).trustProxy, false);
+    assert.equal(loadServerConfig({ TRUST_PROXY: '-1' }).trustProxy, false);
+    assert.equal(loadServerConfig({ TRUST_PROXY: '11' }).trustProxy, false);
+    assert.equal(loadServerConfig({ TRUST_PROXY: '192.168.1.1' }).trustProxy, false);
+    assert.equal(loadServerConfig({ TRUST_PROXY: 'invalid' }).trustProxy, false);
     assert.equal(loadServerConfig({ TRUST_PROXY: '1' }).trustProxy, 1);
     assert.equal(
       loadServerConfig({ TRUST_PROXY: 'loopback' }).trustProxy,
       'loopback',
     );
+  });
+
+  it('extracts real Express req.ip for trustProxy=1 vs ignores X-Forwarded-For when trustProxy=false over real TCP connections', async () => {
+    // 1) TRUST_PROXY=1 behind a single trusted proxy (direct socket 127.0.0.1)
+    const trustedConfig: ServerConfig = {
+      ...loadServerConfig({ TRUST_PROXY: '1' }),
+      r2Endpoint: 'https://r2.example.invalid',
+      r2BucketName: 'bucket',
+      r2AccessKeyId: 'key',
+      r2SecretAccessKey: 'secret',
+    };
+    assert.equal(trustedConfig.trustProxy, 1);
+
+    const trustedApp = createBackendApp({
+      config: trustedConfig,
+      firestore: createFakeFirestoreForRateLimitTests(),
+      idTokenVerifier: createFakeTokenVerifier(),
+      r2Storage: createFakeR2Adapter(),
+      rateLimits: {
+        catalog: { windowMs: 60_000, max: 2 },
+        'admin-upload-slot': { windowMs: 60_000, max: 2 },
+        'admin-verify': { windowMs: 60_000, max: 2 },
+        'delivery-stream': { windowMs: 60_000, max: 2 },
+        'delivery-download': { windowMs: 60_000, max: 2 },
+      },
+    });
+
+    const trustedObservations: Array<{
+      remoteAddress: string | undefined;
+      xff: string | string[] | undefined;
+      expressIp: string | undefined;
+    }> = [];
+
+    const trustedServer = http.createServer((req, res) => {
+      const remoteAddress = req.socket.remoteAddress;
+      const xff = req.headers['x-forwarded-for'];
+      res.on('finish', () => {
+        trustedObservations.push({
+          remoteAddress,
+          xff,
+          expressIp: (req as unknown as ExpressRequest).ip,
+        });
+      });
+      trustedApp(req as never, res as never);
+    });
+
+    await new Promise<void>((resolve) => {
+      trustedServer.listen(0, '127.0.0.1', () => resolve());
+    });
+    const trustedAddr = trustedServer.address() as net.AddressInfo;
+    const trustedBaseUrl = `http://127.0.0.1:${trustedAddr.port}`;
+
+    try {
+      // Attacker rotates leftmost client-supplied X-Forwarded-For entries while the single
+      // trusted proxy hop appends the real peer IP (198.51.100.50) at the rightmost position.
+      const r1 = await fetch(`${trustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '1.1.1.1, 198.51.100.50' },
+      });
+      assert.equal(r1.status, 200);
+
+      const r2 = await fetch(`${trustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '2.2.2.2, 198.51.100.50' },
+      });
+      assert.equal(r2.status, 200);
+
+      const blocked = await fetch(`${trustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '3.3.3.3, 198.51.100.50' },
+      });
+      assert.equal(blocked.status, 429);
+      const blockedJson = (await blocked.json()) as { error: { code: string } };
+      assert.equal(blockedJson.error.code, 'RATE_LIMIT_EXCEEDED');
+
+      // Different rightmost proxy-appended IP over the SAME 127.0.0.1 proxy socket MUST
+      // receive an independent rate-limit bucket (proving Express extracted 198.51.100.51, not 127.0.0.1).
+      const distinctPeer = await fetch(`${trustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '3.3.3.3, 198.51.100.51' },
+      });
+      assert.equal(distinctPeer.status, 200);
+      assert.equal(distinctPeer.headers.get('RateLimit-Remaining'), '1');
+
+      assert.equal(trustedObservations.length, 4);
+      assert.equal(trustedObservations[0].remoteAddress, '127.0.0.1');
+      assert.equal(trustedObservations[0].xff, '1.1.1.1, 198.51.100.50');
+      assert.equal(trustedObservations[0].expressIp, '198.51.100.50');
+      assert.equal(trustedObservations[1].expressIp, '198.51.100.50');
+      assert.equal(trustedObservations[2].expressIp, '198.51.100.50');
+      assert.equal(trustedObservations[3].remoteAddress, '127.0.0.1');
+      assert.equal(trustedObservations[3].expressIp, '198.51.100.51');
+    } finally {
+      trustedServer.closeAllConnections?.();
+      await new Promise<void>((resolve) => trustedServer.close(() => resolve()));
+    }
+
+    // 2) Default TRUST_PROXY=false (no trusted proxy): X-Forwarded-For MUST be ignored completely
+    const untrustedConfig: ServerConfig = {
+      ...loadServerConfig({}),
+      r2Endpoint: 'https://r2.example.invalid',
+      r2BucketName: 'bucket',
+      r2AccessKeyId: 'key',
+      r2SecretAccessKey: 'secret',
+    };
+    assert.equal(untrustedConfig.trustProxy, false);
+
+    const untrustedApp = createBackendApp({
+      config: untrustedConfig,
+      firestore: createFakeFirestoreForRateLimitTests(),
+      idTokenVerifier: createFakeTokenVerifier(),
+      r2Storage: createFakeR2Adapter(),
+      rateLimits: {
+        catalog: { windowMs: 60_000, max: 2 },
+        'admin-upload-slot': { windowMs: 60_000, max: 2 },
+        'admin-verify': { windowMs: 60_000, max: 2 },
+        'delivery-stream': { windowMs: 60_000, max: 2 },
+        'delivery-download': { windowMs: 60_000, max: 2 },
+      },
+    });
+
+    const untrustedObservations: Array<{
+      remoteAddress: string | undefined;
+      expressIp: string | undefined;
+    }> = [];
+
+    const untrustedServer = http.createServer((req, res) => {
+      const remoteAddress = req.socket.remoteAddress;
+      res.on('finish', () => {
+        untrustedObservations.push({
+          remoteAddress,
+          expressIp: (req as unknown as ExpressRequest).ip,
+        });
+      });
+      untrustedApp(req as never, res as never);
+    });
+
+    await new Promise<void>((resolve) => {
+      untrustedServer.listen(0, '127.0.0.1', () => resolve());
+    });
+    const untrustedAddr = untrustedServer.address() as net.AddressInfo;
+    const untrustedBaseUrl = `http://127.0.0.1:${untrustedAddr.port}`;
+
+    try {
+      const u1 = await fetch(`${untrustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '1.1.1.1, 198.51.100.50' },
+      });
+      assert.equal(u1.status, 200);
+
+      const u2 = await fetch(`${untrustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '2.2.2.2, 198.51.100.51' },
+      });
+      assert.equal(u2.status, 200);
+
+      // Even changing the rightmost X-Forwarded-For IP cannot bypass the socket IP limit when trustProxy=false
+      const u3 = await fetch(`${untrustedBaseUrl}/api/catalog/branches`, {
+        headers: { 'X-Forwarded-For': '3.3.3.3, 198.51.100.52' },
+      });
+      assert.equal(u3.status, 429);
+
+      assert.equal(untrustedObservations.length, 3);
+      for (const obs of untrustedObservations) {
+        assert.equal(obs.remoteAddress, '127.0.0.1');
+        assert.equal(obs.expressIp, '127.0.0.1');
+      }
+    } finally {
+      untrustedServer.closeAllConnections?.();
+      await new Promise<void>((resolve) => untrustedServer.close(() => resolve()));
+    }
   });
 
   it('enforces per-route limits, returns 429 + Retry-After, keeps other routes & /api/health unaffected, blocks X-Forwarded-For spoofing, and leaks no secrets', async () => {

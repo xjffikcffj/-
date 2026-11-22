@@ -9,7 +9,11 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { isR2Configured, type ServerConfig } from '../config/env.js';
+import {
+  isR2Configured,
+  validateR2Endpoint,
+  type ServerConfig,
+} from '../config/env.js';
 import { ApiError } from '../utils/errors.js';
 
 export interface PresignedPutParams {
@@ -110,6 +114,20 @@ export class UnconfiguredR2StorageAdapter implements R2StoragePort {
   }
 }
 
+const SAFE_R2_ACCOUNT_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function resolveR2Endpoint(config: ServerConfig): string {
+  const validatedExplicit = validateR2Endpoint(config.r2Endpoint);
+  if (validatedExplicit) {
+    return validatedExplicit;
+  }
+  const accountId = config.r2AccountId?.trim() ?? '';
+  if (!SAFE_R2_ACCOUNT_ID_REGEX.test(accountId)) {
+    throw new Error('Invalid R2_ACCOUNT_ID: malformed Cloudflare R2 account identifier.');
+  }
+  return `https://${accountId}.r2.cloudflarestorage.com`;
+}
+
 export class S3R2StorageAdapter implements R2StoragePort {
   private readonly client: S3Client;
   private readonly bucket: string;
@@ -118,9 +136,7 @@ export class S3R2StorageAdapter implements R2StoragePort {
     if (!isR2Configured(config) || !config.r2BucketName) {
       throw new Error('Cannot construct S3R2StorageAdapter without R2 configuration.');
     }
-    const endpoint =
-      config.r2Endpoint ??
-      `https://${config.r2AccountId}.r2.cloudflarestorage.com`;
+    const endpoint = resolveR2Endpoint(config);
 
     this.bucket = config.r2BucketName;
     this.client = new S3Client({

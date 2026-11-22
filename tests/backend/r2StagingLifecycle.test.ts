@@ -3,18 +3,25 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
-import { loadServerConfig, type ServerConfig } from '../../server/config/env.js';
+import {
+  isR2Configured,
+  loadServerConfig,
+  validateR2Endpoint,
+  type ServerConfig,
+} from '../../server/config/env.js';
 import {
   UploadVerificationService,
   buildFinalImmutableKey,
   buildStagingKey,
 } from '../../server/services/uploadVerificationService.js';
-import type {
-  PresignedPutParams,
-  R2CopyIfMatchParams,
-  R2HeadResult,
-  R2ObjectStreamResult,
-  R2StoragePort,
+import {
+  S3R2StorageAdapter,
+  resolveR2Endpoint,
+  type PresignedPutParams,
+  type R2CopyIfMatchParams,
+  type R2HeadResult,
+  type R2ObjectStreamResult,
+  type R2StoragePort,
 } from '../../server/storage/r2Storage.js';
 import { ApiError } from '../../server/utils/errors.js';
 
@@ -659,3 +666,100 @@ describe('R2 Staging Lifecycle & Safe Cleanup (Fix Pack 2D)', () => {
     assert.equal(finalKey.startsWith('uploads-staging/'), false);
   });
 });
+
+describe('R2 Endpoint HTTPS Security & Default Resolution', () => {
+  const baseEnv: NodeJS.ProcessEnv = {
+    R2_ACCOUNT_ID: 'acct123',
+    R2_BUCKET_NAME: 'haqibati-pdfs',
+    R2_ACCESS_KEY_ID: 'test-access-key',
+    R2_SECRET_ACCESS_KEY: 'test-secret-key',
+  };
+
+  it('accepts a valid HTTPS R2_ENDPOINT, normalizes trailing slashes, and configures S3R2StorageAdapter', () => {
+    const config = loadServerConfig({
+      ...baseEnv,
+      R2_ENDPOINT: 'https://custom-r2.example.com/',
+    });
+    assert.equal(config.r2Endpoint, 'https://custom-r2.example.com');
+    assert.equal(isR2Configured(config), true);
+    assert.equal(resolveR2Endpoint(config), 'https://custom-r2.example.com');
+    assert.doesNotThrow(() => new S3R2StorageAdapter(config));
+  });
+
+  it('rejects HTTP R2_ENDPOINT across config loading, endpoint resolution, and S3 adapter construction', () => {
+    assert.throws(
+      () =>
+        loadServerConfig({
+          ...baseEnv,
+          R2_ENDPOINT: 'http://insecure-r2.example.com',
+        }),
+      /must use HTTPS/i,
+    );
+    assert.throws(
+      () => validateR2Endpoint('http://insecure-r2.example.com'),
+      /must use HTTPS/i,
+    );
+
+    const manualInsecureConfig: ServerConfig = {
+      ...loadServerConfig(baseEnv),
+      r2Endpoint: 'http://insecure-r2.example.com',
+    };
+    assert.equal(isR2Configured(manualInsecureConfig), false);
+    assert.throws(() => resolveR2Endpoint(manualInsecureConfig), /must use HTTPS/i);
+    assert.throws(() => new S3R2StorageAdapter(manualInsecureConfig), /R2 configuration/i);
+  });
+
+  it('rejects malformed, non-HTTPS scheme, credentialed, or query/fragment R2_ENDPOINT values', () => {
+    const invalidEndpoints = [
+      'not-a-url',
+      'ftp://r2.example.com',
+      'https://user:pass@r2.example.com',
+      'https://r2.example.com?foo=bar',
+      'https://r2.example.com#frag',
+    ];
+
+    for (const badEndpoint of invalidEndpoints) {
+      assert.throws(
+        () =>
+          loadServerConfig({
+            ...baseEnv,
+            R2_ENDPOINT: badEndpoint,
+          }),
+        /Invalid R2_ENDPOINT/i,
+        `Expected loadServerConfig to reject ${badEndpoint}`,
+      );
+
+      const manualBadConfig: ServerConfig = {
+        ...loadServerConfig(baseEnv),
+        r2Endpoint: badEndpoint,
+      };
+      assert.equal(
+        isR2Configured(manualBadConfig),
+        false,
+        `Expected isR2Configured=false for ${badEndpoint}`,
+      );
+      assert.throws(
+        () => resolveR2Endpoint(manualBadConfig),
+        /Invalid R2_ENDPOINT/i,
+        `Expected resolveR2Endpoint to reject ${badEndpoint}`,
+      );
+    }
+  });
+
+  it('preserves the default Cloudflare R2 account endpoint when R2_ENDPOINT is omitted or blank', () => {
+    for (const rawEndpoint of [undefined, '', '   ']) {
+      const config = loadServerConfig({
+        ...baseEnv,
+        ...(rawEndpoint === undefined ? {} : { R2_ENDPOINT: rawEndpoint }),
+      });
+      assert.equal(config.r2Endpoint, undefined);
+      assert.equal(isR2Configured(config), true);
+      assert.equal(
+        resolveR2Endpoint(config),
+        'https://acct123.r2.cloudflarestorage.com',
+      );
+      assert.doesNotThrow(() => new S3R2StorageAdapter(config));
+    }
+  });
+});
+

@@ -194,6 +194,7 @@
     <string name="admin_success_reordered">تم تحديث الترتيب بنجاح.</string>
 
     <string name="admin_error_not_configured">خدمات Firebase غير مفعّلة محلياً بعد؛ أضف ملف google-services.json للمشروع المعتمد أولاً.</string>
+    <string name="admin_error_backend_not_configured">Backend service (Backend D2) is not configured yet; admin version and PDF upload operations remain disabled until the HTTPS server URL is set. This does not indicate a Firebase setup issue.</string>
     <string name="admin_error_unauthenticated">يجب تسجيل الدخول بحساب إداري معتمد أولاً.</string>
     <string name="admin_error_insufficient_role">الحساب المسجّل لا يملك صلاحية owner أو admin المعتمدة.</string>
     <string name="admin_error_session_verification_required">تعذّر التأكد من حداثة بيانات الصلاحية. يرجى تحديث الصلاحيات عند توفر الاتصال قبل تنفيذ أي تعديل.</string>

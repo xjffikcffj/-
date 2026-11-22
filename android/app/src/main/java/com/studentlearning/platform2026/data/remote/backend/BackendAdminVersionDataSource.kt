@@ -200,8 +200,7 @@ internal class BackendAdminVersionDataSource(
             throw cancelled
         } catch (notConfigured: BackendNotConfiguredException) {
             throw AdminException(
-                reason = AdminFailureReason.VALIDATION_ERROR,
-                validationError = AdminValidationError.VERSION_PDF_BINARY_MISSING,
+                reason = AdminFailureReason.BACKEND_NOT_CONFIGURED,
                 message = notConfigured.message,
                 cause = notConfigured
             )
@@ -277,7 +276,7 @@ internal class BackendAdminVersionDataSource(
     ): Map<String, Any?> {
         if (!httpClient.isConfigured) {
             throw AdminException(
-                reason = AdminFailureReason.FIREBASE_NOT_CONFIGURED,
+                reason = AdminFailureReason.BACKEND_NOT_CONFIGURED,
                 message = "Backend API endpoint URL is not configured yet."
             )
         }
@@ -294,7 +293,7 @@ internal class BackendAdminVersionDataSource(
             throw existing
         } catch (notConfigured: BackendNotConfiguredException) {
             throw AdminException(
-                reason = AdminFailureReason.FIREBASE_NOT_CONFIGURED,
+                reason = AdminFailureReason.BACKEND_NOT_CONFIGURED,
                 message = notConfigured.message,
                 cause = notConfigured
             )

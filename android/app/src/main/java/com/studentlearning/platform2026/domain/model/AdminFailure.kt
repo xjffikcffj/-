@@ -38,6 +38,7 @@ enum class AdminValidationError {
 
 enum class AdminFailureReason {
     FIREBASE_NOT_CONFIGURED,
+    BACKEND_NOT_CONFIGURED,
     UNAUTHENTICATED,
     INSUFFICIENT_ROLE,
     SESSION_VERIFICATION_REQUIRED,

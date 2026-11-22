@@ -77,3 +77,22 @@
 | `POST .../versions`, `.../upload-slot`, `.../verify`, `.../publish` | `Admin`, `Owner` | `verifyIdToken(token, true)` + `decoded.role in ['admin', 'owner']`. |
 | `GET /api/study-files/{f}/versions/{v}/stream` | الجميع (`Guest` فأعلى) | فحص حي لـ 5 مستويات دون كاش + `200 OK` دون `3xx` + `Content-Length` + `X-Content-Sha256`. |
 | `GET /api/study-files/{f}/versions/{v}/download` | الحسابات المسجلة (`Student`, `Admin`, `Owner`) — ممنوع على `Guest` | `verifyIdToken(token, true)` غير مجهول + نفس الفحص الحي واستجابة `200 OK`. |
+
+---
+
+## 4. حالة التنفيذ المصدري ومتطلبات التفعيل الخارجي (غير منشور/غير متصل بعد)
+
+1. **اكتمال الشيفرة مقارنةً بجاهزية التشغيل الفعلي:**
+   - **على مستوى الشيفرة (Code Completeness):** يطبّق `server/services/uploadVerificationService.ts` العزل الكامل بين `uploads-staging/` و`study-files/`، مع مهلة افتراضية `600` ثانية لجلسة الرفع و`300` ثانية لقفل التحقق (`server/config/env.ts`)، و`ETag` (`CopySourceIfMatch`)، وقراءة البايتات النهائية لإثبات `%PDF-` والطول الدقيق و`SHA-256`، و`Fencing Commit Tx` على `activeAttemptId`، ومنع حذف الكائن النهائي عند غموض حالة Firestore، وإغلاق `/publish` بوضع `Fail-Closed`.
+   - **على مستوى الأمان الشبكي ونقطة R2 (`TRUST_PROXY` و`R2_ENDPOINT`):**
+     - يضبط الخادم `TRUST_PROXY` افتراضياً على `false` (لا ثقة بأي بروكسي أو `X-Forwarded-For`)، ويرفض `'true'` و`'all'` صراحةً. ولا يُسمح برقم قفزات محدد (`1..10`) إلا خلف بروكسي موثوق غير قابل للتجاوز على مستوى الشبكة وبعد التحقق الدقيق من عدد القفزات الفعلي.
+     - تفرض دالتا `validateR2Endpoint` (`server/config/env.ts`) و`resolveR2Endpoint` (`server/storage/r2Storage.ts`) استخدام `HTTPS` الصالح فقط عند تحديد `R2_ENDPOINT` (مع رفض `HTTP` والروابط المشوهة أو المحتوية على بيانات اعتماد)، مع الحفاظ على العنوان الافتراضي `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` عند غياب `R2_ENDPOINT` دون أي مسار إنشاء بديل لـ `S3Client`.
+   - **على مستوى التشغيل الفعلي (Operational Readiness — غير مكتمل):** بيئة العمل المستوردة الحالية خالية من `Java JDK` و`Android SDK` ومحاكي Firestore و`google-services.json`؛ لذا لم تُنفَّذ فيها اختبارات المحاكي (`npm run test:backend` بإجمالي `36` اختباراً للحزم الثلاث، و`npm run test:rules` بـ `17` اختباراً) أو اختبارات وبناء Android (`testDebugUnitTest`، `lintDebug`، `assembleDebug`، `connectedDebugAndroidTest`)، واقتصرت الاختبارات المنفذة فعلياً هنا على `npm run lint` و`npm run build` واختبارات وحدة الخادم المستقلة (`20 / 20`) وملفات اختبارات الويب (`3 / 3`).
+2. **وضع Cloudflare R2 والخدمات السحابية الحالي (غير منشور وغير متصل):**
+   - **Cloudflare R2:** **غير مُنشأ** (لا Bucket ولا API Tokens ولا قاعدة Lifecycle).
+   - **Backend D2 وFirestore Production:** الخادم **غير منشور** على Cloud Run، وقواعد/فهارس Firestore **غير منشورة** إلى Production. تعمل مسارات Backend وAndroid بوضع **Fail-Closed** (`R2_STORAGE_NOT_CONFIGURED` / `AWAITING_SECURE_BROKER_INTEGRATION` / `BACKEND_NOT_CONFIGURED`).
+   - عند اعتماد المالك لبدء التفعيل الخارجي لاحقاً، تُنشأ حاوية R2 واحدة مع عزل البادئتين وتُفعَّل قاعدة Lifecycle **حصراً على `uploads-staging/` بعد 24 ساعة** (وفق `docs/STAGE_8_D2_BACKEND_RUNBOOK.md`) دون المساس بـ `study-files/` أو كامل الحاوية مطلقاً.
+3. **إجراءات خارجية تتطلب موافقة المالك الصريحة قبل التنفيذ:**
+   - نشر `firestore.rules` و`firestore.indexes.json` إلى مشروع Firebase Production.
+   - إنشاء Cloudflare R2 Bucket وتوليد API Tokens وتفعيل قاعدة Lifecycle لـ `uploads-staging/`.
+   - نشر Backend D2 على Cloud Run، وإعداد Edge / WAF Rate Limiting و`TRUST_PROXY` وفق مسار الشبكة الفعلي غير القابل للتجاوز، وتزويد تطبيق Android بـ `android/app/google-services.json` و`HAQIBATI_BACKEND_BASE_URL` لإعادة البناء وتشغيل جميع الاختبارات في بيئة مكتملة.
