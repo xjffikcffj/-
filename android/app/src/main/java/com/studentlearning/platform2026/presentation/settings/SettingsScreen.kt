@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,6 +55,7 @@ fun SettingsScreen(
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminPortal: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToNotifications: () -> Unit = {},
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {}
 ) {
@@ -64,6 +66,7 @@ fun SettingsScreen(
         onToggleDarkMode = viewModel::onToggleDarkMode,
         onNavigateToAbout = onNavigateToAbout,
         onNavigateToAdminPortal = onNavigateToAdminPortal,
+        onNavigateToNotifications = onNavigateToNotifications,
         onNavigateToSignIn = onNavigateToSignIn,
         onNavigateToSignUp = onNavigateToSignUp,
         onSignOut = viewModel::onSignOut,
@@ -78,6 +81,7 @@ fun SettingsScreenContent(
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminPortal: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToNotifications: () -> Unit = {},
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onSignOut: () -> Unit = {}
@@ -302,6 +306,41 @@ fun SettingsScreenContent(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        item {
+            HaqibatiSurfaceCard(onClick = onNavigateToNotifications) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Notifications,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(spacing.sm))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.notifications_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = stringResource(R.string.notifications_settings_subtitle),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }

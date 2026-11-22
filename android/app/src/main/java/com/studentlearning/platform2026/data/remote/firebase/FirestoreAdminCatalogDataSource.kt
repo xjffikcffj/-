@@ -210,12 +210,17 @@ private class FirebaseAdminCatalogFirestoreClient(
 
 class FirestoreAdminCatalogDataSource internal constructor(
     private val firestoreProvider: FirestoreProvider,
-    private val firestoreClient: AdminCatalogFirestoreClient
+    private val firestoreClient: AdminCatalogFirestoreClient,
+    private val actorRoleResolver: (suspend () -> String?)? = null
 ) : AdminCatalogRemoteDataSource {
 
-    constructor(firestoreProvider: FirestoreProvider) : this(
+    constructor(
+        firestoreProvider: FirestoreProvider,
+        actorRoleResolver: (suspend () -> String?)? = null
+    ) : this(
         firestoreProvider = firestoreProvider,
-        firestoreClient = FirebaseAdminCatalogFirestoreClient(firestoreProvider)
+        firestoreClient = FirebaseAdminCatalogFirestoreClient(firestoreProvider),
+        actorRoleResolver = actorRoleResolver
     )
 
     override suspend fun fetchAllBranches(): List<StudyBranch> {
@@ -245,6 +250,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.BRANCHES, customId, payload)
+        recordClientAuditLogBestEffort(
+            action = "BRANCH_CREATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_OWNER,
+            targetCollection = Collections.BRANCHES,
+            targetId = docRef.id,
+            summary = "إنشاء فرع: $name (الترتيب $order)"
+        )
 
         return StudyBranch(
             id = docRef.id,
@@ -268,6 +281,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             .document(branchId)
             .update(payload)
             .awaitResult()
+        recordClientAuditLogBestEffort(
+            action = "BRANCH_UPDATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_OWNER,
+            targetCollection = Collections.BRANCHES,
+            targetId = branchId,
+            summary = "تحديث فرع $branchId: $name"
+        )
     }
 
     override suspend fun setBranchPublished(branchId: String, isPublished: Boolean, actorUid: String) {
@@ -282,6 +303,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             .document(branchId)
             .update(payload)
             .awaitResult()
+        recordClientAuditLogBestEffort(
+            action = "BRANCH_PUBLISH_CHANGED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_OWNER,
+            targetCollection = Collections.BRANCHES,
+            targetId = branchId,
+            summary = if (isPublished) "نشر الفرع $branchId" else "إلغاء نشر الفرع $branchId"
+        )
     }
 
     override suspend fun fetchAllSubjects(branchId: String): List<StudySubject> {
@@ -321,6 +350,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.SUBJECTS, customId, payload)
+        recordClientAuditLogBestEffort(
+            action = "SUBJECT_CREATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.SUBJECTS,
+            targetId = docRef.id,
+            summary = "إنشاء مادة: $name"
+        )
 
         return StudySubject(
             id = docRef.id,
@@ -345,6 +382,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             .document(subjectId)
             .update(payload)
             .awaitResult()
+        recordClientAuditLogBestEffort(
+            action = "SUBJECT_UPDATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.SUBJECTS,
+            targetId = subjectId,
+            summary = "تحديث مادة $subjectId: $name"
+        )
     }
 
     override suspend fun setSubjectPublished(subjectId: String, isPublished: Boolean, actorUid: String) {
@@ -359,6 +404,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             .document(subjectId)
             .update(payload)
             .awaitResult()
+        recordClientAuditLogBestEffort(
+            action = "SUBJECT_PUBLISH_CHANGED",
+            actorUid = validActorUid,
+            defaultRole = if (isPublished) FirestoreCatalogSchema.Claims.ROLE_ADMIN else FirestoreCatalogSchema.Claims.ROLE_OWNER,
+            targetCollection = Collections.SUBJECTS,
+            targetId = subjectId,
+            summary = if (isPublished) "نشر المادة $subjectId" else "إلغاء نشر المادة $subjectId"
+        )
     }
 
     override suspend fun fetchAllSections(subjectId: String): List<StudySection> {
@@ -398,6 +451,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.SECTIONS, customId, payload)
+        recordClientAuditLogBestEffort(
+            action = "SECTION_CREATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.SECTIONS,
+            targetId = docRef.id,
+            summary = "إنشاء قسم: $name"
+        )
 
         return StudySection(
             id = docRef.id,
@@ -422,6 +483,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             .document(sectionId)
             .update(payload)
             .awaitResult()
+        recordClientAuditLogBestEffort(
+            action = "SECTION_UPDATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.SECTIONS,
+            targetId = sectionId,
+            summary = "تحديث قسم $sectionId: $name"
+        )
     }
 
     override suspend fun setSectionPublished(sectionId: String, isPublished: Boolean, actorUid: String) {
@@ -436,6 +505,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             .document(sectionId)
             .update(payload)
             .awaitResult()
+        recordClientAuditLogBestEffort(
+            action = "SECTION_PUBLISH_CHANGED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.SECTIONS,
+            targetId = sectionId,
+            summary = if (isPublished) "نشر القسم $sectionId" else "إلغاء نشر القسم $sectionId"
+        )
     }
 
     override suspend fun fetchStudyFilesForSection(sectionId: String): List<StudyFileMetadata> {
@@ -513,6 +590,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             timestampValue = FieldValue.serverTimestamp()
         )
         val docRef = createDocumentAtomically(firestore, Collections.STUDY_FILES, customId, payload)
+        recordClientAuditLogBestEffort(
+            action = "STUDY_FILE_CREATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.STUDY_FILES,
+            targetId = docRef.id,
+            summary = "إنشاء ملف دراسي: $title"
+        )
 
         return StudyFileMetadata(
             id = docRef.id,
@@ -575,6 +660,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             transaction.update(filePath, payload)
             null
         }
+        recordClientAuditLogBestEffort(
+            action = "STUDY_FILE_UPDATED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.STUDY_FILES,
+            targetId = cleanFileId,
+            summary = "تحديث بيانات الملف $cleanFileId: $title"
+        )
     }
 
     override suspend fun setStudyFilePublished(fileId: String, isPublished: Boolean, actorUid: String) {
@@ -626,6 +719,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             transaction.update(filePath, payload)
             null
         }
+        recordClientAuditLogBestEffort(
+            action = "STUDY_FILE_PUBLISH_CHANGED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.STUDY_FILES,
+            targetId = cleanFileId,
+            summary = if (isPublished) "نشر الملف $cleanFileId" else "إلغاء نشر الملف $cleanFileId"
+        )
     }
 
     override suspend fun setStudyFileArchived(fileId: String, isArchived: Boolean, actorUid: String) {
@@ -659,6 +760,14 @@ class FirestoreAdminCatalogDataSource internal constructor(
             transaction.update(filePath, payload)
             null
         }
+        recordClientAuditLogBestEffort(
+            action = "STUDY_FILE_ARCHIVE_CHANGED",
+            actorUid = validActorUid,
+            defaultRole = FirestoreCatalogSchema.Claims.ROLE_ADMIN,
+            targetCollection = Collections.STUDY_FILES,
+            targetId = cleanFileId,
+            summary = if (isArchived) "أرشفة الملف $cleanFileId" else "استعادة الملف $cleanFileId من الأرشيف"
+        )
     }
 
     override suspend fun fetchStudyFileVersions(fileId: String): List<StudyFileVersionMetadata> {
@@ -1156,6 +1265,61 @@ class FirestoreAdminCatalogDataSource internal constructor(
             )
         )
         batch.commit().awaitResult()
+        val reorderAction = when (collectionName) {
+            Collections.BRANCHES -> "BRANCHES_REORDERED"
+            Collections.SUBJECTS -> "SUBJECTS_REORDERED"
+            Collections.SECTIONS -> "SECTIONS_REORDERED"
+            Collections.STUDY_FILES -> "STUDY_FILES_REORDERED"
+            else -> "CATALOG_REORDERED"
+        }
+        recordClientAuditLogBestEffort(
+            action = reorderAction,
+            actorUid = validActorUid,
+            defaultRole = if (collectionName == Collections.BRANCHES) {
+                FirestoreCatalogSchema.Claims.ROLE_OWNER
+            } else {
+                FirestoreCatalogSchema.Claims.ROLE_ADMIN
+            },
+            targetCollection = collectionName,
+            targetId = firstId,
+            summary = "إعادة ترتيب $collectionName ($firstId ↔ $secondId)"
+        )
+    }
+
+    private suspend fun recordClientAuditLogBestEffort(
+        action: String,
+        actorUid: String,
+        defaultRole: String,
+        targetCollection: String,
+        targetId: String,
+        summary: String
+    ) {
+        val firestore = firestoreProvider.getFirestoreOrNull() ?: return
+        try {
+            val resolvedRole = actorRoleResolver?.invoke()
+                ?.trim()
+                ?.lowercase()
+                ?.takeIf { it == FirestoreCatalogSchema.Claims.ROLE_OWNER || it == FirestoreCatalogSchema.Claims.ROLE_ADMIN }
+                ?: defaultRole
+            val logPayload = mapOf<String, Any?>(
+                "action" to action.take(64),
+                "actorUid" to actorUid.trim(),
+                "actorRole" to resolvedRole,
+                "targetCollection" to targetCollection.take(64),
+                "targetId" to targetId.take(128),
+                "summary" to summary.trim().take(300),
+                "source" to "client",
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            firestore.collection(Collections.AUDIT_LOGS)
+                .document()
+                .set(logPayload)
+                .awaitResult()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Never fail primary catalog mutation if append-only client audit log write fails.
+        }
     }
 
     private fun requireNonBlankActorUid(actorUid: String): String {

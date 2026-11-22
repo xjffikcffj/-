@@ -102,6 +102,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
+    implementation(libs.firebase.messaging)
 
     // Embedded PDF text extraction & search support (paired with Android PdfRenderer)
     implementation(libs.pdfbox.android)

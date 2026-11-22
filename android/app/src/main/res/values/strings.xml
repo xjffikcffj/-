@@ -444,4 +444,78 @@
     <string name="admin_version_parent_archive_unspecified_warning">حالة أرشفة الملف الأب غير محددة — هذا الإصدار يحتاج إلى مراجعة ويُمنع رفع PDF جديد أو نشره حتى تُحسم حالة الأرشفة.</string>
     <string name="admin_version_archive_unspecified_warning">حالة أرشفة هذا الإصدار غير محددة — يُمنع رفع PDF جديد أو نشره حتى تُراجع الوثيقة.</string>
     <string name="admin_validation_archive_state_unspecified">حالة الأرشفة غير محددة في قاعدة البيانات (حقل isArchived مفقود أو غير صالح) — تحتاج الوثيقة إلى مراجعة إدارية قبل تنفيذ هذه العملية.</string>
+
+    <!-- Local Favorites & Personal File Ordering -->
+    <string name="library_favorite_add">إضافة إلى المفضلة المحلية</string>
+    <string name="library_favorite_remove">إزالة من المفضلة المحلية</string>
+    <string name="library_filter_favorites_only">المفضلة فقط</string>
+    <string name="library_favorites_empty_title">لا توجد ملفات في المفضلة</string>
+    <string name="library_favorites_empty_message">أضف أي ملف دراسي إلى المفضلة المحلية للوصول السريع على هذا الجهاز فقط.</string>
+    <string name="library_local_favorites_notice">المفضلة والترتيب محفوظان محلياً على هذا الجهاز فقط ولا تتم مزامنتهما مع أي حساب.</string>
+    <string name="library_reorder_mode_action">ترتيب ملفاتي</string>
+    <string name="library_reorder_mode_banner">وضع ترتيب ملفاتي — استخدم السهمين لإعادة ترتيب الملفات ثم اضغط حفظ الترتيب، ولن يتغير الترتيب العام للمكتبة.</string>
+    <string name="library_reorder_save">حفظ الترتيب</string>
+    <string name="library_reorder_cancel">إلغاء التعديلات</string>
+    <string name="library_reorder_reset">استعادة الترتيب الافتراضي</string>
+    <string name="library_reorder_move_up">تحريك الملف للأعلى</string>
+    <string name="library_reorder_move_down">تحريك الملف للأسفل</string>
+    <string name="downloads_favorites_section_title">المفضلة المحلية</string>
+    <string name="downloads_saved_files_section_title">الملفات المحفوظة محلياً</string>
+    <string name="downloads_favorites_empty_note">لم تتم إضافة ملفات إلى المفضلة بعد؛ تبقى المفضلة محفوظة محلياً على هذا الجهاز حتى بعد تسجيل الخروج.</string>
+    <string name="downloads_reorder_banner">وضع ترتيب التنزيلات — عدّل الترتيب محلياً لهذا الجهاز ثم احفظ التعديلات أو ألغِها.</string>
+
+    <!-- Notifications & FCM Local Log -->
+    <string name="notifications_channel_name">تحديثات حقيبتي الدراسية</string>
+    <string name="notifications_channel_description">إشعارات صدور الملفات الدراسية الجديدة والإصدارات المحدّثة والتنبيهات المهمة.</string>
+    <string name="notifications_default_title">تحديث جديد في حقيبتي</string>
+    <string name="notifications_default_body">يوجد تحديث جديد متاح في المكتبة الدراسية.</string>
+    <string name="notifications_title">سجل الإشعارات</string>
+    <string name="notifications_nav_open">فتح سجل الإشعارات</string>
+    <string name="notifications_settings_subtitle">عرض التحديثات المحلية وإدارة إذن الإشعارات على هذا الجهاز</string>
+    <string name="notifications_local_device_notice">يُحفظ سجل الإشعارات محلياً ومستقلاً لكل جهاز؛ ولا يعمل الإرسال الفعلي من السحابة إلا بعد ربط google-services.json وتهيئة خدمة FCM عند الإطلاق.</string>
+    <string name="notifications_permission_granted">إذن عرض الإشعارات مفعّل على هذا الجهاز.</string>
+    <string name="notifications_permission_denied_title">إذن الإشعارات غير مفعّل</string>
+    <string name="notifications_permission_denied_message">يتطلب أندرويد 13 فأحدث الموافقة على إذن الإشعارات لعرض تنبيهات صدور الملفات والإصدارات الجديدة.</string>
+    <string name="notifications_permission_request_action">تفعيل إذن الإشعارات</string>
+    <string name="notifications_mark_all_read">تحديد الكل كمقروء</string>
+    <string name="notifications_clear_all">مسح السجل</string>
+    <string name="notifications_clear_confirm_title">مسح سجل الإشعارات المحلي</string>
+    <string name="notifications_clear_confirm_message">هل تريد حذف جميع الإشعارات المحفوظة على هذا الجهاز؟</string>
+    <string name="notifications_mark_read_action">تمييز كمقروء</string>
+    <string name="notifications_delete_action">حذف الإشعار</string>
+    <string name="notifications_unread_badge">غير مقروء</string>
+    <string name="notifications_type_new_file">ملف جديد</string>
+    <string name="notifications_type_new_version">إصدار جديد</string>
+    <string name="notifications_type_important_update">تحديث مهم</string>
+    <string name="notifications_open_file_action">فتح الملف</string>
+    <string name="notifications_empty_title">لا توجد إشعارات محلية</string>
+    <string name="notifications_empty_message">ستظهر هنا إشعارات الملفات الجديدة والإصدارات والتحديثات المهمة فور وصولها بعد الإطلاق.</string>
+
+    <!-- Admin Governance: Staff Management & Audit Logs -->
+    <string name="admin_tab_staff">المشرفون</string>
+    <string name="admin_tab_audit_logs">سجل التدقيق</string>
+    <string name="admin_staff_owner_only_notice">إدارة صلاحيات المشرفين محصورة بدور المالك (Owner) فقط عبر خادم التحقق الآمن، ولا يمكن ترقية أو إزالة المالك.</string>
+    <string name="admin_staff_grant_title">منح صلاحية مشرف</string>
+    <string name="admin_staff_email_hint">أدخل البريد الإلكتروني المسجّل للمستخدم</string>
+    <string name="admin_staff_grant_action">منح صلاحية مشرف</string>
+    <string name="admin_staff_revoke_action">سحب صلاحية المشرف</string>
+    <string name="admin_staff_self_badge">حسابك الحالي</string>
+    <string name="admin_staff_disabled_badge">الحساب معطّل</string>
+    <string name="admin_staff_empty">لا يوجد مشرفون مسجلون حالياً أو يلزم التحقق من الخادم.</string>
+    <string name="admin_confirm_revoke_admin_title">تأكيد سحب صلاحية المشرف</string>
+    <string name="admin_confirm_revoke_admin_message">هل تريد سحب صلاحية المشرف من %1$s وإبطال جلساته النشطة؟</string>
+    <string name="admin_success_staff_admin_granted">تم منح صلاحية المشرف وتحديث تصريحات الجلسة بنجاح.</string>
+    <string name="admin_success_staff_admin_revoked">تم سحب صلاحية المشرف وإبطال رموز التحديث الخاصة به.</string>
+    <string name="admin_audit_broadcast_title">إرسال تنبيه مهم للطلاب</string>
+    <string name="admin_audit_broadcast_title_label">عنوان التنبيه (بحد أقصى 120 حرفاً)</string>
+    <string name="admin_audit_broadcast_body_label">نص التنبيه (بحد أقصى 500 حرف)</string>
+    <string name="admin_audit_broadcast_send">تسجيل وإرسال التنبيه</string>
+    <string name="admin_audit_broadcast_disclaimer">يُسجّل التنبيه في سجل التدقيق فوراً، ويُبثّ عبر FCM عند توفر تهيئة Firebase Cloud Messaging على الخادم.</string>
+    <string name="admin_success_broadcast_sent">تم تسجيل التنبيه المهم وإرساله إلى قناة التحديثات.</string>
+    <string name="admin_success_broadcast_recorded_pending_fcm">تم تسجيل التنبيه في سجل التدقيق؛ الإرسال الفعلي عبر FCM بانتظار تهيئة بيانات اعتماد الخادم.</string>
+    <string name="admin_audit_logs_section_title">سجل التدقيق الإداري (غير قابل للتعديل)</string>
+    <string name="admin_audit_logs_empty">لا توجد عمليات إدارية مسجّلة في سجل التدقيق بعد.</string>
+    <string name="admin_audit_actor_format">المنفّذ: %1$s (%2$s)</string>
+    <string name="admin_audit_target_format">الهدف: %1$s / %2$s</string>
+    <string name="admin_audit_source_format">المصدر: %1$s</string>
 </resources>

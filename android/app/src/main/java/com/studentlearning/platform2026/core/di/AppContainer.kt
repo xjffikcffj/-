@@ -10,6 +10,8 @@ import com.studentlearning.platform2026.data.download.DownloadTaskScheduler
 import com.studentlearning.platform2026.data.download.HttpDownloadStreamFetcher
 import com.studentlearning.platform2026.data.download.LocalPdfStorageManager
 import com.studentlearning.platform2026.data.download.WorkManagerDownloadScheduler
+import com.studentlearning.platform2026.data.local.LocalFileOrganizationDataSource
+import com.studentlearning.platform2026.data.local.LocalNotificationDataSource
 import com.studentlearning.platform2026.data.local.OfflineDownloadsDataSource
 import com.studentlearning.platform2026.data.local.PreferencesDataSource
 import com.studentlearning.platform2026.data.local.ReadingProgressDataSource
@@ -33,16 +35,23 @@ import com.studentlearning.platform2026.data.remote.firebase.FirebaseClientProvi
 import com.studentlearning.platform2026.data.remote.firebase.FirebaseStatusDataSource
 import com.studentlearning.platform2026.data.remote.firebase.FirestoreAdminCatalogDataSource
 import com.studentlearning.platform2026.data.repository.AdminCatalogRepositoryImpl
+import com.studentlearning.platform2026.data.repository.AdminGovernanceRepositoryImpl
 import com.studentlearning.platform2026.data.repository.AuthRepositoryImpl
 import com.studentlearning.platform2026.data.repository.CatalogRepositoryImpl
+import com.studentlearning.platform2026.data.repository.LocalFileOrganizationRepositoryImpl
+import com.studentlearning.platform2026.data.repository.NotificationLogRepositoryImpl
 import com.studentlearning.platform2026.data.repository.OfflineDownloadsRepositoryImpl
 import com.studentlearning.platform2026.data.repository.PdfDocumentRepositoryImpl
 import com.studentlearning.platform2026.data.repository.PreferencesRepositoryImpl
 import com.studentlearning.platform2026.data.repository.ReadingProgressRepositoryImpl
 import com.studentlearning.platform2026.data.repository.SystemStatusRepositoryImpl
+import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
+import com.studentlearning.platform2026.domain.repository.AdminGovernanceRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
+import com.studentlearning.platform2026.domain.repository.LocalFileOrganizationRepository
+import com.studentlearning.platform2026.domain.repository.NotificationLogRepository
 import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
 import com.studentlearning.platform2026.domain.repository.PdfVersionStorageBroker
@@ -71,6 +80,14 @@ class AppContainer(context: Context) {
 
     private val offlineDownloadsDataSource: OfflineDownloadsDataSource by lazy {
         OfflineDownloadsDataSource(appContext)
+    }
+
+    private val localFileOrganizationDataSource: LocalFileOrganizationDataSource by lazy {
+        LocalFileOrganizationDataSource(appContext)
+    }
+
+    private val localNotificationDataSource: LocalNotificationDataSource by lazy {
+        LocalNotificationDataSource(appContext)
     }
 
     private val firebaseStatusDataSource: FirebaseStatusDataSource by lazy {
@@ -114,7 +131,16 @@ class AppContainer(context: Context) {
 
     private val adminCatalogRemoteDataSource: AdminCatalogRemoteDataSource by lazy {
         HybridAdminCatalogDataSource(
-            firestoreDataSource = FirestoreAdminCatalogDataSource(firebaseClientProvider),
+            firestoreDataSource = FirestoreAdminCatalogDataSource(
+                firestoreProvider = firebaseClientProvider,
+                actorRoleResolver = {
+                    when (authRepository.sessionFlow.value.role) {
+                        AdminRole.OWNER -> "owner"
+                        AdminRole.ADMIN -> "admin"
+                        else -> null
+                    }
+                }
+            ),
             backendVersionDataSource = backendAdminVersionDataSource
         )
     }
@@ -229,6 +255,28 @@ class AppContainer(context: Context) {
             remoteDataSource = adminCatalogRemoteDataSource,
             dispatcherProvider = dispatcherProvider,
             pdfVersionStorageBroker = pdfVersionStorageBroker
+        )
+    }
+
+    val localFileOrganizationRepository: LocalFileOrganizationRepository by lazy {
+        LocalFileOrganizationRepositoryImpl(
+            localDataSource = localFileOrganizationDataSource,
+            dispatcherProvider = dispatcherProvider
+        )
+    }
+
+    val notificationLogRepository: NotificationLogRepository by lazy {
+        NotificationLogRepositoryImpl(
+            localDataSource = localNotificationDataSource,
+            dispatcherProvider = dispatcherProvider
+        )
+    }
+
+    val adminGovernanceRepository: AdminGovernanceRepository by lazy {
+        AdminGovernanceRepositoryImpl(
+            authRepository = authRepository,
+            backendDataSource = backendAdminVersionDataSource,
+            dispatcherProvider = dispatcherProvider
         )
     }
 }

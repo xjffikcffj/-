@@ -273,7 +273,33 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // ===== 7. Default-deny catch-all =====
+    // ===== 7. audit_logs: Admin/Owner read-only + immutable client audit append; no update/delete =====
+    match /audit_logs/{logId} {
+      allow read: if isAdminOrOwner();
+
+      allow create: if isAdminOrOwner()
+        && isValidDocId(logId)
+        && request.resource.data.keys().hasOnly([
+          'action', 'actorUid', 'actorRole', 'targetCollection',
+          'targetId', 'summary', 'source', 'createdAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'action', 'actorUid', 'actorRole', 'targetCollection',
+          'targetId', 'summary', 'source', 'createdAt'
+        ])
+        && isNonEmptyString(request.resource.data.action, 64)
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actorRole == userRole()
+        && isNonEmptyString(request.resource.data.targetCollection, 64)
+        && isNonEmptyString(request.resource.data.targetId, 128)
+        && isNonEmptyString(request.resource.data.summary, 300)
+        && request.resource.data.source == 'client'
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // ===== 8. Default-deny catch-all =====
     match /{document=**} {
       allow read, write: if false;
     }

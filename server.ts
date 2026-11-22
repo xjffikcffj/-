@@ -11,7 +11,12 @@ import { createR2StorageAdapter } from './server/storage/r2Storage.js';
 
 export function startBackendServer() {
   const config = loadServerConfig();
-  const { firestore, idTokenVerifier } = createFirebaseAdminServices(config);
+  const {
+    firestore,
+    idTokenVerifier,
+    staffAuthManager,
+    pushNotificationDispatcher,
+  } = createFirebaseAdminServices(config);
   const r2Storage = createR2StorageAdapter(config);
 
   const app = createBackendApp({
@@ -19,6 +24,8 @@ export function startBackendServer() {
     firestore,
     idTokenVerifier,
     r2Storage,
+    staffAuthManager,
+    pushNotificationDispatcher,
   });
 
   const currentDir = path.dirname(fileURLToPath(import.meta.url));

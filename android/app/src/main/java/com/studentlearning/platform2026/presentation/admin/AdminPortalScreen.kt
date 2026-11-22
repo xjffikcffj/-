@@ -25,9 +25,14 @@ import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Group
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shield
@@ -73,6 +78,8 @@ import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.AuditLogEntry
+import com.studentlearning.platform2026.domain.model.StaffMember
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.presentation.account.resolveAuthErrorText
 import com.studentlearning.platform2026.presentation.components.HaqibatiSurfaceCard
@@ -81,6 +88,8 @@ import com.studentlearning.platform2026.presentation.theme.HaqibatiThemeTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun AdminPortalScreen(
@@ -199,6 +208,11 @@ fun AdminPortalScreen(
         },
         onConfirmAction = viewModel::confirmPendingAction,
         onDismissConfirmation = viewModel::dismissConfirmationDialog,
+        onRetryStaff = viewModel::loadStaffMembers,
+        onGrantAdminByEmail = viewModel::grantAdminRoleByEmail,
+        onRequestRevokeAdmin = viewModel::requestRevokeAdminRole,
+        onRetryAuditLogs = { viewModel.loadAuditLogs() },
+        onBroadcastImportantUpdate = viewModel::broadcastImportantUpdate,
         modifier = modifier
     )
 }
@@ -251,7 +265,12 @@ fun AdminPortalScreenContent(
     onSaveStudyFile: (String, com.studentlearning.platform2026.domain.model.StudyFileMetadata?, String?, String, String?, Int, Boolean) -> Unit,
     onSaveStudyFileVersion: (String, com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata?, String?, Int, String, String?, Boolean) -> Unit = { _, _, _, _, _, _, _ -> },
     onConfirmAction: () -> Unit,
-    onDismissConfirmation: () -> Unit
+    onDismissConfirmation: () -> Unit,
+    onRetryStaff: () -> Unit = {},
+    onGrantAdminByEmail: (String) -> Unit = {},
+    onRequestRevokeAdmin: (StaffMember) -> Unit = {},
+    onRetryAuditLogs: () -> Unit = {},
+    onBroadcastImportantUpdate: (String, String) -> Unit = { _, _ -> }
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -343,7 +362,12 @@ fun AdminPortalScreenContent(
                         onToggleStudyFilePublish = onToggleStudyFilePublish,
                         onToggleStudyFileArchive = onToggleStudyFileArchive,
                         onMoveStudyFile = onMoveStudyFile,
-                        onOpenFileVersions = onOpenFileVersions
+                        onOpenFileVersions = onOpenFileVersions,
+                        onRetryStaff = onRetryStaff,
+                        onGrantAdminByEmail = onGrantAdminByEmail,
+                        onRequestRevokeAdmin = onRequestRevokeAdmin,
+                        onRetryAuditLogs = onRetryAuditLogs,
+                        onBroadcastImportantUpdate = onBroadcastImportantUpdate
                     )
                 }
             }
@@ -726,16 +750,24 @@ private fun AdminDashboardContent(
     onToggleStudyFilePublish: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onToggleStudyFileArchive: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
     onMoveStudyFile: (com.studentlearning.platform2026.domain.model.StudyFileMetadata, Boolean) -> Unit,
-    onOpenFileVersions: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit
+    onOpenFileVersions: (com.studentlearning.platform2026.domain.model.StudyFileMetadata) -> Unit,
+    onRetryStaff: () -> Unit,
+    onGrantAdminByEmail: (String) -> Unit,
+    onRequestRevokeAdmin: (StaffMember) -> Unit,
+    onRetryAuditLogs: () -> Unit,
+    onBroadcastImportantUpdate: (String, String) -> Unit
 ) {
     val spacing = HaqibatiThemeTokens.spacing
-    val tabs = AdminManagementSection.entries
+    val tabs = AdminManagementSection.entries.filter { tab ->
+        tab != AdminManagementSection.STAFF || uiState.session.canPerformOwnerOnlyActions
+    }
     val canMutate = uiState.session.canPerformAdminActions && !uiState.isSubmitting
     val canPerformOwnerOnly = uiState.session.canPerformOwnerOnlyActions && !uiState.isSubmitting
+    val selectedTabIndex = tabs.indexOf(uiState.activeTab).takeIf { it >= 0 } ?: 0
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScrollableTabRow(
-            selectedTabIndex = tabs.indexOf(uiState.activeTab),
+            selectedTabIndex = selectedTabIndex,
             edgePadding = spacing.md
         ) {
             tabs.forEach { tab ->
@@ -744,6 +776,8 @@ private fun AdminDashboardContent(
                     AdminManagementSection.SUBJECTS -> R.string.admin_tab_subjects
                     AdminManagementSection.SECTIONS -> R.string.admin_tab_sections
                     AdminManagementSection.PDF_FILES -> R.string.admin_tab_pdf_files
+                    AdminManagementSection.AUDIT_LOGS -> R.string.admin_tab_audit_logs
+                    AdminManagementSection.STAFF -> R.string.admin_tab_staff
                 }
                 Tab(
                     selected = uiState.activeTab == tab,
@@ -1048,6 +1082,126 @@ private fun AdminDashboardContent(
                                         onManageVersions = { onOpenFileVersions(file) },
                                         onTogglePublish = { onToggleStudyFilePublish(file) },
                                         onToggleArchive = { onToggleStudyFileArchive(file) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                AdminManagementSection.AUDIT_LOGS -> {
+                    item(key = "broadcast_important_update_card") {
+                        AdminBroadcastUpdateCard(
+                            isSubmitting = !canMutate || uiState.isBroadcastingUpdate,
+                            onSendBroadcast = onBroadcastImportantUpdate
+                        )
+                    }
+                    item(key = "audit_logs_header") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = stringResource(R.string.admin_audit_logs_section_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = onRetryAuditLogs,
+                                enabled = !uiState.isLoadingAuditLogs
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = stringResource(R.string.action_retry)
+                                )
+                            }
+                        }
+                    }
+                    when {
+                        uiState.isLoadingAuditLogs -> item { AdminLoadingBox() }
+                        uiState.auditLogsError != null -> item {
+                            AdminErrorCard(reason = uiState.auditLogsError, onRetry = onRetryAuditLogs)
+                        }
+                        uiState.auditLogs.isEmpty() -> item {
+                            AdminEmptyCard(message = stringResource(R.string.admin_audit_logs_empty))
+                        }
+                        else -> {
+                            itemsIndexed(uiState.auditLogs, key = { _, entry -> entry.id }) { _, entry ->
+                                AdminAuditLogCard(entry = entry)
+                            }
+                        }
+                    }
+                }
+
+                AdminManagementSection.STAFF -> {
+                    if (!uiState.session.canPerformOwnerOnlyActions) {
+                        item {
+                            AdminEmptyCard(message = stringResource(R.string.admin_staff_owner_only_notice))
+                        }
+                    } else {
+                        item(key = "staff_owner_notice") {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.admin_staff_owner_only_notice),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(spacing.sm)
+                                )
+                            }
+                        }
+                        item(key = "staff_grant_admin_card") {
+                            AdminGrantRoleCard(
+                                isSubmitting = !canPerformOwnerOnly,
+                                onGrantAdmin = onGrantAdminByEmail
+                            )
+                        }
+                        item(key = "staff_list_header") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.admin_tab_staff),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                IconButton(
+                                    onClick = onRetryStaff,
+                                    enabled = !uiState.isLoadingStaff
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = stringResource(R.string.action_retry)
+                                    )
+                                }
+                            }
+                        }
+                        when {
+                            uiState.isLoadingStaff -> item { AdminLoadingBox() }
+                            uiState.staffError != null -> item {
+                                AdminErrorCard(reason = uiState.staffError, onRetry = onRetryStaff)
+                            }
+                            uiState.staffMembers.isEmpty() -> item {
+                                AdminEmptyCard(message = stringResource(R.string.admin_staff_empty))
+                            }
+                            else -> {
+                                itemsIndexed(uiState.staffMembers, key = { _, member -> member.uid }) { _, member ->
+                                    val isCurrentUser = member.uid == uiState.session.uid ||
+                                        (!member.email.isNullOrBlank() && member.email.equals(uiState.session.email, ignoreCase = true))
+                                    AdminStaffMemberCard(
+                                        member = member,
+                                        isCurrentUser = isCurrentUser,
+                                        canRevoke = canPerformOwnerOnly && member.role == AdminRole.ADMIN && !isCurrentUser,
+                                        onRevokeAdmin = { onRequestRevokeAdmin(member) }
                                     )
                                 }
                             }
@@ -1540,6 +1694,273 @@ private fun AdminErrorCard(
 }
 
 @Composable
+private fun AdminBroadcastUpdateCard(
+    isSubmitting: Boolean,
+    onSendBroadcast: (String, String) -> Unit
+) {
+    val spacing = HaqibatiThemeTokens.spacing
+    var title by rememberSaveable { mutableStateOf("") }
+    var body by rememberSaveable { mutableStateOf("") }
+
+    HaqibatiSurfaceCard(contentPadding = spacing.md) {
+        Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.Campaign,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Text(
+                    text = stringResource(R.string.admin_audit_broadcast_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text(stringResource(R.string.admin_audit_broadcast_title_label)) },
+                singleLine = true,
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = body,
+                onValueChange = { body = it },
+                label = { Text(stringResource(R.string.admin_audit_broadcast_body_label)) },
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = stringResource(R.string.admin_audit_broadcast_disclaimer),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(
+                onClick = {
+                    val sentTitle = title
+                    val sentBody = body
+                    onSendBroadcast(sentTitle, sentBody)
+                    if (sentTitle.isNotBlank() && sentBody.isNotBlank()) {
+                        title = ""
+                        body = ""
+                    }
+                },
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(text = stringResource(R.string.admin_audit_broadcast_send))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AdminAuditLogCard(entry: AuditLogEntry) {
+    val spacing = HaqibatiThemeTokens.spacing
+    val formattedTime = remember(entry.createdAtEpochMillis) {
+        entry.createdAtEpochMillis?.let { millis ->
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(millis))
+        }
+    }
+
+    HaqibatiSurfaceCard(contentPadding = spacing.md) {
+        Column(verticalArrangement = Arrangement.spacedBy(spacing.xs)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.summary.ifBlank { entry.action },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (formattedTime != null) {
+                        Text(
+                            text = formattedTime,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                StatusChip(label = entry.action, highlighted = false)
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+                verticalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                StatusChip(
+                    label = stringResource(
+                        R.string.admin_audit_actor_format,
+                        entry.actorUid,
+                        entry.actorRole
+                    ),
+                    highlighted = false
+                )
+                StatusChip(
+                    label = stringResource(
+                        R.string.admin_audit_target_format,
+                        entry.targetCollection,
+                        entry.targetId
+                    ),
+                    highlighted = false
+                )
+                StatusChip(
+                    label = stringResource(R.string.admin_audit_source_format, entry.source),
+                    highlighted = false
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdminGrantRoleCard(
+    isSubmitting: Boolean,
+    onGrantAdmin: (String) -> Unit
+) {
+    val spacing = HaqibatiThemeTokens.spacing
+    var email by rememberSaveable { mutableStateOf("") }
+
+    HaqibatiSurfaceCard(contentPadding = spacing.md) {
+        Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.PersonAdd,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Text(
+                    text = stringResource(R.string.admin_staff_grant_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text(stringResource(R.string.admin_staff_email_hint)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                singleLine = true,
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                onClick = {
+                    val target = email
+                    onGrantAdmin(target)
+                    if (target.isNotBlank()) {
+                        email = ""
+                    }
+                },
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(text = stringResource(R.string.admin_staff_grant_action))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AdminStaffMemberCard(
+    member: StaffMember,
+    isCurrentUser: Boolean,
+    canRevoke: Boolean,
+    onRevokeAdmin: () -> Unit
+) {
+    val spacing = HaqibatiThemeTokens.spacing
+    val roleLabel = when (member.role) {
+        AdminRole.OWNER -> stringResource(R.string.admin_role_owner)
+        AdminRole.ADMIN -> stringResource(R.string.admin_role_admin)
+        AdminRole.NONE -> ""
+    }
+
+    HaqibatiSurfaceCard(contentPadding = spacing.md) {
+        Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Group,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(spacing.sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = member.email ?: member.uid,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (!member.displayName.isNullOrBlank()) {
+                        Text(
+                            text = member.displayName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                StatusChip(
+                    label = roleLabel,
+                    highlighted = member.role == AdminRole.OWNER
+                )
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+                verticalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                if (isCurrentUser) {
+                    StatusChip(
+                        label = stringResource(R.string.admin_staff_self_badge),
+                        highlighted = true
+                    )
+                }
+                if (member.disabled) {
+                    StatusChip(
+                        label = stringResource(R.string.admin_staff_disabled_badge),
+                        highlighted = false
+                    )
+                }
+            }
+
+            if (canRevoke) {
+                OutlinedButton(
+                    onClick = onRevokeAdmin,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PersonRemove,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(text = stringResource(R.string.admin_staff_revoke_action))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun resolveAdminSuccessText(message: AdminSuccessMessage?): String {
     val resId = when (message) {
         AdminSuccessMessage.BRANCH_CREATED -> R.string.admin_success_branch_created
@@ -1557,6 +1978,10 @@ private fun resolveAdminSuccessText(message: AdminSuccessMessage?): String {
         AdminSuccessMessage.PUBLISH_UPDATED -> R.string.admin_success_publish_updated
         AdminSuccessMessage.ARCHIVE_UPDATED -> R.string.admin_success_archive_updated
         AdminSuccessMessage.REORDERED -> R.string.admin_success_reordered
+        AdminSuccessMessage.STAFF_ADMIN_GRANTED -> R.string.admin_success_staff_admin_granted
+        AdminSuccessMessage.STAFF_ADMIN_REVOKED -> R.string.admin_success_staff_admin_revoked
+        AdminSuccessMessage.BROADCAST_SENT -> R.string.admin_success_broadcast_sent
+        AdminSuccessMessage.BROADCAST_RECORDED_PENDING_FCM -> R.string.admin_success_broadcast_recorded_pending_fcm
         null -> R.string.admin_success_branch_updated
     }
     return stringResource(resId)

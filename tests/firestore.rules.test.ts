@@ -1053,4 +1053,120 @@ describe('Haqibati Firestore Security Rules (Stage 8 - D1)', () => {
       );
     });
   });
+
+  // =========================================================================
+  // 11. Audit Logs Append-Only Governance Rules
+  // =========================================================================
+  describe('11. Audit Logs Append-Only Governance Rules', () => {
+    it('denies guest/student read and create while allowing admin/owner read and valid append-only create', async () => {
+      await assertFails(getDoc(doc(guestDb(), 'audit_logs', 'log-1')));
+      await assertFails(getDoc(doc(studentDb(), 'audit_logs', 'log-1')));
+
+      await assertFails(
+        setDoc(doc(studentDb(), 'audit_logs', 'log-student'), {
+          action: 'BRANCH_CREATED',
+          actorUid: 'student-1',
+          actorRole: 'admin',
+          targetCollection: 'branches',
+          targetId: 'b1',
+          summary: 'محاولة غير مصرح بها',
+          source: 'client',
+          createdAt: serverTimestamp(),
+        }),
+      );
+
+      // Valid client append-only audit log by admin
+      await assertSucceeds(
+        setDoc(doc(adminDb(), 'audit_logs', 'log-admin-1'), {
+          action: 'SECTION_CREATED',
+          actorUid: 'admin-1',
+          actorRole: 'admin',
+          targetCollection: 'sections',
+          targetId: 'sec-1',
+          summary: 'إنشاء قسم جديد',
+          source: 'client',
+          createdAt: serverTimestamp(),
+        }),
+      );
+
+      // Admin and Owner can read audit logs
+      await assertSucceeds(getDoc(doc(adminDb(), 'audit_logs', 'log-admin-1')));
+      await assertSucceeds(getDoc(doc(ownerDb(), 'audit_logs', 'log-admin-1')));
+    });
+
+    it('rejects spoofed actorUid, actorRole, backend source, extra fields, updates, and deletes on audit_logs', async () => {
+      // Seed valid audit entry by owner
+      await assertSucceeds(
+        setDoc(doc(ownerDb(), 'audit_logs', 'log-owner-1'), {
+          action: 'BRANCH_PUBLISHED',
+          actorUid: 'owner-1',
+          actorRole: 'owner',
+          targetCollection: 'branches',
+          targetId: 'branch-1',
+          summary: 'نشر الفرع العلمي',
+          source: 'client',
+          createdAt: serverTimestamp(),
+        }),
+      );
+
+      // Reject spoofing source='backend' or actorRole='owner' from admin
+      await assertFails(
+        setDoc(doc(adminDb(), 'audit_logs', 'log-bad-source'), {
+          action: 'SECTION_CREATED',
+          actorUid: 'admin-1',
+          actorRole: 'admin',
+          targetCollection: 'sections',
+          targetId: 'sec-1',
+          summary: 'إنشاء قسم',
+          source: 'backend',
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(adminDb(), 'audit_logs', 'log-bad-role'), {
+          action: 'SECTION_CREATED',
+          actorUid: 'admin-1',
+          actorRole: 'owner',
+          targetCollection: 'sections',
+          targetId: 'sec-1',
+          summary: 'تزوير الدور',
+          source: 'client',
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(adminDb(), 'audit_logs', 'log-bad-actor'), {
+          action: 'SECTION_CREATED',
+          actorUid: 'owner-1',
+          actorRole: 'admin',
+          targetCollection: 'sections',
+          targetId: 'sec-1',
+          summary: 'تزوير المنفذ',
+          source: 'client',
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(adminDb(), 'audit_logs', 'log-bad-extra'), {
+          action: 'SECTION_CREATED',
+          actorUid: 'admin-1',
+          actorRole: 'admin',
+          targetCollection: 'sections',
+          targetId: 'sec-1',
+          summary: 'حقل إضافي',
+          source: 'client',
+          extraField: 'not-allowed',
+          createdAt: serverTimestamp(),
+        }),
+      );
+
+      // Immutable: update & delete must fail even for Owner
+      await assertFails(
+        updateDoc(doc(ownerDb(), 'audit_logs', 'log-owner-1'), {
+          summary: 'تعديل سجل التدقيق',
+        }),
+      );
+      await assertFails(deleteDoc(doc(ownerDb(), 'audit_logs', 'log-owner-1')));
+    });
+  });
 });

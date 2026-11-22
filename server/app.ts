@@ -7,7 +7,11 @@ import express, {
 } from 'express';
 import type { Firestore } from 'firebase-admin/firestore';
 import { isR2Configured, type ServerConfig } from './config/env.js';
-import type { IdTokenVerifier } from './firebase/adminApp.js';
+import type {
+  IdTokenVerifier,
+  PushNotificationDispatcher,
+  StaffAuthManager,
+} from './firebase/adminApp.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import {
   InMemoryRateLimiter,
@@ -16,8 +20,11 @@ import {
 import { createAdminRouter } from './routes/adminRoutes.js';
 import { createCatalogRouter } from './routes/catalogRoutes.js';
 import { createDeliveryRouter } from './routes/deliveryRoutes.js';
+import { AuditLogService } from './services/auditLogService.js';
 import { CatalogService } from './services/catalogService.js';
 import { DeliveryService } from './services/deliveryService.js';
+import { NotificationDispatchService } from './services/notificationDispatchService.js';
+import { StaffManagementService } from './services/staffManagementService.js';
 import { UploadVerificationService } from './services/uploadVerificationService.js';
 import type { R2StoragePort } from './storage/r2Storage.js';
 import { isApiError } from './utils/errors.js';
@@ -27,6 +34,8 @@ export interface BackendAppDependencies {
   firestore: Firestore;
   idTokenVerifier: IdTokenVerifier;
   r2Storage: R2StoragePort;
+  staffAuthManager?: StaffAuthManager;
+  pushNotificationDispatcher?: PushNotificationDispatcher;
   nowMs?: () => number;
   uuidGenerator?: () => string;
   enableRateLimiting?: boolean;
@@ -65,14 +74,30 @@ export function createBackendApp(deps: BackendAppDependencies): Express {
 
   app.use(express.json({ limit: '64kb' }));
 
-  const { optionalAuth, requireNonGuest, requireAdminOrOwner } =
+  const { optionalAuth, requireNonGuest, requireAdminOrOwner, requireOwner } =
     createAuthMiddleware(deps.idTokenVerifier);
 
-  const catalogService = new CatalogService(deps.firestore);
+  const auditLogService = new AuditLogService(deps.firestore, {
+    nowMs: deps.nowMs,
+  });
+  const notificationDispatchService = new NotificationDispatchService({
+    pushNotificationDispatcher: deps.pushNotificationDispatcher,
+    auditLogService,
+    uuidGenerator: deps.uuidGenerator,
+    nowMs: deps.nowMs,
+  });
+  const staffManagementService = new StaffManagementService({
+    staffAuthManager: deps.staffAuthManager,
+    auditLogService,
+  });
+
+  const catalogService = new CatalogService(deps.firestore, auditLogService);
   const uploadVerificationService = new UploadVerificationService({
     firestore: deps.firestore,
     r2Storage: deps.r2Storage,
     config: deps.config,
+    auditLogService,
+    notificationDispatchService,
     nowMs: deps.nowMs,
     uuidGenerator: deps.uuidGenerator,
   });
@@ -109,6 +134,10 @@ export function createBackendApp(deps: BackendAppDependencies): Express {
       catalogService,
       uploadVerificationService,
       requireAdminOrOwner,
+      requireOwner,
+      auditLogService,
+      staffManagementService,
+      notificationDispatchService,
       rateLimiter,
     }),
   );

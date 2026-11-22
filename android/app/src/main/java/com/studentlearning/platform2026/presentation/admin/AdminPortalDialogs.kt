@@ -468,6 +468,13 @@ internal fun AdminConfirmationDialogHost(
                 action.file.title
             )
         }
+        is AdminConfirmationAction.RevokeAdminRole -> {
+            titleRes = R.string.admin_confirm_revoke_admin_title
+            message = stringResource(
+                R.string.admin_confirm_revoke_admin_message,
+                action.member.email ?: action.member.uid
+            )
+        }
     }
 
     AlertDialog(

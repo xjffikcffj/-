@@ -140,3 +140,78 @@ export interface PublishVersionResponseDto {
   verifiedUploadSessionId: string;
   verifiedAttemptId: string;
 }
+
+export type StaffRole = 'owner' | 'admin';
+
+export interface StaffMemberDto {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  role: StaffRole;
+  disabled: boolean;
+  emailVerified: boolean;
+}
+
+export interface UpdateStaffRoleResponseDto {
+  status: 'UPDATED';
+  uid: string;
+  email: string | null;
+  role: 'admin' | 'student';
+  tokensRevoked: boolean;
+}
+
+export type AuditLogSource = 'backend' | 'client';
+
+export type AuditLogAction =
+  | 'BRANCH_CREATED'
+  | 'BRANCH_UPDATED'
+  | 'BRANCH_PUBLISH_CHANGED'
+  | 'BRANCHES_REORDERED'
+  | 'SUBJECT_CREATED'
+  | 'SUBJECT_UPDATED'
+  | 'SUBJECT_PUBLISH_CHANGED'
+  | 'SUBJECTS_REORDERED'
+  | 'SECTION_CREATED'
+  | 'SECTION_UPDATED'
+  | 'SECTION_PUBLISH_CHANGED'
+  | 'SECTIONS_REORDERED'
+  | 'STUDY_FILE_CREATED'
+  | 'STUDY_FILE_UPDATED'
+  | 'STUDY_FILE_PUBLISH_CHANGED'
+  | 'STUDY_FILE_ARCHIVE_CHANGED'
+  | 'STUDY_FILES_REORDERED'
+  | 'VERSION_CREATED'
+  | 'VERSION_UPDATED'
+  | 'UPLOAD_SLOT_CREATED'
+  | 'PDF_VERIFIED'
+  | 'VERSION_PUBLISHED'
+  | 'ADMIN_ROLE_GRANTED'
+  | 'ADMIN_ROLE_REVOKED'
+  | 'IMPORTANT_UPDATE_BROADCAST';
+
+export interface AuditLogDto {
+  id: string;
+  action: AuditLogAction | string;
+  actorUid: string;
+  actorRole: AppUserRole | string;
+  targetCollection: string;
+  targetId: string;
+  summary: string;
+  source: AuditLogSource | string;
+  createdAtEpochMillis: number | null;
+}
+
+export type StudyNotificationType =
+  | 'NEW_FILE'
+  | 'NEW_VERSION'
+  | 'IMPORTANT_UPDATE';
+
+export interface BroadcastNotificationResponseDto {
+  notificationId: string;
+  topic: string;
+  type: StudyNotificationType;
+  title: string;
+  body: string;
+  sent: boolean;
+  reason?: string;
+}

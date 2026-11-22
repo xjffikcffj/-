@@ -19,6 +19,7 @@ object FirestoreCatalogSchema {
         const val SUBJECTS = "subjects"
         const val SECTIONS = "sections"
         const val STUDY_FILES = "study_files"
+        const val AUDIT_LOGS = "audit_logs"
     }
 
     object Subcollections {

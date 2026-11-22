@@ -10,11 +10,13 @@ import com.studentlearning.platform2026.domain.model.CatalogFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadException
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
+import com.studentlearning.platform2026.domain.model.LocalFileOrderingHelper
 import com.studentlearning.platform2026.domain.model.NewVersionBadgePolicy
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileOfflineState
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
+import com.studentlearning.platform2026.domain.repository.LocalFileOrganizationRepository
 import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -35,6 +37,7 @@ class SectionFilesViewModel(
     private val catalogRepository: CatalogRepository,
     private val authRepository: AuthRepository? = null,
     private val offlineDownloadsRepository: OfflineDownloadsRepository? = null,
+    private val localFileOrganizationRepository: LocalFileOrganizationRepository? = null,
     private val clockEpochMillis: () -> Long = { System.currentTimeMillis() },
     private val monotonicElapsedMillis: (() -> Long)? = null
 ) : ViewModel() {
@@ -49,10 +52,23 @@ class SectionFilesViewModel(
         ) : CatalogSnapshot
     }
 
+    private data class OrganizationUiControl(
+        val favoriteIds: Set<String>,
+        val savedCustomOrderIds: List<String>,
+        val showFavoritesOnly: Boolean,
+        val isReorderMode: Boolean,
+        val draftOrderedFileIds: List<String>
+    )
+
+    private val sectionScopeKey = LocalFileOrganizationRepository.sectionScope(sectionId)
+
     private val catalogSnapshot = MutableStateFlow<CatalogSnapshot>(CatalogSnapshot.Loading)
     private val guestPromptFileTitle = MutableStateFlow<String?>(null)
     private val transientActionErrorReason = MutableStateFlow<DownloadFailureReason?>(null)
     private val badgeExpiryTrigger = MutableStateFlow(0L)
+    private val showFavoritesOnlyFlow = MutableStateFlow(false)
+    private val isReorderModeFlow = MutableStateFlow(false)
+    private val draftOrderedFileIdsFlow = MutableStateFlow<List<String>>(emptyList())
 
     private var badgeExpiryJob: Job? = null
     private var scheduledExpiryTargetEpochMillis: Long? = null
@@ -74,6 +90,65 @@ class SectionFilesViewModel(
     fun onForegroundResumed() {
         cancelBadgeExpiryJob()
         badgeExpiryTrigger.value = badgeExpiryTrigger.value + 1L
+    }
+
+    fun toggleFavorite(file: StudyFileMetadata) {
+        val orgRepo = localFileOrganizationRepository ?: return
+        viewModelScope.launch {
+            orgRepo.toggleFavorite(file)
+        }
+    }
+
+    fun toggleFavoritesFilter() {
+        if (isReorderModeFlow.value) return
+        showFavoritesOnlyFlow.value = !showFavoritesOnlyFlow.value
+    }
+
+    fun enterReorderMode() {
+        val loaded = (catalogSnapshot.value as? CatalogSnapshot.Loaded)?.files.orEmpty()
+        if (loaded.size <= 1 || localFileOrganizationRepository == null) return
+        val currentContent = _uiState.value as? SectionFilesUiState.Content
+        val initialOrderedFiles = if (currentContent != null && !currentContent.showFavoritesOnly) {
+            currentContent.files
+        } else {
+            loaded
+        }
+        draftOrderedFileIdsFlow.value = initialOrderedFiles.map { it.id }
+        isReorderModeFlow.value = true
+    }
+
+    fun moveFileInDraftOrder(fileId: String, moveUp: Boolean) {
+        if (!isReorderModeFlow.value) return
+        draftOrderedFileIdsFlow.value = LocalFileOrderingHelper.moveItemInOrderedIds(
+            orderedIds = draftOrderedFileIdsFlow.value,
+            targetId = fileId,
+            moveUp = moveUp
+        )
+    }
+
+    fun saveReorder() {
+        val orgRepo = localFileOrganizationRepository ?: return
+        if (!isReorderModeFlow.value) return
+        val orderedIds = draftOrderedFileIdsFlow.value
+        viewModelScope.launch {
+            orgRepo.saveCustomOrder(scopeKey = sectionScopeKey, orderedFileIds = orderedIds)
+            isReorderModeFlow.value = false
+            draftOrderedFileIdsFlow.value = emptyList()
+        }
+    }
+
+    fun cancelReorder() {
+        isReorderModeFlow.value = false
+        draftOrderedFileIdsFlow.value = emptyList()
+    }
+
+    fun resetCustomOrder() {
+        val orgRepo = localFileOrganizationRepository ?: return
+        viewModelScope.launch {
+            orgRepo.clearCustomOrder(scopeKey = sectionScopeKey)
+            isReorderModeFlow.value = false
+            draftOrderedFileIdsFlow.value = emptyList()
+        }
     }
 
     fun startDownload(file: StudyFileMetadata) {
@@ -159,9 +234,31 @@ class SectionFilesViewModel(
 
         val transientUiFlow = combine(
             guestPromptFileTitle,
-            transientActionErrorReason
-        ) { guestPrompt, transientError ->
-            guestPrompt to transientError
+            transientActionErrorReason,
+            badgeExpiryTrigger
+        ) { guestPrompt, transientError, expiryTick ->
+            Triple(guestPrompt, transientError, expiryTick)
+        }
+
+        val favoriteIdsFlow = localFileOrganizationRepository?.observeFavoriteIds()
+            ?: flowOf(emptySet())
+        val savedCustomOrderFlow = localFileOrganizationRepository?.observeCustomOrder(sectionScopeKey)
+            ?: flowOf(emptyList())
+
+        val orgControlFlow = combine(
+            favoriteIdsFlow,
+            savedCustomOrderFlow,
+            showFavoritesOnlyFlow,
+            isReorderModeFlow,
+            draftOrderedFileIdsFlow
+        ) { favIds, savedOrder, favoritesOnly, reorderMode, draftIds ->
+            OrganizationUiControl(
+                favoriteIds = favIds,
+                savedCustomOrderIds = savedOrder,
+                showFavoritesOnly = favoritesOnly,
+                isReorderMode = reorderMode,
+                draftOrderedFileIds = draftIds
+            )
         }
 
         viewModelScope.launch {
@@ -170,15 +267,30 @@ class SectionFilesViewModel(
                 offlineStatesFlow,
                 canDownloadFlow,
                 transientUiFlow,
-                badgeExpiryTrigger
-            ) { snapshot, offlineStates, canDownload, transientUi, _ ->
-                val (guestPrompt, transientError) = transientUi
+                orgControlFlow
+            ) { snapshot, offlineStates, canDownload, transientUi, orgControl ->
+                val (guestPrompt, transientError, _) = transientUi
                 when (snapshot) {
                     CatalogSnapshot.Loading -> SectionFilesUiState.Loading
                     CatalogSnapshot.Empty -> SectionFilesUiState.Empty
                     is CatalogSnapshot.Loaded -> {
+                        val activeOrderIds = if (orgControl.isReorderMode) {
+                            orgControl.draftOrderedFileIds
+                        } else {
+                            orgControl.savedCustomOrderIds
+                        }
+                        val orderedFiles = LocalFileOrderingHelper.applyLocalFileOrder(
+                            items = snapshot.files,
+                            idSelector = { it.id },
+                            orderedIds = activeOrderIds
+                        )
+                        val visibleFiles = if (!orgControl.isReorderMode && orgControl.showFavoritesOnly) {
+                            orderedFiles.filter { it.id in orgControl.favoriteIds }
+                        } else {
+                            orderedFiles
+                        }
                         val nowEpochMillis = resolveCurrentNowEpochMillis()
-                        val newVersionBadgeFileIds = snapshot.files
+                        val newVersionBadgeFileIds = orderedFiles
                             .filter { file ->
                                 NewVersionBadgePolicy.shouldShowNewVersionBadge(
                                     file = file,
@@ -188,9 +300,14 @@ class SectionFilesViewModel(
                             }
                             .mapTo(mutableSetOf()) { it.id }
                         SectionFilesUiState.Content(
-                            files = snapshot.files,
+                            files = visibleFiles,
+                            totalFilesCount = snapshot.files.size,
                             offlineStates = offlineStates,
                             newVersionBadgeFileIds = newVersionBadgeFileIds,
+                            favoriteFileIds = orgControl.favoriteIds,
+                            showFavoritesOnly = orgControl.showFavoritesOnly,
+                            isReorderMode = orgControl.isReorderMode,
+                            hasCustomOrder = orgControl.savedCustomOrderIds.isNotEmpty(),
                             canDownloadOfflineFiles = canDownload,
                             guestDownloadPromptFileTitle = guestPrompt,
                             transientActionErrorReason = transientError
@@ -341,6 +458,7 @@ class SectionFilesViewModel(
             catalogRepository: CatalogRepository,
             authRepository: AuthRepository? = null,
             offlineDownloadsRepository: OfflineDownloadsRepository? = null,
+            localFileOrganizationRepository: LocalFileOrganizationRepository? = null,
             clockEpochMillis: () -> Long = { System.currentTimeMillis() },
             monotonicElapsedMillis: (() -> Long)? = { SystemClock.elapsedRealtime() }
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -351,6 +469,7 @@ class SectionFilesViewModel(
                     catalogRepository = catalogRepository,
                     authRepository = authRepository,
                     offlineDownloadsRepository = offlineDownloadsRepository,
+                    localFileOrganizationRepository = localFileOrganizationRepository,
                     clockEpochMillis = clockEpochMillis,
                     monotonicElapsedMillis = monotonicElapsedMillis
                 ) as T

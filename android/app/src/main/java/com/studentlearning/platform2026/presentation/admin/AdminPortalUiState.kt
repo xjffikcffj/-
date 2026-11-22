@@ -3,6 +3,8 @@ package com.studentlearning.platform2026.presentation.admin
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.AuditLogEntry
+import com.studentlearning.platform2026.domain.model.StaffMember
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -14,7 +16,9 @@ enum class AdminManagementSection {
     BRANCHES,
     SUBJECTS,
     SECTIONS,
-    PDF_FILES
+    PDF_FILES,
+    AUDIT_LOGS,
+    STAFF
 }
 
 enum class AdminSuccessMessage {
@@ -32,7 +36,11 @@ enum class AdminSuccessMessage {
     VERSION_PUBLISHED,
     PUBLISH_UPDATED,
     ARCHIVE_UPDATED,
-    REORDERED
+    REORDERED,
+    STAFF_ADMIN_GRANTED,
+    STAFF_ADMIN_REVOKED,
+    BROADCAST_SENT,
+    BROADCAST_RECORDED_PENDING_FCM
 }
 
 data class AdminFeedbackState(
@@ -83,6 +91,7 @@ sealed interface AdminConfirmationAction {
         val file: StudyFileMetadata,
         val version: StudyFileVersionMetadata
     ) : AdminConfirmationAction
+    data class RevokeAdminRole(val member: StaffMember) : AdminConfirmationAction
 }
 
 data class AdminPortalUiState(
@@ -113,6 +122,13 @@ data class AdminPortalUiState(
     val isLoadingFileVersions: Boolean = false,
     val uploadingVersionId: String? = null,
     val fileVersionsError: AdminFailureReason? = null,
+    val staffMembers: List<StaffMember> = emptyList(),
+    val isLoadingStaff: Boolean = false,
+    val staffError: AdminFailureReason? = null,
+    val auditLogs: List<AuditLogEntry> = emptyList(),
+    val isLoadingAuditLogs: Boolean = false,
+    val auditLogsError: AdminFailureReason? = null,
+    val isBroadcastingUpdate: Boolean = false,
     val r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
     val editorDialog: AdminEditorDialogState? = null,
     val confirmationAction: AdminConfirmationAction? = null,

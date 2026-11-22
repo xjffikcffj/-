@@ -6,14 +6,17 @@ import androidx.lifecycle.viewModelScope
 import com.studentlearning.platform2026.core.common.AppResult
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
+import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
+import com.studentlearning.platform2026.domain.model.StaffMember
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.model.StudySubject
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
+import com.studentlearning.platform2026.domain.repository.AdminGovernanceRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.domain.repository.PdfUploadBinarySource
@@ -26,7 +29,8 @@ import kotlinx.coroutines.launch
 class AdminPortalViewModel(
     private val authRepository: AuthRepository,
     private val adminCatalogRepository: AdminCatalogRepository,
-    private val r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+    private val r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
+    private val adminGovernanceRepository: AdminGovernanceRepository? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -159,7 +163,165 @@ class AdminPortalViewModel(
     }
 
     fun selectTab(tab: AdminManagementSection) {
+        if (tab == AdminManagementSection.STAFF && !_uiState.value.session.canPerformOwnerOnlyActions) {
+            reportFailureReason(AdminFailureReason.INSUFFICIENT_ROLE)
+            return
+        }
         _uiState.update { it.copy(activeTab = tab) }
+        if (tab == AdminManagementSection.AUDIT_LOGS &&
+            _uiState.value.auditLogs.isEmpty() &&
+            !_uiState.value.isLoadingAuditLogs
+        ) {
+            loadAuditLogs()
+        } else if (tab == AdminManagementSection.STAFF &&
+            _uiState.value.staffMembers.isEmpty() &&
+            !_uiState.value.isLoadingStaff
+        ) {
+            loadStaffMembers()
+        }
+    }
+
+    fun loadStaffMembers() {
+        if (!ensureCanPerformOwnerOnlyWrite()) return
+        val repo = adminGovernanceRepository
+        if (repo == null) {
+            _uiState.update {
+                it.copy(
+                    isLoadingStaff = false,
+                    staffError = AdminFailureReason.BACKEND_NOT_CONFIGURED
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingStaff = true, staffError = null) }
+            when (val result = repo.getStaffMembers()) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoadingStaff = false,
+                            staffMembers = result.data,
+                            staffError = null
+                        )
+                    }
+                }
+                is AppResult.Error -> {
+                    val reason = (result.cause as? AdminException)?.reason ?: AdminFailureReason.UNKNOWN
+                    _uiState.update { it.copy(isLoadingStaff = false, staffError = reason) }
+                }
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun grantAdminRoleByEmail(email: String) {
+        if (!ensureCanPerformOwnerOnlyWrite()) return
+        val repo = adminGovernanceRepository ?: run {
+            reportFailureReason(AdminFailureReason.BACKEND_NOT_CONFIGURED)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSubmitting = true, feedback = null) }
+            when (val result = repo.setStaffAdminRoleByEmail(targetEmail = email, assignAdmin = true)) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isSubmitting = false,
+                            feedback = AdminFeedbackState(
+                                isError = false,
+                                successMessage = AdminSuccessMessage.STAFF_ADMIN_GRANTED
+                            )
+                        )
+                    }
+                    loadStaffMembers()
+                    loadAuditLogs()
+                }
+                is AppResult.Error -> handleSubmissionError(result.cause)
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun requestRevokeAdminRole(member: StaffMember) {
+        if (!ensureCanPerformOwnerOnlyWrite()) return
+        val session = _uiState.value.session
+        if (member.role == AdminRole.OWNER ||
+            member.uid == session.uid ||
+            (!member.email.isNullOrBlank() && member.email.equals(session.email, ignoreCase = true))
+        ) {
+            reportFailureReason(AdminFailureReason.INSUFFICIENT_ROLE)
+            return
+        }
+        _uiState.update {
+            it.copy(confirmationAction = AdminConfirmationAction.RevokeAdminRole(member))
+        }
+    }
+
+    fun loadAuditLogs(limit: Int = 50) {
+        if (!_uiState.value.session.canPerformAdminActions) return
+        val repo = adminGovernanceRepository
+        if (repo == null) {
+            _uiState.update {
+                it.copy(
+                    isLoadingAuditLogs = false,
+                    auditLogsError = AdminFailureReason.BACKEND_NOT_CONFIGURED
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingAuditLogs = true, auditLogsError = null) }
+            when (val result = repo.getAuditLogs(limit = limit)) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoadingAuditLogs = false,
+                            auditLogs = result.data,
+                            auditLogsError = null
+                        )
+                    }
+                }
+                is AppResult.Error -> {
+                    val reason = (result.cause as? AdminException)?.reason ?: AdminFailureReason.UNKNOWN
+                    _uiState.update { it.copy(isLoadingAuditLogs = false, auditLogsError = reason) }
+                }
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun broadcastImportantUpdate(title: String, body: String) {
+        if (!ensureCanPerformAdminWrite()) return
+        val repo = adminGovernanceRepository ?: run {
+            reportFailureReason(AdminFailureReason.BACKEND_NOT_CONFIGURED)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isBroadcastingUpdate = true, feedback = null) }
+            when (val result = repo.broadcastImportantUpdate(title = title, body = body)) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isBroadcastingUpdate = false,
+                            feedback = AdminFeedbackState(
+                                isError = false,
+                                successMessage = if (result.data.sent) {
+                                    AdminSuccessMessage.BROADCAST_SENT
+                                } else {
+                                    AdminSuccessMessage.BROADCAST_RECORDED_PENDING_FCM
+                                }
+                            )
+                        )
+                    }
+                    loadAuditLogs()
+                }
+                is AppResult.Error -> {
+                    _uiState.update { it.copy(isBroadcastingUpdate = false) }
+                    handleSubmissionError(result.cause)
+                }
+                AppResult.Loading -> Unit
+            }
+        }
     }
 
     fun dismissFeedback() {
@@ -815,7 +977,8 @@ class AdminPortalViewModel(
         val pending = _uiState.value.confirmationAction ?: return
         val allowed = when (pending) {
             is AdminConfirmationAction.UnpublishBranch,
-            is AdminConfirmationAction.UnpublishSubject -> ensureCanPerformOwnerOnlyWrite()
+            is AdminConfirmationAction.UnpublishSubject,
+            is AdminConfirmationAction.RevokeAdminRole -> ensureCanPerformOwnerOnlyWrite()
             else -> ensureCanPerformAdminWrite()
         }
         if (!allowed) {
@@ -902,6 +1065,14 @@ class AdminPortalViewModel(
                     }
                 }
                 executePublishStudyFileVersion(authoritativeFile.id, authoritativeVersion.id)
+            }
+            is AdminConfirmationAction.RevokeAdminRole -> {
+                val targetEmail = pending.member.email.orEmpty()
+                if (targetEmail.isBlank()) {
+                    reportValidationFailure(AdminValidationError.EMPTY_EMAIL)
+                    return
+                }
+                executeRevokeStaffAdminRole(targetEmail)
             }
         }
     }
@@ -1358,6 +1529,33 @@ class AdminPortalViewModel(
         }
     }
 
+    private fun executeRevokeStaffAdminRole(targetEmail: String) {
+        val repo = adminGovernanceRepository ?: run {
+            reportFailureReason(AdminFailureReason.BACKEND_NOT_CONFIGURED)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSubmitting = true, feedback = null) }
+            when (val result = repo.setStaffAdminRoleByEmail(targetEmail = targetEmail, assignAdmin = false)) {
+                is AppResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isSubmitting = false,
+                            feedback = AdminFeedbackState(
+                                isError = false,
+                                successMessage = AdminSuccessMessage.STAFF_ADMIN_REVOKED
+                            )
+                        )
+                    }
+                    loadStaffMembers()
+                    loadAuditLogs()
+                }
+                is AppResult.Error -> handleSubmissionError(result.cause)
+                AppResult.Loading -> Unit
+            }
+        }
+    }
+
     private fun finishReorder(
         result: AppResult<Unit>,
         onSuccessReload: () -> Unit
@@ -1403,6 +1601,13 @@ class AdminPortalViewModel(
                 fileVersions = emptyList(),
                 isLoadingFileVersions = false,
                 fileVersionsError = null,
+                staffMembers = emptyList(),
+                isLoadingStaff = false,
+                staffError = null,
+                auditLogs = emptyList(),
+                isLoadingAuditLogs = false,
+                auditLogsError = null,
+                isBroadcastingUpdate = false,
                 editorDialog = null,
                 confirmationAction = null
             )
@@ -1460,14 +1665,16 @@ class AdminPortalViewModel(
         fun provideFactory(
             authRepository: AuthRepository,
             adminCatalogRepository: AdminCatalogRepository,
-            r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION
+            r2BrokerStatus: PdfBrokerConfigurationStatus = PdfBrokerConfigurationStatus.AWAITING_SECURE_BROKER_INTEGRATION,
+            adminGovernanceRepository: AdminGovernanceRepository? = null
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return AdminPortalViewModel(
                     authRepository = authRepository,
                     adminCatalogRepository = adminCatalogRepository,
-                    r2BrokerStatus = r2BrokerStatus
+                    r2BrokerStatus = r2BrokerStatus,
+                    adminGovernanceRepository = adminGovernanceRepository
                 ) as T
             }
         }

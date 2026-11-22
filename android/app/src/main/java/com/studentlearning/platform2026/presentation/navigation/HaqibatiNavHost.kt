@@ -18,6 +18,8 @@ import com.studentlearning.platform2026.presentation.account.SignUpScreen
 import com.studentlearning.platform2026.presentation.admin.AdminPortalScreen
 import com.studentlearning.platform2026.presentation.admin.AdminPortalViewModel
 import com.studentlearning.platform2026.presentation.main.MainShellScreen
+import com.studentlearning.platform2026.presentation.notifications.NotificationsScreen
+import com.studentlearning.platform2026.presentation.notifications.NotificationsViewModel
 import com.studentlearning.platform2026.presentation.pdfreader.PdfReaderScreen
 import com.studentlearning.platform2026.presentation.pdfreader.PdfReaderViewModel
 import com.studentlearning.platform2026.presentation.splash.SplashScreen
@@ -69,6 +71,11 @@ fun HaqibatiNavHost(
                 },
                 onNavigateToAdminPortal = {
                     navController.navigate(AppDestination.AdminPortal.route) {
+                        launchSingleTop = true
+                    }
+                },
+                onNavigateToNotifications = {
+                    navController.navigate(AppDestination.Notifications.route) {
                         launchSingleTop = true
                     }
                 },
@@ -168,12 +175,39 @@ fun HaqibatiNavHost(
             )
         }
 
+        composable(route = AppDestination.Notifications.route) {
+            val notificationsViewModel: NotificationsViewModel = viewModel(
+                factory = NotificationsViewModel.provideFactory(
+                    notificationLogRepository = appContainer.notificationLogRepository
+                )
+            )
+            NotificationsScreen(
+                viewModel = notificationsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onOpenStudyFile = { fileId, fileTitle, versionId, versionLabel ->
+                    navController.navigate(
+                        AppDestination.PdfReader.createRoute(
+                            fileId = fileId,
+                            fileTitle = fileTitle,
+                            activeVersionId = versionId,
+                            versionLabel = versionLabel
+                        )
+                    ) {
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
         composable(route = AppDestination.AdminPortal.route) {
             val adminViewModel: AdminPortalViewModel = viewModel(
                 factory = AdminPortalViewModel.provideFactory(
                     authRepository = appContainer.authRepository,
                     adminCatalogRepository = appContainer.adminCatalogRepository,
-                    r2BrokerStatus = appContainer.pdfVersionStorageBroker.getBrokerStatus()
+                    r2BrokerStatus = appContainer.pdfVersionStorageBroker.getBrokerStatus(),
+                    adminGovernanceRepository = appContainer.adminGovernanceRepository
                 )
             )
             AdminPortalScreen(

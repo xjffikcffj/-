@@ -4,8 +4,12 @@ import com.studentlearning.platform2026.data.remote.firebase.AdminCatalogRemoteD
 import com.studentlearning.platform2026.data.remote.firebase.AuthTokenProvider
 import com.studentlearning.platform2026.domain.model.AdminException
 import com.studentlearning.platform2026.domain.model.AdminFailureReason
+import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.ArchiveStatus
+import com.studentlearning.platform2026.domain.model.AuditLogEntry
+import com.studentlearning.platform2026.domain.model.BroadcastNotificationResult
+import com.studentlearning.platform2026.domain.model.StaffMember
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
@@ -271,6 +275,65 @@ internal class BackendAdminVersionDataSource(
         }
     }
 
+    suspend fun fetchStaffMembers(): List<StaffMember> {
+        val root = executeAdminBackendCall { token ->
+            httpClient.getJsonObject("admin/staff", bearerToken = token)
+        }
+        return root.objectListOrEmpty("items")
+            .mapNotNull { item -> mapStaffMemberDto(item) }
+    }
+
+    suspend fun setStaffAdminRoleByEmail(
+        targetEmail: String,
+        assignAdmin: Boolean
+    ) {
+        val payload = mapOf<String, Any?>(
+            "targetEmail" to targetEmail.trim().lowercase(),
+            "role" to if (assignAdmin) "admin" else "none"
+        )
+        executeAdminBackendCall { token ->
+            httpClient.postJsonObject(
+                relativeApiPath = "admin/staff/roles",
+                body = payload,
+                bearerToken = token
+            )
+        }
+    }
+
+    suspend fun fetchAuditLogs(limit: Int = 50): List<AuditLogEntry> {
+        val safeLimit = limit.coerceIn(1, 100)
+        val root = executeAdminBackendCall { token ->
+            httpClient.getJsonObject("admin/audit-logs?limit=$safeLimit", bearerToken = token)
+        }
+        return root.objectListOrEmpty("items")
+            .mapNotNull { item -> mapAuditLogDto(item) }
+    }
+
+    suspend fun broadcastImportantUpdate(
+        title: String,
+        body: String
+    ): BroadcastNotificationResult {
+        val root = executeAdminBackendCall { token ->
+            httpClient.postJsonObject(
+                relativeApiPath = "admin/notifications/broadcast",
+                body = mapOf(
+                    "title" to title.trim(),
+                    "body" to body.trim()
+                ),
+                bearerToken = token
+            )
+        }
+        return BroadcastNotificationResult(
+            notificationId = root.stringOrNull("notificationId").orEmpty(),
+            topic = root.stringOrNull("topic").orEmpty(),
+            type = root.stringOrNull("type") ?: "IMPORTANT_UPDATE",
+            title = root.stringOrNull("title") ?: title.trim(),
+            body = root.stringOrNull("body") ?: body.trim(),
+            sent = root.booleanOrFalse("sent"),
+            reason = root.stringOrNull("reason")
+        )
+    }
+
     private suspend fun executeAdminBackendCall(
         call: suspend (token: String) -> Map<String, Any?>
     ): Map<String, Any?> {
@@ -357,6 +420,37 @@ internal class BackendAdminVersionDataSource(
         )
     }
 
+    private fun mapStaffMemberDto(item: Map<String, Any?>): StaffMember? {
+        val uid = item.stringOrNull("uid") ?: return null
+        val role = AdminRole.fromClaim(item.stringOrNull("role"))
+        if (!role.canAccessAdminDashboard) return null
+        return StaffMember(
+            uid = uid,
+            email = item.stringOrNull("email"),
+            displayName = item.stringOrNull("displayName"),
+            role = role,
+            disabled = item.booleanOrFalse("disabled"),
+            emailVerified = item.booleanOrFalse("emailVerified")
+        )
+    }
+
+    private fun mapAuditLogDto(item: Map<String, Any?>): AuditLogEntry? {
+        val id = item.stringOrNull("id") ?: return null
+        val action = item.stringOrNull("action") ?: return null
+        val actorUid = item.stringOrNull("actorUid") ?: return null
+        return AuditLogEntry(
+            id = id,
+            action = action,
+            actorUid = actorUid,
+            actorRole = item.stringOrNull("actorRole") ?: "admin",
+            targetCollection = item.stringOrNull("targetCollection").orEmpty(),
+            targetId = item.stringOrNull("targetId").orEmpty(),
+            summary = item.stringOrNull("summary").orEmpty(),
+            source = item.stringOrNull("source") ?: "backend",
+            createdAtEpochMillis = item.longOrNull("createdAtEpochMillis")
+        )
+    }
+
     private fun sanitizeUploadIoCause(io: IOException): IOException {
         val safeType = io::class.java.simpleName.takeIf { it.isNotBlank() } ?: "IOException"
         return IOException("Sanitized $safeType during R2 upload.").apply {
@@ -410,11 +504,16 @@ internal class BackendAdminVersionDataSource(
                 cause = httpError
             )
             httpError.statusCode == 403 -> AdminException(
-                reason = if (code == "INSUFFICIENT_ROLE") {
+                reason = if (code == "INSUFFICIENT_ROLE" || code == "OWNER_ROLE_IMMUTABLE") {
                     AdminFailureReason.INSUFFICIENT_ROLE
                 } else {
                     AdminFailureReason.PERMISSION_DENIED
                 },
+                message = httpError.message,
+                cause = httpError
+            )
+            code == "USER_NOT_FOUND" -> AdminException(
+                reason = AdminFailureReason.ACCOUNT_NOT_FOUND,
                 message = httpError.message,
                 cause = httpError
             )

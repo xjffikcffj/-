@@ -7,16 +7,21 @@ import com.studentlearning.platform2026.domain.model.AdminFailureReason
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.ArchiveStatus
+import com.studentlearning.platform2026.domain.model.AuditLogEntry
+import com.studentlearning.platform2026.domain.model.BroadcastNotificationResult
 import com.studentlearning.platform2026.domain.model.DownloadException
 import com.studentlearning.platform2026.domain.model.DownloadFailureReason
 import com.studentlearning.platform2026.domain.model.DownloadStatus
 import com.studentlearning.platform2026.domain.model.DownloadTaskState
+import com.studentlearning.platform2026.domain.model.FavoriteStudyFile
 import com.studentlearning.platform2026.domain.model.FileReadingProgress
 import com.studentlearning.platform2026.domain.model.FirebaseConfigurationStatus
 import com.studentlearning.platform2026.domain.model.FirebaseReadiness
 import com.studentlearning.platform2026.domain.model.LocalDownloadedFileVersion
+import com.studentlearning.platform2026.domain.model.LocalNotificationItem
 import com.studentlearning.platform2026.domain.model.OfflineDownloadRequest
 import com.studentlearning.platform2026.domain.model.PdfSearchResult
+import com.studentlearning.platform2026.domain.model.StaffMember
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileOfflineState
@@ -27,8 +32,11 @@ import com.studentlearning.platform2026.domain.model.UserPreferences
 import com.studentlearning.platform2026.domain.pdf.ArabicTextNormalizer
 import com.studentlearning.platform2026.domain.pdf.PdfDocumentSession
 import com.studentlearning.platform2026.domain.repository.AdminCatalogRepository
+import com.studentlearning.platform2026.domain.repository.AdminGovernanceRepository
 import com.studentlearning.platform2026.domain.repository.AuthRepository
 import com.studentlearning.platform2026.domain.repository.CatalogRepository
+import com.studentlearning.platform2026.domain.repository.LocalFileOrganizationRepository
+import com.studentlearning.platform2026.domain.repository.NotificationLogRepository
 import com.studentlearning.platform2026.domain.repository.OfflineDownloadsRepository
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.domain.repository.PdfDocumentRepository
@@ -1096,4 +1104,258 @@ class FakeOfflineDownloadsRepository(
     }
 
     override suspend fun cleanupOrphanedTempFiles() = Unit
+}
+
+class FakeLocalFileOrganizationRepository(
+    initialFavorites: List<FavoriteStudyFile> = emptyList(),
+    initialOrders: Map<String, List<String>> = emptyMap(),
+    private val clockEpochMillis: () -> Long = { System.currentTimeMillis() }
+) : LocalFileOrganizationRepository {
+
+    private val favoritesFlow = MutableStateFlow(initialFavorites)
+    private val ordersFlow = MutableStateFlow(initialOrders)
+
+    var saveOrderCalls = 0
+        private set
+    var clearOrderCalls = 0
+        private set
+
+    override fun observeFavorites(): Flow<List<FavoriteStudyFile>> = favoritesFlow
+
+    override fun observeFavoriteIds(): Flow<Set<String>> =
+        favoritesFlow.map { list -> list.mapTo(mutableSetOf()) { it.fileId } }
+
+    override suspend fun toggleFavorite(file: StudyFileMetadata) {
+        val current = favoritesFlow.value
+        if (current.any { it.fileId == file.id }) {
+            removeFavorite(file.id)
+        } else {
+            addFavorite(file)
+        }
+    }
+
+    override suspend fun addFavorite(file: StudyFileMetadata) {
+        val entry = FavoriteStudyFile(
+            fileId = file.id,
+            sectionId = file.sectionId,
+            title = file.title,
+            description = file.description,
+            activeVersionId = file.activeVersionId,
+            activeVersionLabel = file.activeVersionLabel,
+            savedAtEpochMillis = clockEpochMillis()
+        )
+        favoritesFlow.update { current ->
+            listOf(entry) + current.filterNot { it.fileId == file.id }
+        }
+    }
+
+    override suspend fun removeFavorite(fileId: String) {
+        favoritesFlow.update { current -> current.filterNot { it.fileId == fileId } }
+    }
+
+    override fun observeCustomOrder(scopeKey: String): Flow<List<String>> =
+        ordersFlow.map { it[scopeKey].orEmpty() }
+
+    override suspend fun saveCustomOrder(scopeKey: String, orderedFileIds: List<String>) {
+        saveOrderCalls++
+        ordersFlow.update { it + (scopeKey to orderedFileIds) }
+    }
+
+    override suspend fun clearCustomOrder(scopeKey: String) {
+        clearOrderCalls++
+        ordersFlow.update { it - scopeKey }
+    }
+}
+
+class FakeNotificationLogRepository(
+    initialItems: List<LocalNotificationItem> = emptyList()
+) : NotificationLogRepository {
+
+    private val itemsFlow = MutableStateFlow(
+        initialItems.sortedByDescending { it.receivedAtEpochMillis }
+    )
+
+    override fun observeNotifications(): Flow<List<LocalNotificationItem>> = itemsFlow
+
+    override fun observeUnreadCount(): Flow<Int> =
+        itemsFlow.map { list -> list.count { !it.isRead } }
+
+    override suspend fun recordIncomingNotification(item: LocalNotificationItem) {
+        itemsFlow.update { current ->
+            val updated = listOf(item) + current.filterNot { it.id == item.id }
+            updated.sortedByDescending { it.receivedAtEpochMillis }
+        }
+    }
+
+    override suspend fun markAsRead(notificationId: String) {
+        itemsFlow.update { current ->
+            current.map { if (it.id == notificationId) it.copy(isRead = true) else it }
+        }
+    }
+
+    override suspend fun markAllAsRead() {
+        itemsFlow.update { current -> current.map { it.copy(isRead = true) } }
+    }
+
+    override suspend fun deleteNotification(notificationId: String) {
+        itemsFlow.update { current -> current.filterNot { it.id == notificationId } }
+    }
+
+    override suspend fun clearAll() {
+        itemsFlow.value = emptyList()
+    }
+}
+
+class FakeAdminGovernanceRepository(
+    private val authRepository: FakeAuthRepository
+) : AdminGovernanceRepository {
+
+    val staff = mutableListOf<StaffMember>()
+    val logs = mutableListOf<AuditLogEntry>()
+    var broadcastResultSent: Boolean = false
+    var roleUpdateCalls = 0
+        private set
+    var broadcastCalls = 0
+        private set
+
+    override suspend fun getStaffMembers(): AppResult<List<StaffMember>> {
+        val session = try {
+            authRepository.requireAuthorizedAdminSession()
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Unauthorized", ex)
+        }
+        if (!session.canPerformOwnerOnlyActions) {
+            return AppResult.Error(
+                "Owner only",
+                AdminException(AdminFailureReason.INSUFFICIENT_ROLE)
+            )
+        }
+        return AppResult.Success(staff.toList())
+    }
+
+    override suspend fun setStaffAdminRoleByEmail(
+        targetEmail: String,
+        assignAdmin: Boolean
+    ): AppResult<Unit> {
+        roleUpdateCalls++
+        val session = try {
+            authRepository.requireAuthorizedAdminSession()
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Unauthorized", ex)
+        }
+        if (!session.canPerformOwnerOnlyActions) {
+            return AppResult.Error(
+                "Owner only",
+                AdminException(AdminFailureReason.INSUFFICIENT_ROLE)
+            )
+        }
+        val normalized = targetEmail.trim().lowercase()
+        if (normalized.isEmpty()) {
+            return AppResult.Error(
+                "Empty email",
+                AdminException(AdminFailureReason.VALIDATION_ERROR, AdminValidationError.EMPTY_EMAIL)
+            )
+        }
+        if (session.email != null && session.email.equals(normalized, ignoreCase = true)) {
+            return AppResult.Error(
+                "Cannot modify self",
+                AdminException(
+                    AdminFailureReason.VALIDATION_ERROR,
+                    AdminValidationError.BACKEND_REQUEST_REJECTED
+                )
+            )
+        }
+        val existingIdx = staff.indexOfFirst { it.email.equals(normalized, ignoreCase = true) }
+        if (existingIdx >= 0) {
+            val target = staff[existingIdx]
+            if (target.role == com.studentlearning.platform2026.domain.model.AdminRole.OWNER) {
+                return AppResult.Error(
+                    "Owner immutable",
+                    AdminException(AdminFailureReason.INSUFFICIENT_ROLE)
+                )
+            }
+            if (assignAdmin) {
+                staff[existingIdx] = target.copy(role = com.studentlearning.platform2026.domain.model.AdminRole.ADMIN)
+            } else {
+                staff.removeAt(existingIdx)
+            }
+        } else if (assignAdmin) {
+            staff.add(
+                StaffMember(
+                    uid = "uid_${normalized.hashCode()}",
+                    email = normalized,
+                    displayName = "مشرف",
+                    role = com.studentlearning.platform2026.domain.model.AdminRole.ADMIN
+                )
+            )
+        }
+        logs.add(
+            0,
+            AuditLogEntry(
+                id = "audit_${logs.size + 1}",
+                action = if (assignAdmin) "ADMIN_ROLE_GRANTED" else "ADMIN_ROLE_REVOKED",
+                actorUid = session.uid.orEmpty(),
+                actorRole = "owner",
+                targetCollection = "auth_users",
+                targetId = normalized,
+                summary = if (assignAdmin) "منح صلاحية المشرف" else "سحب صلاحية المشرف",
+                source = "backend_api",
+                createdAtEpochMillis = 1_700_000_000_000L + logs.size
+            )
+        )
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun getAuditLogs(limit: Int): AppResult<List<AuditLogEntry>> {
+        try {
+            authRepository.requireAuthorizedAdminSession()
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Unauthorized", ex)
+        }
+        return AppResult.Success(logs.take(limit))
+    }
+
+    override suspend fun broadcastImportantUpdate(
+        title: String,
+        body: String
+    ): AppResult<BroadcastNotificationResult> {
+        broadcastCalls++
+        val session = try {
+            authRepository.requireAuthorizedAdminSession()
+        } catch (ex: AdminException) {
+            return AppResult.Error(ex.message ?: "Unauthorized", ex)
+        }
+        if (title.isBlank() || body.isBlank()) {
+            return AppResult.Error(
+                "Empty title or body",
+                AdminException(AdminFailureReason.VALIDATION_ERROR, AdminValidationError.EMPTY_NAME)
+            )
+        }
+        val notificationId = "notif_${logs.size + 1}"
+        logs.add(
+            0,
+            AuditLogEntry(
+                id = "audit_${logs.size + 1}",
+                action = "IMPORTANT_UPDATE_BROADCAST",
+                actorUid = session.uid.orEmpty(),
+                actorRole = if (session.canPerformOwnerOnlyActions) "owner" else "admin",
+                targetCollection = "notifications",
+                targetId = notificationId,
+                summary = title,
+                source = "backend_api",
+                createdAtEpochMillis = 1_700_000_000_000L + logs.size
+            )
+        )
+        return AppResult.Success(
+            BroadcastNotificationResult(
+                notificationId = notificationId,
+                topic = "haqibati_updates",
+                type = "IMPORTANT_UPDATE",
+                title = title,
+                body = body,
+                sent = broadcastResultSent,
+                reason = if (broadcastResultSent) null else "FCM_NOT_SENT_OR_UNCONFIGURED"
+            )
+        )
+    }
 }

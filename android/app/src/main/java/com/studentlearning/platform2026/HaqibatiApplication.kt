@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.work.Configuration
 import com.studentlearning.platform2026.core.di.AppContainer
 import com.studentlearning.platform2026.data.download.HaqibatiWorkerFactory
+import com.studentlearning.platform2026.data.notifications.NotificationChannelHelper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,10 @@ class HaqibatiApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        NotificationChannelHelper.ensureNotificationChannel(this)
+        NotificationChannelHelper.subscribeToUpdatesTopicIfConfigured(
+            appContainer.firebaseClientProvider
+        )
         applicationScope.launch {
             try {
                 appContainer.offlineDownloadsRepository.cleanupOrphanedTempFiles()

@@ -186,9 +186,37 @@ export function createAuthMiddleware(idTokenVerifier: IdTokenVerifier) {
       .catch(next);
   };
 
+  const requireOwner = (
+    req: AuthenticatedRequest,
+    _res: Response,
+    next: NextFunction,
+  ) => {
+    resolveAuth(req)
+      .then((ctx) => {
+        if (!ctx.isAuthenticated || !ctx.uid) {
+          throw new ApiError(
+            401,
+            'UNAUTHENTICATED',
+            'Owner authentication is required.',
+          );
+        }
+        if (ctx.isAnonymous || ctx.role !== 'owner') {
+          throw new ApiError(
+            403,
+            'INSUFFICIENT_ROLE',
+            'This endpoint is restricted to owner custom claims only.',
+          );
+        }
+        req.authContext = ctx;
+        next();
+      })
+      .catch(next);
+  };
+
   return {
     optionalAuth,
     requireNonGuest,
     requireAdminOrOwner,
+    requireOwner,
   };
 }

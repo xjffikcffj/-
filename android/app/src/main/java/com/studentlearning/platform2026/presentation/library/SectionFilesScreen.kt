@@ -3,6 +3,8 @@ package com.studentlearning.platform2026.presentation.library
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,20 +16,28 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -87,6 +97,13 @@ fun SectionFilesScreen(
         onRetryDownload = viewModel::retryDownload,
         onDismissGuestPrompt = viewModel::dismissGuestDownloadPrompt,
         onDismissTransientError = viewModel::dismissTransientError,
+        onToggleFavorite = viewModel::toggleFavorite,
+        onToggleFavoritesFilter = viewModel::toggleFavoritesFilter,
+        onEnterReorderMode = viewModel::enterReorderMode,
+        onMoveFileOrder = viewModel::moveFileInDraftOrder,
+        onSaveReorder = viewModel::saveReorder,
+        onCancelReorder = viewModel::cancelReorder,
+        onResetCustomOrder = viewModel::resetCustomOrder,
         onNavigateToSignIn = {
             viewModel.dismissGuestDownloadPrompt()
             onNavigateToSignIn()
@@ -100,6 +117,7 @@ fun SectionFilesScreen(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SectionFilesScreenContent(
     uiState: SectionFilesUiState,
@@ -111,6 +129,13 @@ fun SectionFilesScreenContent(
     onRetryDownload: (StudyFileMetadata) -> Unit = {},
     onDismissGuestPrompt: () -> Unit = {},
     onDismissTransientError: () -> Unit = {},
+    onToggleFavorite: (StudyFileMetadata) -> Unit = {},
+    onToggleFavoritesFilter: () -> Unit = {},
+    onEnterReorderMode: () -> Unit = {},
+    onMoveFileOrder: (fileId: String, moveUp: Boolean) -> Unit = { _, _ -> },
+    onSaveReorder: () -> Unit = {},
+    onCancelReorder: () -> Unit = {},
+    onResetCustomOrder: () -> Unit = {},
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onOpenStudyVersionWithLabel: ((fileId: String, fileTitle: String, versionId: String?, versionLabel: String?) -> Unit)? = null
@@ -177,6 +202,90 @@ fun SectionFilesScreenContent(
             }
 
             is SectionFilesUiState.Content -> {
+                item(key = "local_organization_controls") {
+                    Column(verticalArrangement = Arrangement.spacedBy(spacing.xs)) {
+                        if (uiState.isReorderMode) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(spacing.md),
+                                    verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.library_reorder_mode_banner),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+                                        verticalArrangement = Arrangement.spacedBy(spacing.xs)
+                                    ) {
+                                        Button(onClick = onSaveReorder) {
+                                            Text(text = stringResource(R.string.library_reorder_save))
+                                        }
+                                        OutlinedButton(onClick = onCancelReorder) {
+                                            Text(text = stringResource(R.string.library_reorder_cancel))
+                                        }
+                                        if (uiState.hasCustomOrder) {
+                                            TextButton(onClick = onResetCustomOrder) {
+                                                Text(text = stringResource(R.string.library_reorder_reset))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+                                verticalArrangement = Arrangement.spacedBy(spacing.xs)
+                            ) {
+                                FilterChip(
+                                    selected = uiState.showFavoritesOnly,
+                                    onClick = onToggleFavoritesFilter,
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (uiState.showFavoritesOnly) {
+                                                Icons.Rounded.Favorite
+                                            } else {
+                                                Icons.Rounded.FavoriteBorder
+                                            },
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    label = {
+                                        Text(text = stringResource(R.string.library_filter_favorites_only))
+                                    }
+                                )
+                                if (uiState.totalFilesCount > 1) {
+                                    OutlinedButton(onClick = onEnterReorderMode) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.SwapVert,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(text = stringResource(R.string.library_reorder_mode_action))
+                                    }
+                                }
+                                if (uiState.hasCustomOrder) {
+                                    TextButton(onClick = onResetCustomOrder) {
+                                        Text(text = stringResource(R.string.library_reorder_reset))
+                                    }
+                                }
+                            }
+                            Text(
+                                text = stringResource(R.string.library_local_favorites_notice),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 if (uiState.transientActionErrorReason != null) {
                     item(key = "transient_download_error") {
                         Surface(
@@ -205,36 +314,54 @@ fun SectionFilesScreenContent(
                     }
                 }
 
-                items(
-                    items = uiState.files,
-                    key = { file -> file.id }
-                ) { file ->
-                    val offlineState = uiState.offlineStates[file.id]
-                    val showNewVersionBadge = file.id in uiState.newVersionBadgeFileIds
-                    StudyFileCard(
-                        file = file,
-                        offlineState = offlineState,
-                        showNewVersionBadge = showNewVersionBadge,
-                        onBrowseOnline = {
-                            openVersion(
-                                file.id,
-                                file.title,
-                                file.activeVersionId,
-                                file.activeVersionLabel
-                            )
-                        },
-                        onStartDownload = { onStartDownload(file) },
-                        onCancelDownload = { onCancelDownload(file) },
-                        onRetryDownload = { onRetryDownload(file) },
-                        onOpenLocalVersion = { savedVersion ->
-                            openVersion(
-                                savedVersion.fileId,
-                                savedVersion.fileTitle.ifBlank { file.title },
-                                savedVersion.versionId,
-                                savedVersion.displayVersionLabel()
-                            )
-                        }
-                    )
+                if (!uiState.isReorderMode && uiState.showFavoritesOnly && uiState.files.isEmpty()) {
+                    item(key = "favorites_filter_empty") {
+                        HaqibatiEmptyState(
+                            icon = Icons.Rounded.FavoriteBorder,
+                            title = stringResource(R.string.library_favorites_empty_title),
+                            message = stringResource(R.string.library_favorites_empty_message)
+                        )
+                    }
+                } else {
+                    itemsIndexed(
+                        items = uiState.files,
+                        key = { _, file -> file.id }
+                    ) { index, file ->
+                        val offlineState = uiState.offlineStates[file.id]
+                        val showNewVersionBadge = file.id in uiState.newVersionBadgeFileIds
+                        val isFavorite = file.id in uiState.favoriteFileIds
+                        StudyFileCard(
+                            file = file,
+                            offlineState = offlineState,
+                            showNewVersionBadge = showNewVersionBadge,
+                            isFavorite = isFavorite,
+                            isReorderMode = uiState.isReorderMode,
+                            canMoveUp = index > 0,
+                            canMoveDown = index < uiState.files.lastIndex,
+                            onMoveUp = { onMoveFileOrder(file.id, true) },
+                            onMoveDown = { onMoveFileOrder(file.id, false) },
+                            onToggleFavorite = { onToggleFavorite(file) },
+                            onBrowseOnline = {
+                                openVersion(
+                                    file.id,
+                                    file.title,
+                                    file.activeVersionId,
+                                    file.activeVersionLabel
+                                )
+                            },
+                            onStartDownload = { onStartDownload(file) },
+                            onCancelDownload = { onCancelDownload(file) },
+                            onRetryDownload = { onRetryDownload(file) },
+                            onOpenLocalVersion = { savedVersion ->
+                                openVersion(
+                                    savedVersion.fileId,
+                                    savedVersion.fileTitle.ifBlank { file.title },
+                                    savedVersion.versionId,
+                                    savedVersion.displayVersionLabel()
+                                )
+                            }
+                        )
+                    }
                 }
             }
 
@@ -299,6 +426,13 @@ private fun StudyFileCard(
     file: StudyFileMetadata,
     offlineState: StudyFileOfflineState?,
     showNewVersionBadge: Boolean,
+    isFavorite: Boolean,
+    isReorderMode: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onBrowseOnline: () -> Unit,
     onStartDownload: () -> Unit,
     onCancelDownload: () -> Unit,
@@ -310,14 +444,18 @@ private fun StudyFileCard(
     val olderSavedVersions = offlineState?.olderSavedVersions.orEmpty()
     val activeTask = offlineState?.activeVersionDownload
 
-    val cardClickAction: () -> Unit = when {
-        activeSavedCopy != null -> {
-            { onOpenLocalVersion(activeSavedCopy) }
+    val cardClickAction: (() -> Unit)? = if (isReorderMode) {
+        null
+    } else {
+        when {
+            activeSavedCopy != null -> {
+                { onOpenLocalVersion(activeSavedCopy) }
+            }
+            !file.hasActiveVersion && olderSavedVersions.isNotEmpty() -> {
+                { onOpenLocalVersion(olderSavedVersions.first()) }
+            }
+            else -> onBrowseOnline
         }
-        !file.hasActiveVersion && olderSavedVersions.isNotEmpty() -> {
-            { onOpenLocalVersion(olderSavedVersions.first()) }
-        }
-        else -> onBrowseOnline
     }
 
     HaqibatiSurfaceCard(
@@ -391,270 +529,311 @@ private fun StudyFileCard(
                     )
                 }
 
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    if (showNewVersionBadge) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.tertiaryContainer
-                        ) {
-                            Text(
-                                text = stringResource(R.string.library_file_new_version_badge),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.padding(horizontal = spacing.sm, vertical = 4.dp)
+                if (isReorderMode) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                            Icon(
+                                imageVector = Icons.Rounded.ArrowUpward,
+                                contentDescription = stringResource(R.string.library_reorder_move_up)
+                            )
+                        }
+                        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                            Icon(
+                                imageVector = Icons.Rounded.ArrowDownward,
+                                contentDescription = stringResource(R.string.library_reorder_move_down)
                             )
                         }
                     }
-
-                    if (activeSavedCopy != null) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = spacing.sm, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = stringResource(R.string.library_file_downloaded_badge),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (activeSavedCopy != null) {
-                Text(
-                    text = formatLocalFileSize(activeSavedCopy.fileSizeBytes),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else if (file.hasActiveVersion && activeTask != null) {
-                when (activeTask.status) {
-                    DownloadStatus.QUEUED -> {
-                        Text(
-                            text = stringResource(R.string.library_file_download_queued),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                        )
-                    }
-
-                    DownloadStatus.DOWNLOADING -> {
-                        val progressText = if (activeTask.progressPercent != null) {
-                            stringResource(
-                                R.string.library_file_downloading_percent,
-                                activeTask.progressPercent
-                            )
-                        } else {
-                            stringResource(R.string.library_file_downloading_indeterminate)
-                        }
-                        Text(
-                            text = progressText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        if (activeTask.progressPercent != null) {
-                            LinearProgressIndicator(
-                                progress = { activeTask.progressPercent / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                            )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                            )
-                        }
-                    }
-
-                    DownloadStatus.FAILED -> {
-                        val failureMessage = downloadFailureMessage(
-                            activeTask.failureReason ?: DownloadFailureReason.UNKNOWN
-                        )
-                        Text(
-                            text = failureMessage,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-
-                    DownloadStatus.CANCELLED -> {
-                        Text(
-                            text = stringResource(R.string.library_file_download_cancelled),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    DownloadStatus.NOT_DOWNLOADED,
-                    DownloadStatus.COMPLETED -> Unit
-                }
-            }
-
-            if (file.hasActiveVersion) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    when {
-                        activeSavedCopy != null -> {
-                            Button(
-                                onClick = { onOpenLocalVersion(activeSavedCopy) },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.OfflinePin,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_open_offline))
-                            }
-                        }
-
-                        activeTask?.status?.isInProgress == true -> {
-                            OutlinedButton(
-                                onClick = onBrowseOnline,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.MenuBook,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_browse_online))
-                            }
-                            OutlinedButton(
-                                onClick = onCancelDownload,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_cancel_download))
-                            }
-                        }
-
-                        activeTask?.status == DownloadStatus.FAILED -> {
-                            OutlinedButton(
-                                onClick = onBrowseOnline,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.MenuBook,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_browse_online))
-                            }
-                            Button(
-                                onClick = onRetryDownload,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_retry_download))
-                            }
-                        }
-
-                        else -> {
-                            OutlinedButton(
-                                onClick = onBrowseOnline,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.MenuBook,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_browse_online))
-                            }
-                            Button(
-                                onClick = onStartDownload,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.library_file_download_offline))
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (olderSavedVersions.isNotEmpty()) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = spacing.xs))
-
-                val firstOlder = olderSavedVersions.first()
-                val olderLabel = firstOlder.displayVersionLabel()
-                val noticeText = if (!file.activeVersionLabel.isNullOrBlank() && olderLabel != null) {
-                    stringResource(
-                        R.string.library_file_older_saved_notice,
-                        olderLabel,
-                        file.activeVersionLabel
-                    )
                 } else {
-                    stringResource(R.string.library_file_older_saved_notice_fallback)
-                }
-                Text(
-                    text = noticeText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-
-                olderSavedVersions.forEach { olderVersion ->
-                    val label = olderVersion.displayVersionLabel() ?: olderVersion.versionId
-                    OutlinedButton(
-                        onClick = { onOpenLocalVersion(olderVersion) },
-                        modifier = Modifier.fillMaxWidth()
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.OfflinePin,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = stringResource(
-                                R.string.library_file_open_saved_older,
-                                label
+                        IconButton(onClick = onToggleFavorite) {
+                            Icon(
+                                imageVector = if (isFavorite) {
+                                    Icons.Rounded.Favorite
+                                } else {
+                                    Icons.Rounded.FavoriteBorder
+                                },
+                                contentDescription = stringResource(
+                                    if (isFavorite) {
+                                        R.string.library_favorite_remove
+                                    } else {
+                                        R.string.library_favorite_add
+                                    }
+                                ),
+                                tint = if (isFavorite) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                             )
+                        }
+
+                        if (showNewVersionBadge) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.library_file_new_version_badge),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = spacing.sm, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        if (activeSavedCopy != null) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = spacing.sm, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.library_file_downloaded_badge),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!isReorderMode) {
+                if (activeSavedCopy != null) {
+                    Text(
+                        text = formatLocalFileSize(activeSavedCopy.fileSizeBytes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else if (file.hasActiveVersion && activeTask != null) {
+                    when (activeTask.status) {
+                        DownloadStatus.QUEUED -> {
+                            Text(
+                                text = stringResource(R.string.library_file_download_queued),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                            )
+                        }
+
+                        DownloadStatus.DOWNLOADING -> {
+                            val progressText = if (activeTask.progressPercent != null) {
+                                stringResource(
+                                    R.string.library_file_downloading_percent,
+                                    activeTask.progressPercent
+                                )
+                            } else {
+                                stringResource(R.string.library_file_downloading_indeterminate)
+                            }
+                            Text(
+                                text = progressText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (activeTask.progressPercent != null) {
+                                LinearProgressIndicator(
+                                    progress = { activeTask.progressPercent / 100f },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                )
+                            }
+                        }
+
+                        DownloadStatus.FAILED -> {
+                            val failureMessage = downloadFailureMessage(
+                                activeTask.failureReason ?: DownloadFailureReason.UNKNOWN
+                            )
+                            Text(
+                                text = failureMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+
+                        DownloadStatus.CANCELLED -> {
+                            Text(
+                                text = stringResource(R.string.library_file_download_cancelled),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        DownloadStatus.NOT_DOWNLOADED,
+                        DownloadStatus.COMPLETED -> Unit
+                    }
+                }
+
+                if (file.hasActiveVersion) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        when {
+                            activeSavedCopy != null -> {
+                                Button(
+                                    onClick = { onOpenLocalVersion(activeSavedCopy) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.OfflinePin,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_open_offline))
+                                }
+                            }
+
+                            activeTask?.status?.isInProgress == true -> {
+                                OutlinedButton(
+                                    onClick = onBrowseOnline,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.MenuBook,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_browse_online))
+                                }
+                                OutlinedButton(
+                                    onClick = onCancelDownload,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Close,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_cancel_download))
+                                }
+                            }
+
+                            activeTask?.status == DownloadStatus.FAILED -> {
+                                OutlinedButton(
+                                    onClick = onBrowseOnline,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.MenuBook,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_browse_online))
+                                }
+                                Button(
+                                    onClick = onRetryDownload,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_retry_download))
+                                }
+                            }
+
+                            else -> {
+                                OutlinedButton(
+                                    onClick = onBrowseOnline,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.MenuBook,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_browse_online))
+                                }
+                                Button(
+                                    onClick = onStartDownload,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = stringResource(R.string.library_file_download_offline))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (olderSavedVersions.isNotEmpty()) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = spacing.xs))
+
+                    val firstOlder = olderSavedVersions.first()
+                    val olderLabel = firstOlder.displayVersionLabel()
+                    val noticeText = if (!file.activeVersionLabel.isNullOrBlank() && olderLabel != null) {
+                        stringResource(
+                            R.string.library_file_older_saved_notice,
+                            olderLabel,
+                            file.activeVersionLabel
                         )
+                    } else {
+                        stringResource(R.string.library_file_older_saved_notice_fallback)
+                    }
+                    Text(
+                        text = noticeText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+
+                    olderSavedVersions.forEach { olderVersion ->
+                        val label = olderVersion.displayVersionLabel() ?: olderVersion.versionId
+                        OutlinedButton(
+                            onClick = { onOpenLocalVersion(olderVersion) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.OfflinePin,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(
+                                    R.string.library_file_open_saved_older,
+                                    label
+                                )
+                            )
+                        }
                     }
                 }
             }

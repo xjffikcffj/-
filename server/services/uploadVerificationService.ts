@@ -6,6 +6,7 @@ import {
   type R2StoragePort,
 } from '../storage/r2Storage.js';
 import type {
+  AppUserRole,
   PublishVersionResponseDto,
   UploadSlotResponseDto,
   VerifyUploadResponseDto,
@@ -18,11 +19,15 @@ import {
   validateSha256Hex,
   validateUuid,
 } from '../validation/validators.js';
+import type { AuditLogService } from './auditLogService.js';
+import type { NotificationDispatchService } from './notificationDispatchService.js';
 
 export interface UploadVerificationDeps {
   firestore: Firestore;
   r2Storage: R2StoragePort;
   config: ServerConfig;
+  auditLogService?: AuditLogService;
+  notificationDispatchService?: NotificationDispatchService;
   nowMs?: () => number;
   uuidGenerator?: () => string;
   warn?: (message: string) => void;
@@ -162,6 +167,8 @@ export class UploadVerificationService {
   private readonly firestore: Firestore;
   private readonly r2Storage: R2StoragePort;
   private readonly config: ServerConfig;
+  private readonly auditLogService?: AuditLogService;
+  private readonly notificationDispatchService?: NotificationDispatchService;
   private readonly nowMs: () => number;
   private readonly uuidGenerator: () => string;
   private readonly warn: (message: string) => void;
@@ -170,6 +177,8 @@ export class UploadVerificationService {
     this.firestore = deps.firestore;
     this.r2Storage = deps.r2Storage;
     this.config = deps.config;
+    this.auditLogService = deps.auditLogService;
+    this.notificationDispatchService = deps.notificationDispatchService;
     this.nowMs = deps.nowMs ?? (() => Date.now());
     this.uuidGenerator = deps.uuidGenerator ?? (() => randomUUID());
     this.warn = deps.warn ?? ((message: string) => console.warn(message));
@@ -210,6 +219,7 @@ export class UploadVerificationService {
     expectedSizeBytes: unknown;
     expectedSha256: unknown;
     actorUid: string;
+    actorRole?: AppUserRole | string;
   }): Promise<UploadSlotResponseDto> {
     if (!this.r2Storage.isConfigured()) {
       throw new ApiError(
@@ -370,6 +380,16 @@ export class UploadVerificationService {
       expiresInSeconds: this.config.uploadSessionTtlSeconds,
     });
 
+    await this.auditLogService?.recordBestEffort({
+      action: 'UPLOAD_SLOT_CREATED',
+      actorUid: params.actorUid,
+      actorRole: params.actorRole ?? 'admin',
+      targetCollection: 'upload_sessions',
+      targetId: sessionId,
+      summary: `Issued upload slot ${sessionId} for ${fileId}/${versionId}`,
+      source: 'backend',
+    });
+
     return {
       uploadSessionId: sessionId,
       fileId,
@@ -390,6 +410,7 @@ export class UploadVerificationService {
     versionId: string;
     uploadSessionId: unknown;
     actorUid: string;
+    actorRole?: AppUserRole | string;
   }): Promise<VerifyUploadResponseDto> {
     if (!this.r2Storage.isConfigured()) {
       throw new ApiError(
@@ -792,6 +813,16 @@ export class UploadVerificationService {
         phase: 'verifyUploadedPdf:consumed',
       });
 
+      await this.auditLogService?.recordBestEffort({
+        action: 'PDF_VERIFIED',
+        actorUid: params.actorUid,
+        actorRole: params.actorRole ?? 'admin',
+        targetCollection: `study_files/${fileId}/versions`,
+        targetId: versionId,
+        summary: `Verified PDF (${expectedSizeBytes} bytes) for ${fileId}/${versionId}`,
+        source: 'backend',
+      });
+
       return {
         status: 'VERIFIED',
         idempotent: false,
@@ -889,6 +920,7 @@ export class UploadVerificationService {
     fileId: string;
     versionId: string;
     actorUid: string;
+    actorRole?: AppUserRole | string;
   }): Promise<PublishVersionResponseDto> {
     if (!this.r2Storage.isConfigured()) {
       throw new ApiError(
@@ -1090,19 +1122,52 @@ export class UploadVerificationService {
         updatedAt: publishTs,
       });
 
+      const hadPriorActiveVersion =
+        typeof fileData.activeVersionId === 'string' &&
+        fileData.activeVersionId.trim().length > 0 &&
+        fileData.activeVersionId.trim() !== versionId;
+      const resolvedFileTitle =
+        (typeof fileData.title === 'string' && fileData.title.trim()) ||
+        (typeof fileData.nameAr === 'string' && fileData.nameAr.trim()) ||
+        (typeof fileData.name === 'string' && fileData.name.trim()) ||
+        fileId;
+
       return {
-        status: 'PUBLISHED' as const,
-        fileId,
-        versionId,
-        versionNumber,
-        versionLabel: versionLabel.trim(),
-        checksumSha256: sha256,
-        fileSizeBytes,
-        verifiedUploadSessionId: sessionSnap.id,
-        verifiedAttemptId: String(targetData.verifiedAttemptId),
+        response: {
+          status: 'PUBLISHED' as const,
+          fileId,
+          versionId,
+          versionNumber,
+          versionLabel: versionLabel.trim(),
+          checksumSha256: sha256,
+          fileSizeBytes,
+          verifiedUploadSessionId: sessionSnap.id,
+          verifiedAttemptId: String(targetData.verifiedAttemptId),
+        },
+        isNewFile: !hadPriorActiveVersion && Number(versionNumber) === 1,
+        resolvedFileTitle,
       };
     });
 
-    return result;
+    await this.auditLogService?.recordBestEffort({
+      action: 'VERSION_PUBLISHED',
+      actorUid: params.actorUid,
+      actorRole: params.actorRole ?? 'admin',
+      targetCollection: `study_files/${fileId}/versions`,
+      targetId: versionId,
+      summary: `Published ${result.resolvedFileTitle} v${result.response.versionNumber} (${result.response.versionLabel})`,
+      source: 'backend',
+    });
+
+    await this.notificationDispatchService?.notifyPublishedVersion({
+      fileId,
+      fileTitle: result.resolvedFileTitle,
+      versionId,
+      versionNumber: result.response.versionNumber,
+      versionLabel: result.response.versionLabel,
+      isNewFile: result.isNewFile,
+    });
+
+    return result.response;
   }
 }

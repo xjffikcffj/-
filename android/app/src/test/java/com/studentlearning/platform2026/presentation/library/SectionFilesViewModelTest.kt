@@ -29,6 +29,7 @@ import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.fakes.FakeCatalogRepository
+import com.studentlearning.platform2026.fakes.FakeLocalFileOrganizationRepository
 import com.studentlearning.platform2026.fakes.FakeOfflineDownloadsRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import kotlinx.coroutines.CoroutineDispatcher
@@ -701,4 +702,186 @@ class SectionFilesViewModelTest {
             viewModelStore.clear()
         }
     }
+
+    @Test
+    fun `toggles local favorites filters favorites only and leaves custom order intact`() = runTest {
+        val file1 = StudyFileMetadata(
+            id = "file-1",
+            sectionId = "sec-1",
+            title = "ملف أول",
+            order = 1,
+            isPublished = true,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
+            activeVersionId = "v1"
+        )
+        val file2 = StudyFileMetadata(
+            id = "file-2",
+            sectionId = "sec-1",
+            title = "ملف ثاني",
+            order = 2,
+            isPublished = true,
+            archiveStatus = ArchiveStatus.UNARCHIVED,
+            activeVersionId = "v1"
+        )
+        val orgRepo = FakeLocalFileOrganizationRepository(
+            initialOrders = mapOf("section:sec-1" to listOf("file-2", "file-1"))
+        )
+        val catalogRepo = FakeCatalogRepository(
+            studyFilesResult = { AppResult.Success(listOf(file1, file2)) }
+        )
+
+        val viewModel = SectionFilesViewModel(
+            sectionId = "sec-1",
+            catalogRepository = catalogRepo,
+            localFileOrganizationRepository = orgRepo
+        )
+        advanceUntilIdle()
+
+        val initial = viewModel.uiState.value as SectionFilesUiState.Content
+        assertEquals(listOf("file-2", "file-1"), initial.files.map { it.id })
+        assertTrue(initial.favoriteFileIds.isEmpty())
+        assertTrue(initial.hasCustomOrder)
+
+        // Toggle favorite on file-1
+        viewModel.toggleFavorite(file1)
+        advanceUntilIdle()
+        val afterFav = viewModel.uiState.value as SectionFilesUiState.Content
+        assertEquals(setOf("file-1"), afterFav.favoriteFileIds)
+
+        // Filter favorites only: shows only file-1 without mutating full saved custom order
+        viewModel.toggleFavoritesFilter()
+        advanceUntilIdle()
+        val filtered = viewModel.uiState.value as SectionFilesUiState.Content
+        assertTrue(filtered.showFavoritesOnly)
+        assertEquals(listOf("file-1"), filtered.files.map { it.id })
+        assertEquals(2, filtered.totalFilesCount)
+
+        // Remove favorite while filtered -> visible list is empty while totalFilesCount remains 2
+        viewModel.toggleFavorite(file1)
+        advanceUntilIdle()
+        val emptyFav = viewModel.uiState.value as SectionFilesUiState.Content
+        assertTrue(emptyFav.files.isEmpty())
+        assertEquals(2, emptyFav.totalFilesCount)
+
+        // Disable filter -> restores both files in saved custom order
+        viewModel.toggleFavoritesFilter()
+        advanceUntilIdle()
+        val unfiltered = viewModel.uiState.value as SectionFilesUiState.Content
+        assertFalse(unfiltered.showFavoritesOnly)
+        assertEquals(listOf("file-2", "file-1"), unfiltered.files.map { it.id })
+    }
+
+    @Test
+    fun `local reorder mode supports downloaded and non-downloaded files with cancel save and reset`() =
+        runTest {
+            val downloadedFile = StudyFileMetadata(
+                id = "file-downloaded",
+                sectionId = "sec-1",
+                title = "ملف منزّل",
+                order = 1,
+                isPublished = true,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
+                activeVersionId = "v1"
+            )
+            val remoteOnlyFile = StudyFileMetadata(
+                id = "file-remote",
+                sectionId = "sec-1",
+                title = "ملف غير منزّل",
+                order = 2,
+                isPublished = true,
+                archiveStatus = ArchiveStatus.UNARCHIVED,
+                activeVersionId = "v1"
+            )
+            val authRepo = FakeAuthRepository(
+                initialSession = AdminSession(
+                    isSignedIn = true,
+                    uid = "student-1",
+                    email = "student@example.com",
+                    role = AdminRole.NONE,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val downloadsRepo = FakeOfflineDownloadsRepository(authRepo).apply {
+                putSavedVersion(
+                    LocalDownloadedFileVersion(
+                        fileId = "file-downloaded",
+                        versionId = "v1",
+                        versionNumber = 1,
+                        versionLabel = "1.0",
+                        fileTitle = "ملف منزّل",
+                        sectionId = "sec-1",
+                        localFilePath = "/private/downloaded.pdf",
+                        fileSizeBytes = 1024L,
+                        checksumSha256 = "sha",
+                        downloadedAtEpochMillis = 1_700_000_000_000L
+                    )
+                )
+            }
+            val orgRepo = FakeLocalFileOrganizationRepository()
+            val catalogRepo = FakeCatalogRepository(
+                studyFilesResult = { AppResult.Success(listOf(downloadedFile, remoteOnlyFile)) }
+            )
+
+            val viewModel = SectionFilesViewModel(
+                sectionId = "sec-1",
+                catalogRepository = catalogRepo,
+                authRepository = authRepo,
+                offlineDownloadsRepository = downloadsRepo,
+                localFileOrganizationRepository = orgRepo
+            )
+            advanceUntilIdle()
+
+            // Enter reorder mode and move remoteOnlyFile above downloadedFile, then CANCEL
+            viewModel.enterReorderMode()
+            advanceUntilIdle()
+            assertTrue((viewModel.uiState.value as SectionFilesUiState.Content).isReorderMode)
+            viewModel.moveFileInDraftOrder("file-remote", moveUp = true)
+            advanceUntilIdle()
+            assertEquals(
+                listOf("file-remote", "file-downloaded"),
+                (viewModel.uiState.value as SectionFilesUiState.Content).files.map { it.id }
+            )
+
+            viewModel.cancelReorder()
+            advanceUntilIdle()
+            val afterCancel = viewModel.uiState.value as SectionFilesUiState.Content
+            assertFalse(afterCancel.isReorderMode)
+            assertEquals(listOf("file-downloaded", "file-remote"), afterCancel.files.map { it.id })
+            assertEquals(0, orgRepo.saveOrderCalls)
+
+            // Re-enter reorder mode when favorites filter is active: reorder edits ALL section files and SAVES
+            viewModel.toggleFavorite(downloadedFile)
+            advanceUntilIdle()
+            viewModel.toggleFavoritesFilter()
+            advanceUntilIdle()
+            viewModel.enterReorderMode()
+            advanceUntilIdle()
+            val duringReorder = viewModel.uiState.value as SectionFilesUiState.Content
+            assertEquals(listOf("file-downloaded", "file-remote"), duringReorder.files.map { it.id })
+
+            viewModel.moveFileInDraftOrder("file-remote", moveUp = true)
+            viewModel.saveReorder()
+            advanceUntilIdle()
+            assertEquals(1, orgRepo.saveOrderCalls)
+            val afterSave = viewModel.uiState.value as SectionFilesUiState.Content
+            assertFalse(afterSave.isReorderMode)
+            assertTrue(afterSave.hasCustomOrder)
+
+            // Disable favorites filter and verify persisted custom order includes remote-first
+            viewModel.toggleFavoritesFilter()
+            advanceUntilIdle()
+            assertEquals(
+                listOf("file-remote", "file-downloaded"),
+                (viewModel.uiState.value as SectionFilesUiState.Content).files.map { it.id }
+            )
+
+            // Reset custom order back to server catalog order
+            viewModel.resetCustomOrder()
+            advanceUntilIdle()
+            assertEquals(1, orgRepo.clearOrderCalls)
+            val afterReset = viewModel.uiState.value as SectionFilesUiState.Content
+            assertFalse(afterReset.hasCustomOrder)
+            assertEquals(listOf("file-downloaded", "file-remote"), afterReset.files.map { it.id })
+        }
 }

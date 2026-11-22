@@ -7,12 +7,15 @@ import com.studentlearning.platform2026.domain.model.AdminRole
 import com.studentlearning.platform2026.domain.model.AdminSession
 import com.studentlearning.platform2026.domain.model.AdminValidationError
 import com.studentlearning.platform2026.domain.model.ArchiveStatus
+import com.studentlearning.platform2026.domain.model.AuditLogEntry
+import com.studentlearning.platform2026.domain.model.StaffMember
 import com.studentlearning.platform2026.domain.model.StudyBranch
 import com.studentlearning.platform2026.domain.model.StudyFileMetadata
 import com.studentlearning.platform2026.domain.model.StudyFileVersionMetadata
 import com.studentlearning.platform2026.domain.model.StudySection
 import com.studentlearning.platform2026.domain.repository.PdfBrokerConfigurationStatus
 import com.studentlearning.platform2026.fakes.FakeAdminCatalogRepository
+import com.studentlearning.platform2026.fakes.FakeAdminGovernanceRepository
 import com.studentlearning.platform2026.fakes.FakeAuthRepository
 import com.studentlearning.platform2026.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -1496,4 +1499,145 @@ class AdminPortalViewModelTest {
         advanceUntilIdle()
         return Triple(authRepository, catalogRepository, viewModel)
     }
+
+    @Test
+    fun `owner can load staff grant admin and revoke admin with confirmation while protecting owner and self`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "owner-1",
+                    email = "owner@example.com",
+                    role = AdminRole.OWNER,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val catalogRepository = FakeAdminCatalogRepository()
+            val governanceRepo = FakeAdminGovernanceRepository(authRepository).apply {
+                staff.addAll(
+                    listOf(
+                        StaffMember(
+                            uid = "owner-1",
+                            email = "owner@example.com",
+                            displayName = "المالك",
+                            role = AdminRole.OWNER
+                        ),
+                        StaffMember(
+                            uid = "admin-1",
+                            email = "admin1@example.com",
+                            displayName = "مشرف أول",
+                            role = AdminRole.ADMIN
+                        )
+                    )
+                )
+            }
+            val viewModel = AdminPortalViewModel(
+                authRepository = authRepository,
+                adminCatalogRepository = catalogRepository,
+                adminGovernanceRepository = governanceRepo
+            )
+            advanceUntilIdle()
+
+            // Switch to STAFF tab (Owner only)
+            viewModel.selectTab(AdminManagementSection.STAFF)
+            advanceUntilIdle()
+            assertEquals(AdminManagementSection.STAFF, viewModel.uiState.value.activeTab)
+            assertEquals(2, viewModel.uiState.value.staffMembers.size)
+
+            // Cannot request revoke on Owner or self
+            viewModel.requestRevokeAdminRole(governanceRepo.staff[0])
+            assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
+            assertNull(viewModel.uiState.value.confirmationAction)
+
+            // Grant new admin
+            viewModel.grantAdminRoleByEmail("newadmin@example.com")
+            advanceUntilIdle()
+            assertEquals(AdminSuccessMessage.STAFF_ADMIN_GRANTED, viewModel.uiState.value.feedback?.successMessage)
+            assertTrue(viewModel.uiState.value.staffMembers.any { it.email == "newadmin@example.com" })
+            assertTrue(viewModel.uiState.value.auditLogs.any { it.action == "ADMIN_ROLE_GRANTED" })
+
+            // Revoke admin requires confirmation dialog before calling repository
+            val targetAdmin = viewModel.uiState.value.staffMembers.first { it.uid == "admin-1" }
+            val callsBeforeRevoke = governanceRepo.roleUpdateCalls
+            viewModel.requestRevokeAdminRole(targetAdmin)
+            assertTrue(viewModel.uiState.value.confirmationAction is AdminConfirmationAction.RevokeAdminRole)
+            assertEquals(callsBeforeRevoke, governanceRepo.roleUpdateCalls)
+
+            viewModel.confirmPendingAction()
+            advanceUntilIdle()
+            assertEquals(AdminSuccessMessage.STAFF_ADMIN_REVOKED, viewModel.uiState.value.feedback?.successMessage)
+            assertFalse(viewModel.uiState.value.staffMembers.any { it.uid == "admin-1" })
+            assertTrue(viewModel.uiState.value.auditLogs.any { it.action == "ADMIN_ROLE_REVOKED" })
+        }
+
+    @Test
+    fun `non-owner admin is blocked from staff management while able to view audit logs and broadcast updates`() =
+        runTest {
+            val authRepository = FakeAuthRepository(
+                AdminSession(
+                    isSignedIn = true,
+                    uid = "admin-1",
+                    email = "admin@example.com",
+                    role = AdminRole.ADMIN,
+                    hasLoadedTokenClaims = true,
+                    areClaimsConfirmedCurrent = true
+                )
+            )
+            val catalogRepository = FakeAdminCatalogRepository()
+            val governanceRepo = FakeAdminGovernanceRepository(authRepository).apply {
+                logs.add(
+                    AuditLogEntry(
+                        id = "log-1",
+                        action = "BRANCH_CREATED",
+                        actorUid = "owner-1",
+                        actorRole = "owner",
+                        targetCollection = "branches",
+                        targetId = "scientific",
+                        summary = "إنشاء الفرع العلمي",
+                        source = "client",
+                        createdAtEpochMillis = 1_700_000_000_000L
+                    )
+                )
+            }
+            val viewModel = AdminPortalViewModel(
+                authRepository = authRepository,
+                adminCatalogRepository = catalogRepository,
+                adminGovernanceRepository = governanceRepo
+            )
+            advanceUntilIdle()
+
+            // Non-owner cannot enter STAFF tab or execute staff mutations
+            viewModel.selectTab(AdminManagementSection.STAFF)
+            assertFalse(viewModel.uiState.value.activeTab == AdminManagementSection.STAFF)
+            assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
+
+            viewModel.grantAdminRoleByEmail("other@example.com")
+            advanceUntilIdle()
+            assertEquals(AdminFailureReason.INSUFFICIENT_ROLE, viewModel.uiState.value.feedback?.failureReason)
+            assertEquals(0, governanceRepo.roleUpdateCalls)
+
+            // Non-owner CAN view audit logs and broadcast important updates
+            viewModel.selectTab(AdminManagementSection.AUDIT_LOGS)
+            advanceUntilIdle()
+            assertEquals(AdminManagementSection.AUDIT_LOGS, viewModel.uiState.value.activeTab)
+            assertEquals(listOf("log-1"), viewModel.uiState.value.auditLogs.map { it.id })
+
+            governanceRepo.broadcastResultSent = false
+            viewModel.broadcastImportantUpdate("تحديث عام", "تم إضافة ملخصات جديدة")
+            advanceUntilIdle()
+            assertEquals(
+                AdminSuccessMessage.BROADCAST_RECORDED_PENDING_FCM,
+                viewModel.uiState.value.feedback?.successMessage
+            )
+            assertTrue(viewModel.uiState.value.auditLogs.any { it.action == "IMPORTANT_UPDATE_BROADCAST" })
+
+            governanceRepo.broadcastResultSent = true
+            viewModel.broadcastImportantUpdate("تنبيه عاجل", "النسخة النهائية متوفرة الآن")
+            advanceUntilIdle()
+            assertEquals(
+                AdminSuccessMessage.BROADCAST_SENT,
+                viewModel.uiState.value.feedback?.successMessage
+            )
+        }
 }

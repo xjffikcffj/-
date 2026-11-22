@@ -12,7 +12,11 @@ export type RateLimitPolicyName =
   | 'admin-version-write'
   | 'admin-upload-slot'
   | 'admin-verify'
-  | 'admin-publish';
+  | 'admin-publish'
+  | 'admin-staff-read'
+  | 'admin-staff-write'
+  | 'admin-audit-read'
+  | 'admin-notify-write';
 
 export interface RateLimitRule {
   windowMs: number;
@@ -34,6 +38,10 @@ export const DEFAULT_RATE_LIMIT_RULES: Record<RateLimitPolicyName, RateLimitRule
   'admin-upload-slot': { windowMs: 60_000, max: 15 },
   'admin-verify': { windowMs: 60_000, max: 15 },
   'admin-publish': { windowMs: 60_000, max: 15 },
+  'admin-staff-read': { windowMs: 60_000, max: 30 },
+  'admin-staff-write': { windowMs: 60_000, max: 10 },
+  'admin-audit-read': { windowMs: 60_000, max: 30 },
+  'admin-notify-write': { windowMs: 60_000, max: 10 },
 };
 
 interface RateLimitBucket {

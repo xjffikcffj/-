@@ -8,6 +8,7 @@ import {
 } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
 import type { ServerConfig } from '../config/env.js';
 
 export interface DecodedIdTokenLike {
@@ -25,6 +26,45 @@ export interface IdTokenVerifier {
     idToken: string,
     checkRevoked?: boolean,
   ): Promise<DecodedIdTokenLike>;
+}
+
+export interface StaffAuthUserRecord {
+  uid: string;
+  email?: string | null;
+  displayName?: string | null;
+  disabled: boolean;
+  emailVerified: boolean;
+  customClaims?: Record<string, unknown>;
+}
+
+export interface StaffAuthListUsersResult {
+  users: StaffAuthUserRecord[];
+  pageToken?: string;
+}
+
+export interface StaffAuthManager {
+  getUser(uid: string): Promise<StaffAuthUserRecord>;
+  getUserByEmail(email: string): Promise<StaffAuthUserRecord>;
+  listUsers(
+    maxResults?: number,
+    pageToken?: string,
+  ): Promise<StaffAuthListUsersResult>;
+  setCustomUserClaims(
+    uid: string,
+    customUserClaims: Record<string, unknown> | null,
+  ): Promise<void>;
+  revokeRefreshTokens(uid: string): Promise<void>;
+}
+
+export interface PushNotificationMessage {
+  topic: string;
+  title: string;
+  body: string;
+  data: Record<string, string>;
+}
+
+export interface PushNotificationDispatcher {
+  sendToTopic(message: PushNotificationMessage): Promise<string>;
 }
 
 function parseServiceAccount(rawJson: string): ServiceAccount {
@@ -80,10 +120,13 @@ export function createFirebaseAdminServices(config: ServerConfig): {
   app: App;
   firestore: Firestore;
   idTokenVerifier: IdTokenVerifier;
+  staffAuthManager: StaffAuthManager;
+  pushNotificationDispatcher: PushNotificationDispatcher;
 } {
   const app = getOrInitFirebaseAdminApp(config);
   const firestore = getFirestore(app);
   const auth = getAuth(app);
+  const messaging = getMessaging(app);
 
   const idTokenVerifier: IdTokenVerifier = {
     verifyIdToken(idToken: string, checkRevoked = true): Promise<DecodedIdTokenLike> {
@@ -91,5 +134,71 @@ export function createFirebaseAdminServices(config: ServerConfig): {
     },
   };
 
-  return { app, firestore, idTokenVerifier };
+  const mapUserRecord = (record: {
+    uid: string;
+    email?: string;
+    displayName?: string;
+    disabled: boolean;
+    emailVerified: boolean;
+    customClaims?: Record<string, unknown>;
+  }): StaffAuthUserRecord => ({
+    uid: record.uid,
+    email: record.email ?? null,
+    displayName: record.displayName ?? null,
+    disabled: record.disabled,
+    emailVerified: record.emailVerified,
+    customClaims: record.customClaims,
+  });
+
+  const staffAuthManager: StaffAuthManager = {
+    async getUser(uid: string): Promise<StaffAuthUserRecord> {
+      return mapUserRecord(await auth.getUser(uid));
+    },
+    async getUserByEmail(email: string): Promise<StaffAuthUserRecord> {
+      return mapUserRecord(await auth.getUserByEmail(email));
+    },
+    async listUsers(
+      maxResults = 1000,
+      pageToken?: string,
+    ): Promise<StaffAuthListUsersResult> {
+      const result = await auth.listUsers(maxResults, pageToken);
+      return {
+        users: result.users.map(mapUserRecord),
+        pageToken: result.pageToken,
+      };
+    },
+    async setCustomUserClaims(
+      uid: string,
+      customUserClaims: Record<string, unknown> | null,
+    ): Promise<void> {
+      await auth.setCustomUserClaims(uid, customUserClaims);
+    },
+    async revokeRefreshTokens(uid: string): Promise<void> {
+      await auth.revokeRefreshTokens(uid);
+    },
+  };
+
+  const pushNotificationDispatcher: PushNotificationDispatcher = {
+    async sendToTopic(message: PushNotificationMessage): Promise<string> {
+      return messaging.send({
+        topic: message.topic,
+        notification: {
+          title: message.title,
+          body: message.body,
+        },
+        data: message.data,
+        android: {
+          priority: 'high',
+        },
+      });
+    },
+  };
+
+  return {
+    app,
+    firestore,
+    idTokenVerifier,
+    staffAuthManager,
+    pushNotificationDispatcher,
+  };
 }

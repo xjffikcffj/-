@@ -2,8 +2,12 @@ import { Router } from 'express';
 import type { RequestHandler } from 'express';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import type { InMemoryRateLimiter } from '../middleware/rateLimit.js';
+import type { AuditLogService } from '../services/auditLogService.js';
 import type { CatalogService } from '../services/catalogService.js';
+import type { NotificationDispatchService } from '../services/notificationDispatchService.js';
+import type { StaffManagementService } from '../services/staffManagementService.js';
 import type { UploadVerificationService } from '../services/uploadVerificationService.js';
+import { ApiError } from '../utils/errors.js';
 import {
   assertPlainObject,
   rejectForbiddenFields,
@@ -14,6 +18,10 @@ export function createAdminRouter(params: {
   catalogService: CatalogService;
   uploadVerificationService: UploadVerificationService;
   requireAdminOrOwner: RequestHandler;
+  requireOwner?: RequestHandler;
+  auditLogService?: AuditLogService;
+  staffManagementService?: StaffManagementService;
+  notificationDispatchService?: NotificationDispatchService;
   rateLimiter?: InMemoryRateLimiter;
 }): Router {
   const router = Router();
@@ -33,11 +41,39 @@ export function createAdminRouter(params: {
   const publishLimit = limiter
     ? [limiter.middleware('admin-publish', 'uid-or-ip')]
     : [];
+  const staffReadLimit = limiter
+    ? [limiter.middleware('admin-staff-read', 'uid-or-ip')]
+    : [];
+  const staffWriteLimit = limiter
+    ? [limiter.middleware('admin-staff-write', 'uid-or-ip')]
+    : [];
+  const auditReadLimit = limiter
+    ? [limiter.middleware('admin-audit-read', 'uid-or-ip')]
+    : [];
+  const notifyWriteLimit = limiter
+    ? [limiter.middleware('admin-notify-write', 'uid-or-ip')]
+    : [];
 
   if (limiter) {
     router.use(limiter.middleware('preauth-admin', 'ip-only'));
   }
   router.use(params.requireAdminOrOwner);
+
+  const ownerGuard: RequestHandler =
+    params.requireOwner ??
+    ((req: AuthenticatedRequest, _res, next) => {
+      if (req.authContext?.role !== 'owner') {
+        next(
+          new ApiError(
+            403,
+            'INSUFFICIENT_ROLE',
+            'This endpoint is restricted to owner custom claims only.',
+          ),
+        );
+        return;
+      }
+      next();
+    });
 
   router.get('/branches', ...adminReadLimit, async (_req, res, next) => {
     try {
@@ -113,6 +149,7 @@ export function createAdminRouter(params: {
           versionNotes: body.versionNotes,
           customVersionId: body.customVersionId,
           actorUid: req.authContext!.uid!,
+          actorRole: req.authContext!.role,
         });
         res.status(201).json({ version: created });
       } catch (err) {
@@ -136,6 +173,7 @@ export function createAdminRouter(params: {
           versionLabel: body.versionLabel,
           versionNotes: body.versionNotes,
           actorUid: req.authContext!.uid!,
+          actorRole: req.authContext!.role,
         });
         res.status(200).json({ updated: true });
       } catch (err) {
@@ -159,6 +197,7 @@ export function createAdminRouter(params: {
           expectedSizeBytes: body.expectedSizeBytes,
           expectedSha256: body.expectedSha256,
           actorUid: req.authContext!.uid!,
+          actorRole: req.authContext!.role,
         });
         res.status(201).json(slot);
       } catch (err) {
@@ -181,6 +220,7 @@ export function createAdminRouter(params: {
           versionId: req.params.versionId,
           uploadSessionId: body.uploadSessionId,
           actorUid: req.authContext!.uid!,
+          actorRole: req.authContext!.role,
         });
         res.status(200).json(verified);
       } catch (err) {
@@ -203,8 +243,113 @@ export function createAdminRouter(params: {
           fileId: req.params.fileId,
           versionId: req.params.versionId,
           actorUid: req.authContext!.uid!,
+          actorRole: req.authContext!.role,
         });
         res.status(200).json(published);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // ===== Audit Logs (Admin / Owner) =====
+  router.get('/audit-logs', ...auditReadLimit, async (req, res, next) => {
+    try {
+      if (!params.auditLogService) {
+        throw new ApiError(
+          503,
+          'AUDIT_SERVICE_UNAVAILABLE',
+          'Audit log service is not configured on this server instance.',
+        );
+      }
+      const items = await params.auditLogService.listAuditLogs({
+        limit: req.query.limit,
+        action: req.query.action,
+      });
+      res.status(200).json({ items });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ===== Important Update Broadcast Notification (Admin / Owner) =====
+  router.post(
+    '/notifications/broadcast',
+    ...notifyWriteLimit,
+    async (req: AuthenticatedRequest, res, next) => {
+      try {
+        if (!params.notificationDispatchService) {
+          throw new ApiError(
+            503,
+            'NOTIFICATION_SERVICE_UNAVAILABLE',
+            'Notification dispatch service is not configured on this server instance.',
+          );
+        }
+        const body = assertPlainObject(req.body);
+        rejectForbiddenFields(body);
+        rejectUnexpectedKeys(body, ['title', 'body']);
+
+        const outcome =
+          await params.notificationDispatchService.broadcastImportantUpdate({
+            title: body.title,
+            body: body.body,
+            actorUid: req.authContext!.uid!,
+            actorRole: req.authContext!.role,
+          });
+        res.status(200).json(outcome);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // ===== Owner-Only Staff Management =====
+  router.get(
+    '/staff',
+    ownerGuard,
+    ...staffReadLimit,
+    async (_req, res, next) => {
+      try {
+        if (!params.staffManagementService) {
+          throw new ApiError(
+            503,
+            'AUTH_ADMIN_NOT_CONFIGURED',
+            'Firebase Auth admin service is not configured on this server instance.',
+          );
+        }
+        const items = await params.staffManagementService.listStaffMembers();
+        res.status(200).json({ items });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  router.post(
+    '/staff/roles',
+    ownerGuard,
+    ...staffWriteLimit,
+    async (req: AuthenticatedRequest, res, next) => {
+      try {
+        if (!params.staffManagementService) {
+          throw new ApiError(
+            503,
+            'AUTH_ADMIN_NOT_CONFIGURED',
+            'Firebase Auth admin service is not configured on this server instance.',
+          );
+        }
+        const body = assertPlainObject(req.body);
+        rejectForbiddenFields(body);
+        rejectUnexpectedKeys(body, ['targetEmail', 'targetUid', 'role']);
+
+        const result = await params.staffManagementService.updateStaffRole({
+          targetEmail: body.targetEmail,
+          targetUid: body.targetUid,
+          role: body.role,
+          actorUid: req.authContext!.uid!,
+          actorRole: req.authContext!.role,
+        });
+        res.status(200).json(result);
       } catch (err) {
         next(err);
       }

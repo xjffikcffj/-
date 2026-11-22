@@ -20,6 +20,7 @@ sealed class AppDestination(val route: String) {
     data object Splash : AppDestination("splash")
     data object MainShell : AppDestination("main_shell")
     data object About : AppDestination("about")
+    data object Notifications : AppDestination("notifications")
     data object AdminPortal : AppDestination("admin_portal")
     data object SignIn : AppDestination("auth_sign_in")
     data object SignUp : AppDestination("auth_sign_up")

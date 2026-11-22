@@ -5,10 +5,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -53,6 +57,7 @@ fun MainShellScreen(
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminPortal: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToNotifications: () -> Unit = {},
     onNavigateToSignIn: () -> Unit = {},
     onNavigateToSignUp: () -> Unit = {},
     onNavigateToPdfReader: (fileId: String, fileTitle: String, activeVersionId: String?) -> Unit = { _, _, _ -> },
@@ -73,6 +78,8 @@ fun MainShellScreen(
     )
     val preferences by appContainer.preferencesRepository.preferencesFlow
         .collectAsStateWithLifecycle(initialValue = UserPreferences())
+    val unreadNotificationsCount by appContainer.notificationLogRepository.observeUnreadCount()
+        .collectAsStateWithLifecycle(initialValue = 0)
     val isDarkMode = preferences.darkModeEnabled
 
     val topBarTitle = when (currentDestination?.route) {
@@ -117,6 +124,29 @@ fun MainShellScreen(
                     null
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToNotifications) {
+                        BadgedBox(
+                            badge = {
+                                if (unreadNotificationsCount > 0) {
+                                    Badge {
+                                        Text(
+                                            text = if (unreadNotificationsCount > 99) {
+                                                "99+"
+                                            } else {
+                                                unreadNotificationsCount.toString()
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Notifications,
+                                contentDescription = stringResource(R.string.notifications_nav_open),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     IconButton(onClick = { homeViewModel.onToggleDarkMode(!isDarkMode) }) {
                         Icon(
                             imageVector = if (isDarkMode) {
@@ -274,7 +304,8 @@ fun MainShellScreen(
                             sectionId = sectionId,
                             catalogRepository = appContainer.catalogRepository,
                             authRepository = appContainer.authRepository,
-                            offlineDownloadsRepository = appContainer.offlineDownloadsRepository
+                            offlineDownloadsRepository = appContainer.offlineDownloadsRepository,
+                            localFileOrganizationRepository = appContainer.localFileOrganizationRepository
                         )
                     )
                     SectionFilesScreen(
@@ -303,7 +334,8 @@ fun MainShellScreen(
                 val downloadsViewModel: DownloadsViewModel = viewModel(
                     factory = DownloadsViewModel.provideFactory(
                         authRepository = appContainer.authRepository,
-                        offlineDownloadsRepository = appContainer.offlineDownloadsRepository
+                        offlineDownloadsRepository = appContainer.offlineDownloadsRepository,
+                        localFileOrganizationRepository = appContainer.localFileOrganizationRepository
                     )
                 )
                 DownloadsScreen(
@@ -333,6 +365,7 @@ fun MainShellScreen(
                     viewModel = settingsViewModel,
                     onNavigateToAbout = onNavigateToAbout,
                     onNavigateToAdminPortal = onNavigateToAdminPortal,
+                    onNavigateToNotifications = onNavigateToNotifications,
                     onNavigateToSignIn = onNavigateToSignIn,
                     onNavigateToSignUp = onNavigateToSignUp
                 )

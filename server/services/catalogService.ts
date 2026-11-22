@@ -7,6 +7,7 @@ import {
 import type {
   AdminStudyFileDto,
   AdminStudyFileVersionDto,
+  AppUserRole,
   ArchiveStatus,
   BinaryVerificationStatus,
   CatalogBranchDto,
@@ -24,6 +25,7 @@ import {
   validateOptionalString,
   validatePositiveInt,
 } from '../validation/validators.js';
+import type { AuditLogService } from './auditLogService.js';
 
 const SHA256_REGEX = /^[a-f0-9]{64}$/i;
 
@@ -131,7 +133,10 @@ export interface ResolvedPublishedVersionBinary {
 }
 
 export class CatalogService {
-  constructor(private readonly firestore: Firestore) {}
+  constructor(
+    private readonly firestore: Firestore,
+    private readonly auditLogService?: AuditLogService,
+  ) {}
 
   async listPublishedBranches(): Promise<CatalogBranchDto[]> {
     const snapshot = await this.firestore
@@ -769,6 +774,7 @@ export class CatalogService {
     versionNotes?: unknown;
     customVersionId?: unknown;
     actorUid: string;
+    actorRole?: AppUserRole | string;
   }): Promise<AdminStudyFileVersionDto> {
     const fileId = validateDocId(params.fileId, 'fileId');
     const versionNumber = validatePositiveInt(params.versionNumber, 'versionNumber', 10000);
@@ -882,6 +888,16 @@ export class CatalogService {
       });
     });
 
+    await this.auditLogService?.recordBestEffort({
+      action: 'VERSION_CREATED',
+      actorUid: params.actorUid,
+      actorRole: params.actorRole ?? 'admin',
+      targetCollection: `study_files/${fileId}/versions`,
+      targetId: versionRef.id,
+      summary: `Created version v${versionNumber} (${versionLabel}) for file ${fileId}`,
+      source: 'backend',
+    });
+
     return {
       id: versionRef.id,
       fileId,
@@ -908,6 +924,7 @@ export class CatalogService {
     versionLabel: unknown;
     versionNotes?: unknown;
     actorUid: string;
+    actorRole?: AppUserRole | string;
   }): Promise<void> {
     const fileId = validateDocId(params.fileId, 'fileId');
     const versionId = validateDocId(params.versionId, 'versionId');
@@ -967,6 +984,16 @@ export class CatalogService {
           updatedAt: now,
         });
       }
+    });
+
+    await this.auditLogService?.recordBestEffort({
+      action: 'VERSION_UPDATED',
+      actorUid: params.actorUid,
+      actorRole: params.actorRole ?? 'admin',
+      targetCollection: `study_files/${fileId}/versions`,
+      targetId: versionId,
+      summary: `Updated metadata for version ${versionId} (${versionLabel}) on file ${fileId}`,
+      source: 'backend',
     });
   }
 }
